@@ -5,7 +5,7 @@ A clipboard history manager for macOS.
 Invoke the UI via a global hotkey to search, edit, and paste text/image clipboard history. The app is menu bar resident and emphasizes a workflow where you return to the previous app and paste with `Cmd+V`.
 
 
-<img width="1046" height="686" alt="app_image" src="https://github.com/user-attachments/assets/498a4752-11f5-483b-9b06-0178dcf1e952" />
+<img width="1046" height="686" alt="app_image" src="https://github.com/user-attachments/assets/6a78e1e0-4911-4e70-969b-1322f414d554" />
 
 
 ---
