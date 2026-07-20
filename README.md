@@ -41,7 +41,7 @@ Invoke the UI via a global hotkey to search, edit, and paste text/image clipboar
 
 ```bash
 git clone <repository-url>
-cd clipboard-manager-macos
+cd clipboard-manager
 ```
 
 ### 2. Build as a macOS app
