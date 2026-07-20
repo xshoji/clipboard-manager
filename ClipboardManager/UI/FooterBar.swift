@@ -86,11 +86,11 @@ struct FooterBar: View {
         // Register a suppression range BEFORE the write so the utility-queue poll cannot
         // race with the pasteboard write and save our own write as a history item (review #6).
         let pre = NSPasteboard.general.changeCount
-        ClipboardMonitor.shared?.suppressChangeCountRange(pre..<(pre + 3))
+        ClipboardMonitor.shared?.suppressChangeCountRange((pre + 1)..<(pre + 3))
         entity.writeToPasteboard(.general, rich: rich)
         // Do not add pasteboard writes made by this app itself to the clipboard history
         // (prevents ClipboardMonitor from mistaking a changeCount change as a new copy).
-        ClipboardMonitor.shared?.suppressNextChangeCount()
+        ClipboardMonitor.shared?.finalizeSuppressionAfterWrite(preChangeCount: pre)
         AppActivator.shared.activatePreviousAppAndPasteSynthetically(
             needsSynthetic: settings.needsAccessibilityForSyntheticPaste
         )
@@ -100,11 +100,11 @@ struct FooterBar: View {
         guard let entity = selected.wrappedValue else { return }
         // Register a suppression range BEFORE the write (review #6 race note).
         let pre = NSPasteboard.general.changeCount
-        ClipboardMonitor.shared?.suppressChangeCountRange(pre..<(pre + 3))
+        ClipboardMonitor.shared?.suppressChangeCountRange((pre + 1)..<(pre + 3))
         entity.writeToPasteboard(.general)
         // Do not add pasteboard writes made by this app itself to the clipboard history
         // (prevents ClipboardMonitor from mistaking a changeCount change as a new copy).
-        ClipboardMonitor.shared?.suppressNextChangeCount()
+        ClipboardMonitor.shared?.finalizeSuppressionAfterWrite(preChangeCount: pre)
     }
 
     private func runHook(_ hook: HookScript) {

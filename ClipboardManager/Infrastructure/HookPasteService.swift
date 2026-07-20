@@ -67,11 +67,14 @@ enum HookPasteService {
         // Race note (review #6): the poll runs on a background utility queue and could fire
         // between `clearContents()` and `setData()`. To prevent it from saving the app's own
         // write as a history item, register a suppression range covering the pre-write
-        // changeCount up to (pre + 3) BEFORE the write. `clearContents()` bumps +1, and the
-        // subsequent `setData`/`setString` may bump an additional +1, so a width of 3 covers
-        // both bumps with margin. The poll handler consumes the matching entry.
+        // changeCount-plus-one up to (pre + 3) BEFORE the write. `clearContents()` bumps +1,
+        // and the subsequent `setData`/`setString` may bump an additional +1, so a width of 2
+        // covers both bumps. The range starts at `pre + 1` (not `pre`) so a user copy that
+        // just landed at `pre` is not wrongly suppressed. After the write,
+        // `finalizeSuppressionAfterWrite` removes any pre-registered entries above the actual
+        // post-write changeCount so they cannot orphan-suppress a future user copy.
         let pre = pb.changeCount
-        ClipboardMonitor.shared?.suppressChangeCountRange(pre..<(pre + 3))
+        ClipboardMonitor.shared?.suppressChangeCountRange((pre + 1)..<(pre + 3))
         pb.clearContents()
         if entity.isImage {
             pb.setData(data, forType: .png)
@@ -79,9 +82,9 @@ enum HookPasteService {
             // review #6: Non-UTF8 output is already rejected in run(), so this is safe.
             pb.setString(String(data: data, encoding: .utf8) ?? "", forType: .string)
         }
-        // Also register the final post-write changeCount in case it landed outside the
-        // pre-registered range (defensive; the range above normally already covers it).
-        ClipboardMonitor.shared?.suppressNextChangeCount()
+        // Finalize: ensure the actual post-write changeCount is suppressed and remove
+        // orphaned pre-registered entries that could suppress a future user copy.
+        ClipboardMonitor.shared?.finalizeSuppressionAfterWrite(preChangeCount: pre)
     }
 
     /// Failure fallback: restores the original entity content to the pasteboard.
@@ -90,9 +93,9 @@ enum HookPasteService {
     private static func restoreOriginalToPasteboard(entity: ClipboardEntity) {
         let pb = NSPasteboard.general
         let pre = pb.changeCount
-        ClipboardMonitor.shared?.suppressChangeCountRange(pre..<(pre + 3))
+        ClipboardMonitor.shared?.suppressChangeCountRange((pre + 1)..<(pre + 3))
         entity.writeToPasteboard(.general)
-        ClipboardMonitor.shared?.suppressNextChangeCount()
+        ClipboardMonitor.shared?.finalizeSuppressionAfterWrite(preChangeCount: pre)
     }
 
     private static func handleFailure(

@@ -22,7 +22,8 @@ import os
 ///   fires its handler on the configured queue serially.
 ///
 /// `@unchecked Sendable`: the instance is shared via `ClipboardMonitor.shared` and reached
-/// from both the main actor (callers of `suppressNextChangeCount`) and the utility poll
+/// from both the main actor (callers of `suppressChangeCountRange` /
+/// `finalizeSuppressionAfterWrite`) and the utility poll
 /// queue. All mutable state is either internally locked (`DedupCache`) or only touched on
 /// the serial `pollQueue` (`lastChangeCount`, `suppressedChangeCounts`, `isRunning`,
 /// `isObservingSettings`, `timer`). `persistence` and `settings` are `@MainActor` types
@@ -50,7 +51,9 @@ final class ClipboardMonitor: @unchecked Sendable {
     private var isRunning = false
     /// Only mutated on the timer queue (serial).
     /// Set of changeCounts written by this app (e.g., Hook paste) to exclude from history saving.
-    /// `suppressNextChangeCount(_:)` registers the current changeCount; the next poll skips and consumes a match.
+    /// `suppressChangeCountRange` pre-registers a range before a write, and
+    /// `finalizeSuppressionAfterWrite` cleans up orphaned entries after the write;
+    /// the poll consumes a matching entry and skips saving.
     private var suppressedChangeCounts: Set<Int> = []
     /// Serial queue used for polling. Reading the pasteboard (especially large image
     /// data) and generating thumbnails can take tens of ms; running on a utility queue
@@ -121,40 +124,61 @@ final class ClipboardMonitor: @unchecked Sendable {
         }
     }
 
-    /// Called immediately after this app writes to `NSPasteboard.general` (e.g., Hook paste) to register the changeCount for exclusion from history.
-    /// Design intent: processed content written to the pasteboard by the Hook paste flow (design doc §4.2) is not a user copy and should not be added to history.
-    /// Prevents ClipboardMonitor's polling from picking up this changeCount as a new history item.
+    /// Registers a range of changeCounts for suppression. Used to close the race
+    /// between the main-actor pasteboard write and the utility-queue poll (review #6):
+    /// the poll could fire mid-write (between `clearContents()` and `setData()`) and
+    /// otherwise save the app's own write as a history item.
     ///
-    /// Note: Since the poll now runs on a background utility queue (review #6), this method
-    /// dispatches the registration synchronously onto `pollQueue` so that any poll firing after
-    /// this call sees the newly-registered suppression. Call this **immediately after** the
-    /// pasteboard write so that the post-write `changeCount` is the one that gets registered.
-    func suppressNextChangeCount() {
-        // `sync` is used (not `async`) so the registration lands on `pollQueue` before this
-        // method returns. This prevents a race where a poll that fires on `pollQueue` between
-        // `pb.setData(...)` and the async registration would see the new changeCount without
-        // a matching suppression and save the app's own write as a history item.
-        pollQueue.sync { [weak self] in
-            guard let self else { return }
-            self.suppressedChangeCounts.insert(NSPasteboard.general.changeCount)
-        }
-    }
-
-    /// Registers a range of changeCounts for suppression. More robust than
-    /// `suppressNextChangeCount()` when the caller records the pre-write `changeCount` and
-    /// wants to suppress every intermediate bump that `clearContents()` + `setData()`
-    /// might produce. Used to close the race between the main-actor pasteboard write and
-    /// the utility-queue poll (review #6).
+    /// Callers MUST pass a range that excludes the pre-write `changeCount` itself
+    /// (start at `pre + 1`), and MUST call `finalizeSuppressionAfterWrite(preChangeCount:)`
+    /// after the write completes. Otherwise, pre-registered entries whose `changeCount`
+    /// was never produced by the write remain as orphans and can suppress a later
+    /// user copy (see `finalizeSuppressionAfterWrite` for details).
     ///
     /// Example: `let pre = pb.changeCount; pb.clearContents(); pb.setData(...);
-    /// monitor.suppressChangeCountRange(pre..<(pre + 3))` suppresses any intermediate
-    /// increments the write sequence produces.
+    /// monitor.suppressChangeCountRange((pre + 1)..<(pre + 3));
+    /// monitor.finalizeSuppressionAfterWrite(preChangeCount: pre)`.
     func suppressChangeCountRange(_ range: Range<Int>) {
         // `sync` so the range is visible on `pollQueue` before this method returns.
         pollQueue.sync { [weak self] in
             guard let self else { return }
             for c in range {
                 self.suppressedChangeCounts.insert(c)
+            }
+        }
+    }
+
+    /// Finalizes suppression after the app writes to `NSPasteboard.general`.
+    ///
+    /// `suppressChangeCountRange((pre + 1)..<(pre + 3))` pre-registers a conservative
+    /// range to cover the race where the utility-queue poll fires mid-write. However,
+    /// `clearContents()` + `setData()` typically produces only a single `changeCount`
+    /// increment, leaving `pre + 2` as an **orphan** in `suppressedChangeCounts`.
+    /// Since `changeCount` is monotonically increasing, that orphan will match the
+    /// user's **next** copy and wrongly suppress it — the copied content never enters
+    /// history. This is the root cause of the "copied content missing from history"
+    /// bug, which is most visible shortly after launch when copy/paste cycles are
+    /// frequent.
+    ///
+    /// This method reads the actual post-write `changeCount`, ensures it is
+    /// suppressed, and removes any pre-registered entries above it (orphans that
+    /// could suppress future user copies). Must be called on the main actor
+    /// **immediately after** the pasteboard write completes.
+    func finalizeSuppressionAfterWrite(preChangeCount pre: Int) {
+        // `sync` so the cleanup is visible on `pollQueue` before this method returns
+        // and before any subsequent poll fires.
+        pollQueue.sync { [weak self] in
+            guard let self else { return }
+            let post = NSPasteboard.general.changeCount
+            // Ensure the actual post-write changeCount is suppressed even if the
+            // write produced more bumps than the pre-registered range covered.
+            self.suppressedChangeCounts.insert(post)
+            // Remove pre-registered entries above `post`; they were never produced
+            // by this write and would otherwise orphan-suppress a future user copy.
+            for c in (pre + 1)..<(pre + 3) {
+                if c > post {
+                    self.suppressedChangeCounts.remove(c)
+                }
             }
         }
     }
