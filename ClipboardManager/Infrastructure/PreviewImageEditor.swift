@@ -50,6 +50,10 @@ final class PreviewImageEditor {
        /// Retained to release the `box` passed as refcon to the AX callback.
        /// Because it was passed with `passRetained`, it is not released until `release()` is called in teardown.
        var boxRefcon: UnsafeMutableRawPointer?
+      /// Watches the parent directory while the work file is temporarily absent during
+      /// Preview's safe-save (temp file → delete original → rename). Once the work file
+      /// reappears, the per-file watcher is reinstalled.
+      var dirWatchSource: DispatchSourceFileSystemObject?
     }
 
     private var sessions: [UUID: Session] = [:]
@@ -94,6 +98,15 @@ final class PreviewImageEditor {
     /// Reduced from 10 minutes to 5 minutes per review #7 to bound the exposure of the
     /// working file sitting in Downloads.
     private let sessionIdleTimeoutSec: Int = 5 * 60
+
+   /// When a file-change debounce fires but the work file cannot be read (Preview's safe-save
+   /// has deleted the original and not yet renamed the temp file into place), retry reading
+   /// at this interval until the file reappears.
+   private let fileReadRetryInterval: TimeInterval = 0.3
+
+   /// Maximum number of read retries before giving up on a single file-change event.
+   /// 10 × 0.3s = 3s covers Preview's safe-save window for typical images.
+   private let maxFileReadRetries: Int = 10
 
     private static let previewBundleID = "com.apple.Preview"
 
@@ -383,7 +396,14 @@ final class PreviewImageEditor {
     private func reinstallFileWatcher(for sessionID: UUID, path: String) {
         sessions[sessionID]?.fileWatchSource?.cancel()
         sessions[sessionID]?.fileWatchSource = nil
-        guard FileManager.default.fileExists(atPath: path) else { return }
+        if !FileManager.default.fileExists(atPath: path) {
+           // Preview's safe-save deletes the original file before renaming the temp file into
+           // place, so the work file may briefly not exist. Watch the parent directory so we
+           // can reinstall the per-file watcher the moment the file reappears. Without this,
+           // a save that lands in this window is missed until the window closes.
+           installParentDirWatcher(for: sessionID, path: path)
+           return
+       }
         let fd = open(path, O_EVTONLY)
         guard fd >= 0 else { return }
         let source = DispatchSource.makeFileSystemObjectSource(
@@ -402,6 +422,39 @@ final class PreviewImageEditor {
         source.resume()
         sessions[sessionID]?.fileWatchSource = source
     }
+
+   /// Installs a watcher on the work file's parent directory while the work file is temporarily
+   /// missing during Preview's safe-save. When the work file reappears (rename complete),
+   /// the per-file watcher is reinstalled and a hash check is scheduled so the saved image
+   /// is picked up immediately instead of waiting for window close.
+   private func installParentDirWatcher(for sessionID: UUID, path: String) {
+       sessions[sessionID]?.dirWatchSource?.cancel()
+       sessions[sessionID]?.dirWatchSource = nil
+       let parentDir = (path as NSString).deletingLastPathComponent
+       guard FileManager.default.fileExists(atPath: parentDir) else { return }
+       let fd = open(parentDir, O_EVTONLY)
+       guard fd >= 0 else { return }
+       let source = DispatchSource.makeFileSystemObjectSource(
+           fileDescriptor: fd,
+           eventMask: [.write],
+           queue: .main
+       )
+       source.setEventHandler { [weak self] in
+           Task { @MainActor in
+               guard let self, let s = self.sessions[sessionID], !s.didFinish else { return }
+               // Parent directory changed. If the work file has reappeared, switch back to
+               // per-file watching and trigger a hash check to pick up the safe-save result.
+               guard FileManager.default.fileExists(atPath: path) else { return }
+               self.sessions[sessionID]?.dirWatchSource?.cancel()
+               self.sessions[sessionID]?.dirWatchSource = nil
+               self.reinstallFileWatcher(for: sessionID, path: path)
+               self.scheduleFileChangeDebounce(for: sessionID)
+           }
+       }
+       source.setCancelHandler { close(fd) }
+       source.resume()
+       sessions[sessionID]?.dirWatchSource = source
+   }
 
     private func handleFileWatchEvent(sessionID: UUID) {
         guard let s = sessions[sessionID], !s.didFinish else { return }
@@ -429,9 +482,23 @@ final class PreviewImageEditor {
 
     /// Hash check when a file change is detected. The session continues (final teardown on window close / termination).
     /// Skips if the hash matches the original image or the last saved hash (duplicate guard for auto-save).
-    private func performFileChangeCheck(sessionID: UUID) {
+    private func performFileChangeCheck(sessionID: UUID, retryCount: Int = 0) {
         guard let s = sessions[sessionID], !s.didFinish else { return }
-        guard let workData = try? Data(contentsOf: s.workFile) else { return }
+        guard let workData = try? Data(contentsOf: s.workFile) else {
+           // Preview's safe-save deletes the original file and renames a temp file into place.
+           // The read may land in that brief window; retry until the file reappears so the
+           // saved image is captured immediately rather than only on window close.
+           if retryCount < maxFileReadRetries {
+               let work = DispatchWorkItem { [weak self] in
+                   Task { @MainActor in
+                       self?.performFileChangeCheck(sessionID: sessionID, retryCount: retryCount + 1)
+                   }
+               }
+               sessions[sessionID]?.debounceWork = work
+               DispatchQueue.main.asyncAfter(deadline: .now() + fileReadRetryInterval, execute: work)
+           }
+           return
+       }
         let hash = HashUtil.sha256Hex(of: workData)
         guard hash != s.originalHash else { return }
         guard hash != s.lastSavedHash else { return }
@@ -614,6 +681,7 @@ final class PreviewImageEditor {
        s.fileWatchSource?.cancel()
        s.windowPollWork?.cancel()
        s.sessionTimeoutWork?.cancel()
+      s.dirWatchSource?.cancel()
         if let observer = s.axObserver {
             CFRunLoopRemoveSource(
                 CFRunLoopGetMain(),
