@@ -75,10 +75,10 @@ You can also open `.build/debug/ClipboardManager.app` directly from Finder.
 
 `swift run` is still available if you want to run via the SwiftPM executable.
 
-### Build with SwiftPM directly
+#### Build and Run
 
 ```bash
-swift build
+./Scripts/build-app.sh; rm -rf /Applications/ClipboardManager.app; mv .build/debug/ClipboardManager.app /Applications/; open /Applications/ClipboardManager.app
 ```
 
 ---
