@@ -10,6 +10,13 @@ struct PreviewPane: View {
 
     private static let previewCharLimit = 2_000
 
+    /// Scroll axes for the text preview. In `nowrap` mode the text overflows
+    /// horizontally, so enable horizontal scrolling to reveal the full content.
+    /// In `wrap` mode the text wraps to the pane width, so vertical-only is enough.
+    private var scrollAxes: Axis.Set {
+        wrapMode == "nowrap" ? [.vertical, .horizontal] : .vertical
+    }
+
     var body: some View {
         Group {
             if let entity {
@@ -45,7 +52,7 @@ struct PreviewPane: View {
                 .scaledToFit()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView {
+            ScrollView(scrollAxes) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     Text(displayedText(entity))
                         .font(.system(.body, design: .monospaced))
@@ -76,6 +83,7 @@ struct PreviewPane: View {
                     }
                 }
             }
+            .defaultScrollAnchor(.topLeading)
         }
     }
 

@@ -140,10 +140,11 @@ struct MainView: View {
                         selectedEntity: $selectedEntity,
                         onPaste: { entity in pasteStandard(entity: entity, rich: true) }
                     )
-                    .frame(width: 280)
+                    .frame(maxWidth: .infinity)
                     .background(Color.appBackground.opacity(0.6))
                 }
                 PreviewPane(entity: selectedEntity, wrapMode: settings.previewWrapMode)
+                .frame(maxWidth: .infinity)
             }
         } else {
             PreviewPane(entity: selectedEntity, wrapMode: settings.previewWrapMode)
