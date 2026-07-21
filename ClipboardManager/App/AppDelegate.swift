@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     enum ActionHotkeyID {
         static let edit: UInt32 = 0xABCD_0002
         static let pastePlain: UInt32 = 0xABCD_0003
+       static let macroPicker: UInt32 = 0xABCD_0004
     }
 
     override init() {
@@ -214,6 +215,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 anyFailed = true
             }
         }
+       if settings.macroPickerHotkeyModifiers != 0 {
+           let ok = hotkeyManager.registerActionHotkey(
+               actionID: ActionHotkeyID.macroPicker,
+               keyCode: settings.macroPickerHotkeyCode,
+               modifiers: settings.macroPickerHotkeyModifiers
+           ) { [weak self] in
+               self?.runMacroPickerAction()
+           }
+           if !ok {
+               Self.logger.error("Macro Picker action hotkey registration failed")
+               anyFailed = true
+           }
+       }
 
         // Surface Carbon registration failures (e.g., Edit and Paste Plain sharing the
         // same shortcut) to the user via the existing hotkey-unavailable alert so the
@@ -283,6 +297,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             needsSynthetic: settings.needsAccessibilityForSyntheticPaste
         )
     }
+
+   /// Fires the Macro Picker overlay on the currently selected entity.
+   /// The overlay lists all registered Macros and lets the user pick one with the
+   /// keyboard; Enter runs it against the selected history entry (design: Cmd+M flow).
+   /// Issues a system beep if nothing is selected, mirroring `runMacroFromHotkey`.
+   private func runMacroPickerAction() {
+       guard AppState.shared.selectedEntityID != nil else {
+           NSSound.beep()
+           return
+       }
+       NotificationCenter.default.post(name: .macroPickerTriggered, object: nil)
+   }
 
     /// Observes `macroScriptsChanged` notifications and re-registers Macro hotkeys when they change.
     private func startObservingMacroScriptsChanges() {
@@ -613,4 +639,8 @@ extension Notification.Name {
     /// `HistoryListPane` performs the actual deletion so the post-delete selection logic
     /// (move to the adjacent entry) stays in one place.
     static let deleteSelectedRequested = Notification.Name("deleteSelectedRequested")
+   /// Posted by AppDelegate when the Macro Picker action hotkey ( default Cmd+M ) fires.
+   /// `MainView` observes this and shows the `MacroPickerView` overlay so the user can
+   /// pick a Macro with the keyboard and run it against the currently selected entity.
+   static let macroPickerTriggered = Notification.Name("macroPickerTriggered")
 }
