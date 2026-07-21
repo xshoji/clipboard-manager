@@ -40,6 +40,10 @@ final class AppSettings: @unchecked Sendable {
     @ObservationIgnored @Setting("editHotkeyModifiers", default: Int(NSEvent.ModifierFlags.command.rawValue)) var editHotkeyModifiers: Int
     @ObservationIgnored @Setting("pastePlainHotkeyCode", default: 35)  var pastePlainHotkeyCode: Int
     @ObservationIgnored @Setting("pastePlainHotkeyModifiers", default: Int(NSEvent.ModifierFlags.command.rawValue)) var pastePlainHotkeyModifiers: Int
+   /// Macro Picker overlay hotkey. Default: Cmd+M (keycode 46 = M).
+   /// Effective only while the history window is visible (same scope as edit / paste plain).
+   @ObservationIgnored @Setting("macroPickerHotkeyCode", default: 46)  var macroPickerHotkeyCode: Int
+   @ObservationIgnored @Setting("macroPickerHotkeyModifiers", default: Int(NSEvent.ModifierFlags.command.rawValue)) var macroPickerHotkeyModifiers: Int
     @ObservationIgnored @Setting("retentionDays", default: 30)        var retentionDays: Int
     @ObservationIgnored @Setting("maxHistoryCount", default: 1000)    var maxHistoryCount: Int
     @ObservationIgnored @Setting("maxItemSizeMB", default: 10)         var maxItemSizeMB: Int
