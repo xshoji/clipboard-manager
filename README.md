@@ -83,6 +83,21 @@ swift build
 
 ---
 
+## Test
+
+A lightweight launch smoke test is available. It builds the app via `swift build`, launches the executable, and verifies the process stays alive for several seconds without crashing. It does not interact with UI elements or clipboard history data.
+
+```bash
+swift test
+```
+
+Notes:
+- Run while no other `ClipboardManager` instance is running (Carbon hotkey registration conflicts otherwise, though it should not crash).
+- The app opens its real SwiftData store under `~/Library/Application Support`; the test only checks for crashes, not history contents. Clipboard monitoring will be active during the brief run.
+- Intended for local execution on macOS; headless CI environments may not be able to launch the GUI app.
+
+---
+
 ## Runtime Permissions
 
 Normal use and the Carbon global hotkey do not require any additional privacy permissions.

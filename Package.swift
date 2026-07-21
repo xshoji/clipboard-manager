@@ -25,6 +25,10 @@ let package = Package(
                 .linkedFramework("ServiceManagement"),
                 .linkedFramework("Vision"),
             ]
-        )
+        ),
+        .testTarget(
+            name: "SmokeTests",
+            dependencies: []
+        ),
     ]
 )
