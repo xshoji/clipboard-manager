@@ -76,9 +76,23 @@ struct SettingsView: View {
                         }
                     )
                 }
+               HStack {
+                   Text("Macro Picker")
+                   Spacer()
+                   MacroHotkeyRecorderView(
+                       keyCode: Binding(get: { settings.macroPickerHotkeyCode }, set: { settings.macroPickerHotkeyCode = $0 }),
+                       modifiers: Binding(get: { settings.macroPickerHotkeyModifiers }, set: { settings.macroPickerHotkeyModifiers = $0 }),
+                       onShortcutChange: { keyCode, mods in
+                           saveActionHotkey(.macroPicker, keyCode: keyCode, modifiers: mods)
+                       }
+                   )
+               }
                 Text("Defaults: Edit ⌘E, Paste Plain ⌘P. Set modifiers clear to unset an action.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+               Text("Macro Picker opens a keyboard-driven list: ↑/↓ to navigate, Return to run, Esc to close.")
+                   .font(.caption2)
+                   .foregroundStyle(.secondary)
             }
 
             Section("Macro Scripts") {
@@ -230,6 +244,7 @@ struct SettingsView: View {
     private enum ActionHotkeyKind {
         case edit
         case pastePlain
+       case macroPicker
     }
 
     /// Persists action-hotkey changes ( via `MacroHotkeyRecorderView` Clear/Record ) and notifies AppDelegate to re-register immediately.
@@ -240,32 +255,20 @@ struct SettingsView: View {
         // no-op. `MacroHotkeyRecorderView` writes the new value through the Binding's
         // `set` before invoking `onShortcutChange`, so we revert here on collision.
         if modifiers != 0 {
-            let prevEditKC = settings.editHotkeyCode
-            let prevEditMods = settings.editHotkeyModifiers
-            let prevPlainKC = settings.pastePlainHotkeyCode
-            let prevPlainMods = settings.pastePlainHotkeyModifiers
-            let collides: Bool
+            // Snapshot all action hotkey bindings so we can revert the one that was
+            // already written by the Binding's `set` if a collision is detected.
+            let prev = snapshotActionHotkeys()
+            // Build the candidate binding table with the new value applied.
+            var candidate = prev
             switch kind {
-            case .edit:
-                collides = (settings.pastePlainHotkeyModifiers != 0
-                            && keyCode == settings.pastePlainHotkeyCode
-                            && modifiers == settings.pastePlainHotkeyModifiers)
-            case .pastePlain:
-                collides = (settings.editHotkeyModifiers != 0
-                            && keyCode == settings.editHotkeyCode
-                            && modifiers == settings.editHotkeyModifiers)
+            case .edit:        candidate.edit = (keyCode, modifiers)
+            case .pastePlain:  candidate.pastePlain = (keyCode, modifiers)
+            case .macroPicker: candidate.macroPicker = (keyCode, modifiers)
             }
-            if collides {
+            if collidingActionHotkey(for: kind, candidate: candidate) != nil {
                 // Revert the binding that was already written by the Binding's `set` so
                 // the recorder display and the persisted value stay consistent.
-                switch kind {
-                case .edit:
-                    settings.editHotkeyCode = prevEditKC
-                    settings.editHotkeyModifiers = prevEditMods
-                case .pastePlain:
-                    settings.pastePlainHotkeyCode = prevPlainKC
-                    settings.pastePlainHotkeyModifiers = prevPlainMods
-                }
+                revertActionHotkey(kind: kind, to: prev)
                 showActionHotkeyDuplicateError = true
                 return
             }
@@ -277,7 +280,62 @@ struct SettingsView: View {
         case .pastePlain:
             settings.pastePlainHotkeyCode = keyCode
             settings.pastePlainHotkeyModifiers = modifiers
+        case .macroPicker:
+            settings.macroPickerHotkeyCode = keyCode
+            settings.macroPickerHotkeyModifiers = modifiers
         }
         NotificationCenter.default.post(name: .actionHotkeysChanged, object: nil)
+    }
+
+    /// Snapshot of all window-scoped action hotkey bindings for duplicate detection.
+    private struct ActionHotkeySnapshot {
+        var edit: (Int, Int)
+        var pastePlain: (Int, Int)
+        var macroPicker: (Int, Int)
+    }
+
+    private func snapshotActionHotkeys() -> ActionHotkeySnapshot {
+        ActionHotkeySnapshot(
+            edit: (settings.editHotkeyCode, settings.editHotkeyModifiers),
+            pastePlain: (settings.pastePlainHotkeyCode, settings.pastePlainHotkeyModifiers),
+            macroPicker: (settings.macroPickerHotkeyCode, settings.macroPickerHotkeyModifiers)
+        )
+    }
+
+    /// Returns the kind that the candidate for `kind` collides with, if any.
+    /// A collision is an exact (keyCode, modifiers) match where both sides have non-zero modifiers.
+    private func collidingActionHotkey(for kind: ActionHotkeyKind, candidate: ActionHotkeySnapshot) -> ActionHotkeyKind? {
+        let pairs: [(ActionHotkeyKind, (Int, Int))] = [
+            (.edit, candidate.edit),
+            (.pastePlain, candidate.pastePlain),
+            (.macroPicker, candidate.macroPicker),
+        ]
+        let target: (Int, Int) = {
+            switch kind {
+            case .edit: return candidate.edit
+            case .pastePlain: return candidate.pastePlain
+            case .macroPicker: return candidate.macroPicker
+            }
+        }()
+        guard target.1 != 0 else { return nil }
+        for (otherKind, other) in pairs where otherKind != kind {
+            guard other.1 != 0 else { continue }
+            if other.0 == target.0 && other.1 == target.1 { return otherKind }
+        }
+        return nil
+    }
+
+    private func revertActionHotkey(kind: ActionHotkeyKind, to snapshot: ActionHotkeySnapshot) {
+        switch kind {
+        case .edit:
+            settings.editHotkeyCode = snapshot.edit.0
+            settings.editHotkeyModifiers = snapshot.edit.1
+        case .pastePlain:
+            settings.pastePlainHotkeyCode = snapshot.pastePlain.0
+            settings.pastePlainHotkeyModifiers = snapshot.pastePlain.1
+        case .macroPicker:
+            settings.macroPickerHotkeyCode = snapshot.macroPicker.0
+            settings.macroPickerHotkeyModifiers = snapshot.macroPicker.1
+        }
     }
 }
