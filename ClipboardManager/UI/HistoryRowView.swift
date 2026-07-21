@@ -71,12 +71,12 @@ struct HistoryRowView: View {
             Image(nsImage: img)
                 .resizable()
                 .scaledToFit()
-                .frame(width: 24, height: 24)
+                .frame(width: 40, height: 40)
         } else {
             Image(nsImage: AppIconResolver.icon(forBundleID: entity.sourceBundleID))
                 .resizable()
                 .scaledToFit()
-                .frame(width: 24, height: 24)
+                .frame(width: 32, height: 32)
         }
     }
 
