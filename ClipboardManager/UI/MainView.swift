@@ -11,6 +11,7 @@ struct MainView: View {
     let onShowSettings: () -> Void
     @State private var editingEntity: ClipboardEntity?
     @State private var sidebarVisible: Bool
+   @State private var macroPickerPresented: Bool = false
 
     init(
         focusSearch: Bool,
@@ -45,6 +46,20 @@ struct MainView: View {
             NSApp.keyWindow?.close()
             AppActivator.shared.activatePreviousApp()
         }
+       .overlay {
+           if macroPickerPresented {
+               MacroPickerOverlay(
+                   macros: settings.macroScripts,
+                   onSelect: { macro in
+                       macroPickerPresented = false
+                       runMacro(macro)
+                   },
+                   onCancel: { macroPickerPresented = false }
+               )
+               .transition(.opacity)
+           }
+       }
+       .animation(.easeOut(duration: 0.12), value: macroPickerPresented)
         .sheet(item: $editingEntity) { entity in
             TextEditView(original: entity)
         }
@@ -74,6 +89,16 @@ struct MainView: View {
                 editingEntity = entity
             }
         }
+       .onReceive(NotificationCenter.default.publisher(for: .macroPickerTriggered)) { _ in
+           // Cmd+M (default) while the history window is visible. Toggle so Cmd+M both
+           // opens and closes the overlay. Beep if no entity is selected (AppDelegate
+           // already guards this, but double-check here for safety).
+           guard selectedEntity != nil else {
+               NSSound.beep()
+               return
+           }
+           macroPickerPresented.toggle()
+       }
     }
 
     /// Direct paste from the history list (double-click / Enter).
@@ -92,6 +117,18 @@ struct MainView: View {
             needsSynthetic: settings.needsAccessibilityForSyntheticPaste
         )
     }
+
+   /// Runs the given Macro against the currently selected entity (used by the
+   /// Macro Picker overlay's Enter handler). Mirrors `FooterBar.runMacro` and
+   /// `AppDelegate.runMacroFromHotkey`: Macro execution is offloaded to a
+   /// background Task so the main thread is not blocked (review #4), and
+   /// `MacroPasteService` handles success / failure fallback.
+   private func runMacro(_ macro: MacroScript) {
+       guard let entity = selectedEntity else { return }
+       Task { @MainActor in
+           _ = await MacroPasteService.run(macro: macro, entity: entity, settings: settings)
+       }
+   }
 
     @ViewBuilder
     private var content: some View {
