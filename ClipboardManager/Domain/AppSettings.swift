@@ -62,6 +62,11 @@ final class AppSettings: @unchecked Sendable {
     /// - `notifyOnly`: posts a notification only; does not restore the pasteboard or the previous app.
     /// - `ignore`: does nothing (legacy no-alert behavior).
     @ObservationIgnored @Setting("macroFailureBehavior", default: "restoreOriginalAndNotify") var macroFailureBehavior: String
+    /// Recognition languages for the "Paste Plain" → image OCR flow.
+    /// Default is English-only (`["en-US"]`) per the user's decision. The user can
+    /// switch the language set in Settings. Vision accepts BCP-47 identifiers; an
+    /// empty array falls back to Vision's defaults, so we keep the default non-empty.
+    @ObservationIgnored @Setting("ocrLanguages", default: ["en-US"]) var ocrLanguages: [String]
 
     var isAlwaysOnTop: Bool = false {
         didSet { UserDefaults.standard.set(isAlwaysOnTop, forKey: "isAlwaysOnTop") }

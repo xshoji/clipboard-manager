@@ -287,6 +287,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSSound.beep()
             return
         }
+        // Image entries go through the OCR → paste flow so the user gets the
+        // recognized text instead of an image on the pasteboard. Mirrors
+        // `FooterBar.paste(rich: false)` for the image case.
+        if entity.isImage {
+            Task { @MainActor in
+                await OcrPasteService.run(entity: entity, settings: self.settings)
+            }
+            return
+        }
         // Register a suppression range BEFORE the write so the utility-queue poll cannot
         // race with the pasteboard write and save our own write as a history item (review #6).
         let pre = NSPasteboard.general.changeCount
@@ -643,4 +652,7 @@ extension Notification.Name {
    /// `MainView` observes this and shows the `MacroPickerView` overlay so the user can
    /// pick a Macro with the keyboard and run it against the currently selected entity.
    static let macroPickerTriggered = Notification.Name("macroPickerTriggered")
+    /// Posted by `OcrPasteService` when an OCR-driven Paste Plain starts/ends so
+    /// `FooterBar` can show/hide its progress indicator. `userInfo["inProgress"]` is Bool.
+    static let ocrProgressDidChange = Notification.Name("ocrProgressDidChange")
 }

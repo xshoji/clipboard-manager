@@ -22,7 +22,8 @@ let package = Package(
                 .linkedFramework("Carbon"),
                 .linkedFramework("CoreImage"),
                 .linkedFramework("UserNotifications"),
-                .linkedFramework("ServiceManagement")
+                .linkedFramework("ServiceManagement"),
+                .linkedFramework("Vision"),
             ]
         )
     ]

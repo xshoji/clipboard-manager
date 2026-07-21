@@ -158,6 +158,20 @@ struct SettingsView: View {
                 Button("Request Accessibility permission") {
                     InputPermission().requestAccessibility()
                 }
+                Divider()
+                Text("Paste Plain on an image runs OCR and pastes the recognized text. Choose the recognition language set.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("OCR languages", selection: Binding(
+                    get: { settings.ocrLanguages },
+                    set: { settings.ocrLanguages = $0 }
+                )) {
+                    Text("English").tag(["en-US"])
+                    Text("Japanese").tag(["ja-JP"])
+                    Text("Japanese + English").tag(["ja-JP", "en-US"])
+                    Text("Chinese (Simplified)").tag(["zh-Hans"])
+                    Text("Korean").tag(["ko-KR"])
+                }
             }
 
             Section("UI") {
