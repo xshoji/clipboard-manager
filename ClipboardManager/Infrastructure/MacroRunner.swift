@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-enum HookError: Error, CustomStringConvertible {
+enum MacroError: Error, CustomStringConvertible {
     case scriptPathOutsideHome
     case fingerprintMismatch
     case fingerprintUnavailable
@@ -16,31 +16,31 @@ enum HookError: Error, CustomStringConvertible {
         case .scriptPathOutsideHome: return "Script path must be inside $HOME."
         case .fingerprintMismatch: return "Script fingerprint mismatch. Re-register in Settings."
         case .fingerprintUnavailable: return "Script fingerprint not available. Re-register in Settings."
-        case .timeout: return "Hook script timed out (>5s)."
-        case .exitStatus(let s): return "Hook script exited with status \(s)."
-        case .missingScript: return "Hook script file not found."
-        case .emptyInlineScript: return "Inline Hook script is empty."
-        case .invalidOutputEncoding: return "Hook output is not valid UTF-8 text."
+        case .timeout: return "Macro script timed out (>5s)."
+        case .exitStatus(let s): return "Macro script exited with status \(s)."
+        case .missingScript: return "Macro script file not found."
+        case .emptyInlineScript: return "Inline Macro script is empty."
+        case .invalidOutputEncoding: return "Macro output is not valid UTF-8 text."
         }
     }
 }
 
-enum HookRunner {
-    /// Sendable input for Hook execution. `ClipboardEntity` (@Model, non-Sendable) cannot be passed directly to `Task.detached`,
+enum MacroRunner {
+    /// Sendable input for Macro execution. `ClipboardEntity` (@Model, non-Sendable) cannot be passed directly to `Task.detached`,
     /// so only the necessary information is extracted before execution (review #4).
-    struct HookInput: Sendable {
+    struct MacroInput: Sendable {
         let isImage: Bool
         let imageData: Data?
         let text: String?
         let sourceBundleID: String?
     }
 
-    /// Runs the Hook script on a background queue and returns the resulting Data.
+    /// Runs the Macro script on a background queue and returns the resulting Data.
     /// Does not block the main thread (review #4).
     /// On timeout, sends SIGINT → SIGTERM, then waits reliably with `waitUntilExit()` (review #3).
     static func runAsync(
-        script: HookScript,
-        input: HookInput,
+        script: MacroScript,
+        input: MacroInput,
         verifyFingerprint: Bool
     ) async throws -> Data {
         try await Task.detached(priority: .userInitiated) {
@@ -48,11 +48,11 @@ enum HookRunner {
         }.value
     }
 
-    /// Synchronous Hook execution. Intended to be called on a background Task.
+    /// Synchronous Macro execution. Intended to be called on a background Task.
     /// Calling directly from the main thread blocks the UI while spinning the RunLoop.
     static func run(
-        script: HookScript,
-        input: HookInput,
+        script: MacroScript,
+        input: MacroInput,
         verifyFingerprint: Bool
     ) throws -> Data {
         let fm = FileManager.default
@@ -61,7 +61,7 @@ enum HookRunner {
         let inputURL = URL.fileTemporary("cb_input", ext: ext, base: tmp)
         let outputURL = URL.fileTemporary("cb_output", ext: ext, base: tmp)
         let inlineScriptURL = script.inlineScript.map { _ in
-            URL.fileTemporary("cb_hook", ext: "sh", base: tmp)
+            URL.fileTemporary("cb_macro", ext: "sh", base: tmp)
         }
         defer {
             try? fm.removeItem(at: inputURL)
@@ -74,14 +74,14 @@ enum HookRunner {
         let executableScriptPath: String
         if let body = script.inlineScript, let inlineScriptURL {
             guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw HookError.emptyInlineScript
+                throw MacroError.emptyInlineScript
             }
             if verifyFingerprint {
                 guard let stored = script.lastFingerprint else {
-                    throw HookError.fingerprintUnavailable
+                    throw MacroError.fingerprintUnavailable
                 }
                 let actual = HashUtil.sha256Hex(of: Data(body.utf8))
-                if actual != stored { throw HookError.fingerprintMismatch }
+                if actual != stored { throw MacroError.fingerprintMismatch }
             }
             guard fm.createFile(
                 atPath: inlineScriptURL.path,
@@ -96,18 +96,18 @@ enum HookRunner {
             executableScriptPath = inlineScriptURL.path
         } else {
             // remaining-features #5, #14: validate using the normalized real path.
-            let validation = HookScriptPathValidator.validate(path: script.scriptPath)
-            guard validation.fileExists else { throw HookError.missingScript }
-            guard validation.isInsideHome else { throw HookError.scriptPathOutsideHome }
+            let validation = MacroScriptPathValidator.validate(path: script.scriptPath)
+            guard validation.fileExists else { throw MacroError.missingScript }
+            guard validation.isInsideHome else { throw MacroError.scriptPathOutsideHome }
             if verifyFingerprint {
                 // Fail-closed: refuse execution when neither stored nor actual file fingerprints are available (remaining-features #5).
                 guard let stored = script.lastFingerprint else {
-                    throw HookError.fingerprintUnavailable
+                    throw MacroError.fingerprintUnavailable
                 }
                 guard let actual = validation.fingerprint else {
-                    throw HookError.fingerprintUnavailable
+                    throw MacroError.fingerprintUnavailable
                 }
-                if actual != stored { throw HookError.fingerprintMismatch }
+                if actual != stored { throw MacroError.fingerprintMismatch }
             }
             executableScriptPath = validation.resolvedPath
         }
@@ -136,12 +136,12 @@ enum HookRunner {
 
         switch proc.terminationReason {
         case .uncaughtSignal:
-            throw HookError.timeout
+            throw MacroError.timeout
         default:
             break
         }
         if proc.terminationStatus != 0 {
-            throw HookError.exitStatus(proc.terminationStatus)
+            throw MacroError.exitStatus(proc.terminationStatus)
         }
 
         if let outData = fm.contents(atPath: outputURL.path), !outData.isEmpty {
@@ -151,7 +151,7 @@ enum HookRunner {
         return try Data(contentsOf: inputURL)
     }
 
-    private static func writeInput(to url: URL, input: HookInput) throws {
+    private static func writeInput(to url: URL, input: MacroInput) throws {
         if input.isImage, let png = input.imageData {
             try png.write(to: url)
         } else if let t = input.text {

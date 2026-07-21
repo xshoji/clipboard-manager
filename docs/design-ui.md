@@ -81,11 +81,11 @@ The footer is a single horizontal bar with the following actions. Actions operat
 - **Clear All**: Deletes all history entries. Asks for confirmation.
 - **Item Info**: Shows a popover/sheet with metadata for the focused entry (source app, timestamp, kind, size).
 
-### 5.5 Run Hook ▾ (Optional / Future)
+### 5.5 Run Macro ▾ (Optional / Future)
 
-- If paste-hook transform scripts are registered, a dropdown shows the list of scripts.
+- If paste-macro transform scripts are registered, a dropdown shows the list of scripts.
 - Selecting a script runs it against the focused entry's content and pastes the result (still requires `Cmd+V`).
-- See `docs/design-app.md §2.2.2` for the hook feature contract.
+- See `docs/design-app.md §2.2.2` for the macro feature contract.
 
 ## 6. Color Theme
 
@@ -107,7 +107,7 @@ A separate standard-style window (not the menu bar popup) launched from the menu
    - Max item size (if implemented)
 3. **Paste**
    - Default paste mode (Rich / Plain)
-   - Paste hook script registration (file paths, with confirmation dialog and fingerprint warning)
+   - Paste macro script registration (file paths, with confirmation dialog and fingerprint warning)
 4. **Permissions**
    - Accessibility permission status and a button to open System Settings
    - Explanation of what the permission is used for (Preview window monitoring for image editing)

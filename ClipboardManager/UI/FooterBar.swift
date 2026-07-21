@@ -6,7 +6,7 @@ struct FooterBar: View {
     let selected: Binding<ClipboardEntity?>
     let onEdit: (ClipboardEntity) -> Void
     let onClearAll: () -> Void
-    @State private var showHookMenu: Bool = false
+    @State private var showMacroMenu: Bool = false
     @State private var showMoreMenu: Bool = false
     @State private var showInfo: String?
 
@@ -16,7 +16,7 @@ struct FooterBar: View {
             actionButton("Paste Plain", system: "textformat") { paste(rich: false) }
             actionButton("Just Copy", system: "doc.on.doc") { justCopy() }
             actionButton("Edit", system: "square.and.pencil") { editSelected() }
-            hookMenuButton
+            macroMenuButton
             Spacer()
             moreMenu
         }
@@ -40,18 +40,18 @@ struct FooterBar: View {
         .help(title)
     }
 
-    private var hookMenuButton: some View {
+    private var macroMenuButton: some View {
         Menu {
-            ForEach(settings.hookScripts) { hook in
-                Button(hook.name) { runHook(hook) }
+            ForEach(settings.macroScripts) { macro in
+                Button(macro.name) { runMacro(macro) }
             }
-            if settings.hookScripts.isEmpty {
-                Text("No hooks registered").foregroundStyle(.secondary)
+            if settings.macroScripts.isEmpty {
+                Text("No macros registered").foregroundStyle(.secondary)
             }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.2.squarepath")
-                Text("Run Hook")
+                Text("Run Macro")
                 Image(systemName: "chevron.down").font(.caption)
             }
             .padding(.horizontal, 10)
@@ -60,7 +60,7 @@ struct FooterBar: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.visible)
-        .help("Run paste hook")
+        .help("Run paste macro")
     }
 
     private var moreMenu: some View {
@@ -107,12 +107,12 @@ struct FooterBar: View {
         ClipboardMonitor.shared?.finalizeSuppressionAfterWrite(preChangeCount: pre)
     }
 
-    private func runHook(_ hook: HookScript) {
+    private func runMacro(_ macro: MacroScript) {
         guard let entity = selected.wrappedValue else { return }
-        // remaining-features #6: on failure HookPasteService restores the original content to the pasteboard and returns to the previous app.
-        // HookRunner runs on a background queue, so the main thread is not blocked (review #4).
+        // remaining-features #6: on failure MacroPasteService restores the original content to the pasteboard and returns to the previous app.
+        // MacroRunner runs on a background queue, so the main thread is not blocked (review #4).
         Task { @MainActor in
-            _ = await HookPasteService.run(hook: hook, entity: entity, settings: settings)
+            _ = await MacroPasteService.run(macro: macro, entity: entity, settings: settings)
         }
     }
 

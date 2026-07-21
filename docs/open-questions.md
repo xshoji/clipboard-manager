@@ -11,9 +11,9 @@
 - **If enabled**: Requires Accessibility permission. Must add a separate grant flow and clear UX copy. Risk of input-event permission revocation.
 - **Status**: Deferred. Not blocking v1.
 
-### 1.2 Hook script failure behavior
+### 1.2 Macro script failure behavior
 
-- **Question**: When a paste-hook transform script exits non-zero or times out, should the app paste the original content, show an error notification, or both?
+- **Question**: When a paste-macro transform script exits non-zero or times out, should the app paste the original content, show an error notification, or both?
 - **Default (current)**: Paste the original content.
 - **Status**: Deferred. Current behavior is acceptable for v1 but should be confirmed.
 
@@ -93,7 +93,7 @@
 
 ## 6. Security
 
-### 6.1 Hook script trust model
+### 6.1 Macro script trust model
 
 - **Question**: Is the current model (home-directory-only + SHA-256 fingerprint + registration confirmation) sufficient, or should scripts be sandboxed (e.g., restricted to read stdin/write stdout only)?
 - **Default (current)**: File-path registration with fingerprint + path restriction + registration confirmation dialog.

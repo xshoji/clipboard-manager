@@ -55,22 +55,22 @@ ClipboardManager/
 │   ├── FooterBar.swift             # action buttons (Standard / Paste Plain / Edit / More)
 │   ├── TextEditView.swift          # text edit sheet
 │   ├── SettingsView.swift          # settings window
-│   ├── HookScriptRowView.swift     # hook script settings row
-│   ├── HookConfirmSheet.swift      # hook execution confirmation sheet
+│   ├── MacroScriptRowView.swift     # macro script settings row
+│   ├── MacroConfirmSheet.swift      # macro execution confirmation sheet
 │   ├── HotkeyRecorderView.swift    # hotkey registration UI
 │   └── Colors.swift                # color definitions
 ├── Domain/
 │   ├── ClipboardEntity.swift       # SwiftData @Model
-│   ├── HookScript.swift            # transform script setting
-│   ├── HookScriptPathValidator.swift # hook script path validation rule
+│   ├── MacroScript.swift            # transform script setting
+│   ├── MacroScriptPathValidator.swift # macro script path validation rule
 │   ├── AppSettings.swift           # UserDefaults wrapper
 │   ├── AppState.swift              # runtime state
 │   └── DedupCache.swift            # dedup cache
 ├── Infrastructure/
 │   ├── ClipboardMonitor.swift      # clipboard monitoring (pasteboard polling)
 │   ├── HotkeyManager.swift         # Carbon API hotkey management
-│   ├── HookRunner.swift            # script execution
-│   ├── HookPasteService.swift      # hook + paste flow
+│   ├── MacroRunner.swift            # script execution
+│   ├── MacroPasteService.swift      # macro + paste flow
 │   ├── PreviewImageEditor.swift    # Preview.app image editing integration
 │   ├── PersistenceController.swift # SwiftData container management
 │   ├── PersistenceSchema.swift    # SwiftData VersionedSchema + MigrationPlan
@@ -84,7 +84,7 @@ ClipboardManager/
 │   └── MenuBarController.swift     # menu bar residency
 └── Resources/
     ├── Assets.xcassets             # app icon, color definitions
-    └── DefaultHooks                # bundled default hook scripts
+    └── DefaultMacros                # bundled default macro scripts
 ```
 
 ### Layer Responsibilities
@@ -115,7 +115,7 @@ ClipboardManager/
 
 - Never discard or rewrite unrelated user changes.
 - Do not delete clipboard history or alter migrations without explicit approval.
-- Treat hook scripts as untrusted: validate paths and preserve timeout/failure handling.
+- Treat macro scripts as untrusted: validate paths and preserve timeout/failure handling.
 - Keep synthetic paste opt-in; do not request accessibility access by default.
 - Avoid blocking the main actor with polling, image work, persistence cleanup, or processes.
 

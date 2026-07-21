@@ -14,15 +14,15 @@ final class HotkeyManager {
     private var registeredMainKeyCode: Int?
     private var registeredMainModifiers: Int?
 
-    /// Registration table for per-Hook shortcuts.
+    /// Registration table for per-Macro shortcuts.
     /// The key is EventHotKeyID.id (a unique internal sequence number).
-    private struct HookRegistration {
-        let hookID: UInt32      // The original HookScript.id.hashValue converted to UInt32
+    private struct MacroRegistration {
+        let macroID: UInt32      // The original MacroScript.id.hashValue converted to UInt32
         let hotkeyRef: EventHotKeyRef
         let callback: @MainActor () -> Void
     }
-    private var hookRegistrations: [UInt32: HookRegistration] = [:]     // [eventID: registration]
-    private var hookIDToEventID: [UInt32: UInt32] = [:]               // [hookID: eventID]
+    private var macroRegistrations: [UInt32: MacroRegistration] = [:]     // [eventID: registration]
+    private var macroIDToEventID: [UInt32: UInt32] = [:]               // [macroID: eventID]
     private var eventIDCounter: UInt32 = 0xABCD_1000
 
     /// Registration table for per-action shortcuts (edit / paste plain / etc.).
@@ -99,7 +99,7 @@ final class HotkeyManager {
 
     func unregister() {
         unregisterMain()
-        unregisterAllHookHotkeys()
+        unregisterAllMacroHotkeys()
         unregisterAllActionHotkeys()
         if let h = eventHandler {
             RemoveEventHandler(h)
@@ -107,24 +107,24 @@ final class HotkeyManager {
         }
     }
 
-    // MARK: - Per-Hook shortcuts (design-app.md §2.2.2)
+    // MARK: - Per-Macro shortcuts (design-app.md §2.2.2)
 
-    /// Registers the hotkey for a given HookScript with Carbon.
+    /// Registers the hotkey for a given MacroScript with Carbon.
     /// - Parameters:
-    ///   - hookID: Stable ID converted from HookScript.id to UInt32
+    ///   - macroID: Stable ID converted from MacroScript.id to UInt32
     ///   - keyCode: Physical key code
     ///   - modifiers: Raw Cocoa modifier flags (OR of cmd/ctrl/option/shift)
     ///   - callback: MainActor callback invoked on firing
     /// - Returns: Whether registration succeeded. Returns `false` if modifiers are 0 or Carbon registration fails.
     @discardableResult
-    func registerHookHotkey(hookID: UInt32, keyCode: Int, modifiers: Int, callback: @escaping @MainActor () -> Void) -> Bool {
-        unregisterHookHotkey(hookID: hookID)
+    func registerMacroHotkey(macroID: UInt32, keyCode: Int, modifiers: Int, callback: @escaping @MainActor () -> Void) -> Bool {
+        unregisterMacroHotkey(macroID: macroID)
         // macOS physical key code 0 corresponds to the A key, so it cannot be used to mean "unset".
         guard modifiers != 0 else { return false }
         ensureEventHandlerInstalled()
 
         let mods = carbonModifiers(for: modifiers)
-        let eventID = nextHookEventID(for: hookID)
+        let eventID = nextMacroEventID(for: macroID)
         var ref: EventHotKeyRef?
         let reg = RegisterEventHotKey(
             UInt32(keyCode), mods,
@@ -132,31 +132,31 @@ final class HotkeyManager {
             GetApplicationEventTarget(), 0, &ref
         )
         guard reg == noErr, let ref else {
-            Self.logger.error("Hook hotkey RegisterEventHotKey failed: \(reg)")
+            Self.logger.error("Macro hotkey RegisterEventHotKey failed: \(reg)")
             return false
         }
-        hookRegistrations[eventID] = HookRegistration(hookID: hookID, hotkeyRef: ref, callback: callback)
+        macroRegistrations[eventID] = MacroRegistration(macroID: macroID, hotkeyRef: ref, callback: callback)
         return true
     }
 
-    func unregisterHookHotkey(hookID: UInt32) {
-        guard let eventID = hookIDToEventID[hookID], let reg = hookRegistrations[eventID] else { return }
+    func unregisterMacroHotkey(macroID: UInt32) {
+        guard let eventID = macroIDToEventID[macroID], let reg = macroRegistrations[eventID] else { return }
         UnregisterEventHotKey(reg.hotkeyRef)
-        hookRegistrations.removeValue(forKey: eventID)
-        hookIDToEventID.removeValue(forKey: hookID)
+        macroRegistrations.removeValue(forKey: eventID)
+        macroIDToEventID.removeValue(forKey: macroID)
     }
 
-    func unregisterAllHookHotkeys() {
-        for (_, reg) in hookRegistrations {
+    func unregisterAllMacroHotkeys() {
+        for (_, reg) in macroRegistrations {
             UnregisterEventHotKey(reg.hotkeyRef)
         }
-        hookRegistrations.removeAll()
-        hookIDToEventID.removeAll()
+        macroRegistrations.removeAll()
+        macroIDToEventID.removeAll()
     }
 
     // MARK: - Per-action shortcuts (window-scoped; design: edit / paste plain / etc.)
 
-    /// Registers a window-scoped action hotkey. The actionID namespace is independent from hookIDs.
+    /// Registers a window-scoped action hotkey. The actionID namespace is independent from macroIDs.
     /// - Parameters:
     ///   - actionID: Stable identifier per action ( e.g. 0x0001 = edit, 0x0002 = paste plain ). Must be non-zero and unique within the app.
     ///   - keyCode: Physical key code
@@ -242,7 +242,7 @@ final class HotkeyManager {
             reg.callback()
             return
         }
-        if let reg = hookRegistrations[eventID] {
+        if let reg = macroRegistrations[eventID] {
             reg.callback()
             return
         }
@@ -259,11 +259,11 @@ final class HotkeyManager {
         return mods
     }
 
-    private func nextHookEventID(for hookID: UInt32) -> UInt32 {
-        if let existing = hookIDToEventID[hookID] { return existing }
+    private func nextMacroEventID(for macroID: UInt32) -> UInt32 {
+        if let existing = macroIDToEventID[macroID] { return existing }
         let id = eventIDCounter
         eventIDCounter &+= 1
-        hookIDToEventID[hookID] = id
+        macroIDToEventID[macroID] = id
         return id
     }
 }

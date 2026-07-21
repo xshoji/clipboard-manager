@@ -17,7 +17,7 @@ Invoke the UI via a global hotkey to search, edit, and paste text/image clipboar
 - **Global hotkey** — invoke the UI from any application (shortcut is configurable)
 - **Image history** — thumbnails for copied images, plus editing via macOS standard Preview.app
 - **Rich / plain paste** — choose whether to paste with or without formatting
-- **Hook scripts** — transform clipboard content at paste time with any scripting language (multiple registrations, shortcut-based invocation)
+- **Macro scripts** — transform clipboard content at paste time with any scripting language (multiple registrations, shortcut-based invocation)
 - **Menu bar resident** — no Dock icon; operate from the menu bar icon
 - **Retention & count limits** — automatic cleanup by days and/or max count
 
@@ -138,7 +138,7 @@ Preview could not overwrite files in another app's Application Support directory
 | Settings | `UserDefaults` |
 | Global hotkey | Carbon `RegisterEventHotKey` |
 | Clipboard monitoring | `NSPasteboard.changeCount` polling (0.5s) |
-| Hook script execution | `Process` |
+| Macro script execution | `Process` |
 | Image editing | `NSWorkspace.open` + Preview.app + `DispatchSourceFileSystemObject` + AX API |
 
 ---

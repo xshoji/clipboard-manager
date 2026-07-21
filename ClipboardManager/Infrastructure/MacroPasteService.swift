@@ -3,22 +3,22 @@ import AppKit
 @preconcurrency import UserNotifications
 import os
 
-/// Service that orchestrates Hook execution, pasteboard write, previous-app restoration, and failure fallback (restoring original content to pasteboard, returning to previous app, and notification).
-/// Design: design-implementation.md §4.2 / §5 (Hook failure behavior), remaining-features #6
-/// Hook execution runs on a background queue and returns to the main thread upon completion (review #4).
+/// Service that orchestrates Macro execution, pasteboard write, previous-app restoration, and failure fallback (restoring original content to pasteboard, returning to previous app, and notification).
+/// Design: design-implementation.md §4.2 / §5 (Macro failure behavior), remaining-features #6
+/// Macro execution runs on a background queue and returns to the main thread upon completion (review #4).
 @MainActor
-enum HookPasteService {
-    /// Runs the Hook. On success, writes the processed content to the pasteboard and restores the previous app.
-    /// On failure, follows `AppSettings.hookFailureBehavior`:
+enum MacroPasteService {
+    /// Runs the Macro. On success, writes the processed content to the pasteboard and restores the previous app.
+    /// On failure, follows `AppSettings.macroFailureBehavior`:
     /// `restoreOriginalAndNotify` restores the original entity content to the pasteboard, returns to the previous app, and posts a notification.
     /// `notifyOnly` posts a notification only. `silentlySkip` does nothing.
     /// - Returns: Whether it succeeded. `false` on failure.
     @discardableResult
-    static func run(hook: HookScript, entity: ClipboardEntity, settings: AppSettings) async -> Bool {
-        // HookRunner runs in a background Task so the main thread is not blocked (review #4).
+    static func run(macro: MacroScript, entity: ClipboardEntity, settings: AppSettings) async -> Bool {
+        // MacroRunner runs in a background Task so the main thread is not blocked (review #4).
         // Pasteboard restoration and app activation are order-dependent, so wait synchronously.
-        // ClipboardEntity from SwiftData is non-Sendable, so convert to Sendable HookInput before passing to the Task (review #4).
-        let input = HookRunner.HookInput(
+        // ClipboardEntity from SwiftData is non-Sendable, so convert to Sendable MacroInput before passing to the Task (review #4).
+        let input = MacroRunner.MacroInput(
             isImage: entity.isImage,
             imageData: entity.imageData,
             text: entity.text,
@@ -26,14 +26,14 @@ enum HookPasteService {
         )
         let result: Result<Data, Error>
         do {
-            let out = try await HookRunner.runAsync(
-                script: hook,
+            let out = try await MacroRunner.runAsync(
+                script: macro,
                 input: input,
-                verifyFingerprint: settings.hookSameDirectoryFingerprint
+                verifyFingerprint: settings.macroSameDirectoryFingerprint
             )
             // Avoid pasting an empty string for non-UTF8 text output by routing to the error path (review #6).
             if !entity.isImage, String(data: out, encoding: .utf8) == nil, !out.isEmpty {
-                throw HookError.invalidOutputEncoding
+                throw MacroError.invalidOutputEncoding
             }
             result = .success(out)
         } catch {
@@ -50,7 +50,7 @@ enum HookPasteService {
             handleFailure(
                 error: error,
                 entity: entity,
-                behavior: settings.hookFailureBehavior,
+                behavior: settings.macroFailureBehavior,
                 needsSynthetic: settings.needsAccessibilityForSyntheticPaste
             )
             return false
@@ -104,19 +104,19 @@ enum HookPasteService {
         behavior: String,
         needsSynthetic: Bool
     ) {
-        let message = (error as? HookError)?.description ?? error.localizedDescription
+        let message = (error as? MacroError)?.description ?? error.localizedDescription
         switch behavior {
         case "restoreOriginalAndNotify":
             restoreOriginalToPasteboard(entity: entity)
             AppActivator.shared.activatePreviousAppAndPasteSynthetically(needsSynthetic: needsSynthetic)
-            AppNotifier.notify(title: "Hook failed", body: message)
+            AppNotifier.notify(title: "Macro failed", body: message)
         case "notifyOnly":
-            AppNotifier.notify(title: "Hook failed", body: message)
+            AppNotifier.notify(title: "Macro failed", body: message)
         case "silentlySkip":
             break
         default:
             // Unknown values fall back to the safe side: notify only.
-            AppNotifier.notify(title: "Hook failed", body: message)
+            AppNotifier.notify(title: "Macro failed", body: message)
         }
     }
 }
@@ -125,7 +125,7 @@ enum HookPasteService {
 /// Throttles duplicate keys to at most one notification per second to prevent spam.
 @MainActor
 enum AppNotifier {
-    private static let logger = Logger(subsystem: "com.xshoji.ClipboardManager", category: "Hook")
+    private static let logger = Logger(subsystem: "com.xshoji.ClipboardManager", category: "Macro")
     private static var lastSentAtByKey: [String: Date] = [:]
 
     /// Disables notifications outside an app bundle (e.g., `swift run`) because `UNUserNotificationCenter` is unavailable there.

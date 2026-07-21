@@ -62,7 +62,7 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
   - Extension candidate: A "send synthetic `Cmd+V`" option can be added via settings (future). In that case, an accessibility permission grant flow is provided separately (see `docs/design-implementation.md §6`).
 - After paste, **the previous app is automatically brought to front** so the user can immediately press `Cmd+V`.
 
-#### 2.2.2 Paste Hook (Clipboard Transform Script)
+#### 2.2.2 Paste Macro (Clipboard Transform Script)
 
 - At paste time, **a script in any language** can transform the clipboard content.
 - Multiple transformations can be **registered**.
@@ -88,8 +88,8 @@ Open items are centralized in `docs/open-questions.md`. Below are the key items 
 |---|---|
 | Retention period upper bound | Decided in UI within 1 day to unlimited |
 | Max count upper bound | Assume 100 to 100000 |
-| File format passed to Hook scripts | Assume `.txt` for text, `.png` for image (finalize at impl) |
-| Hook script failure behavior | Paste original or error notification (can be decided later) |
+| File format passed to Macro scripts | Assume `.txt` for text, `.png` for image (finalize at impl) |
+| Macro script failure behavior | Paste original or error notification (can be decided later) |
 | Max item size limit | Reject huge images etc. (discuss at impl) |
 | Distribution form (signing/notarization) | See `design-implementation.md §8` |
 
@@ -99,7 +99,7 @@ Open items are centralized in `docs/open-questions.md`. Below are the key items 
 |---|---|
 | Standard | 2.2.1 Rich paste |
 | Paste Plain | 2.2.1 Plain paste |
-| Run Hook ▾ | 2.2.2 Transform script invocation |
+| Run Macro ▾ | 2.2.2 Transform script invocation |
 | Just Copy | Re-copy (no paste) |
 | Edit | 2.1.4 / 2.1.5 Edit invocation |
 | ⋯ (More menu) | 2.1.3 Individual delete / bulk delete / item info |

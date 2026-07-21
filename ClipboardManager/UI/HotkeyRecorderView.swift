@@ -57,8 +57,8 @@ struct HotkeyRecorderView: View {
     }
 }
 
-/// Recorder for editing arbitrary key bindings such as per-Hook rows. Independent of the global hotkey in settings.
-struct HookHotkeyRecorderView: View {
+/// Recorder for editing arbitrary key bindings such as per-Macro rows. Independent of the global hotkey in settings.
+struct MacroHotkeyRecorderView: View {
     let keyCode: Binding<Int>
     let modifiers: Binding<Int>
     let onShortcutChange: (Int, Int) -> Void

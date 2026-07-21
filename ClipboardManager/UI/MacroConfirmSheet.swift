@@ -1,18 +1,18 @@
 import SwiftUI
 
-/// Sheet for registering a new Hook script or confirming changes to an existing one (design-app.md §2.2.2 safeguard, design-implementation.md §5.1).
+/// Sheet for registering a new Macro script or confirming changes to an existing one (design-app.md §2.2.2 safeguard, design-implementation.md §5.1).
 ///
 /// Accepts an editable draft, validates the file path or inline body, and saves it.
-struct HookConfirmSheet: View {
-    /// Editing draft. The same sheet is used for both new and existing Hooks.
-    @State var draft: HookScript
+struct MacroConfirmSheet: View {
+    /// Editing draft. The same sheet is used for both new and existing Macros.
+    @State var draft: MacroScript
     /// Value before the path was changed. If unchanged, path-change confirmation is skipped.
     let originalPath: String
     let isNew: Bool
-    let onSave: (HookScript) -> Void
+    let onSave: (MacroScript) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var validation: HookScriptValidation?
+    @State private var validation: MacroScriptValidation?
     @State private var didBrowse: Bool = false
     @State private var selectedSource: String
     @State private var inlineDraft: String
@@ -30,21 +30,21 @@ struct HookConfirmSheet: View {
         "/usr/local/bin/zsh",
     ]
 
-    init(hook: HookScript, isNew: Bool, onSave: @escaping (HookScript) -> Void) {
-        _draft = State(initialValue: hook)
-        _selectedSource = State(initialValue: hook.inlineScript == nil ? "file" : "inline")
-        _inlineDraft = State(initialValue: hook.inlineScript ?? "")
+    init(macro: MacroScript, isNew: Bool, onSave: @escaping (MacroScript) -> Void) {
+        _draft = State(initialValue: macro)
+        _selectedSource = State(initialValue: macro.inlineScript == nil ? "file" : "inline")
+        _inlineDraft = State(initialValue: macro.inlineScript ?? "")
         _interpreterPreset = State(
-            initialValue: Self.shellPresets.contains(hook.interpreter) ? hook.interpreter : "custom"
+            initialValue: Self.shellPresets.contains(macro.interpreter) ? macro.interpreter : "custom"
         )
-        self.originalPath = hook.scriptPath
+        self.originalPath = macro.scriptPath
         self.isNew = isNew
         self.onSave = onSave
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(isNew ? "Register Hook script" : "Confirm Hook script change")
+            Text(isNew ? "Register Macro script" : "Confirm Macro script change")
                 .font(.headline)
             Text("This script will be able to read clipboard contents. Only register trusted scripts.")
                 .foregroundStyle(.secondary)
@@ -189,7 +189,7 @@ struct HookConfirmSheet: View {
     private var isInline: Bool { selectedSource == "inline" }
 
     private func revalidate() {
-        validation = isInline ? nil : HookScriptPathValidator.validate(path: draft.scriptPath)
+        validation = isInline ? nil : MacroScriptPathValidator.validate(path: draft.scriptPath)
     }
 
     // MARK: - Actions

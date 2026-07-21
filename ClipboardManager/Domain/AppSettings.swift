@@ -50,14 +50,14 @@ final class AppSettings: @unchecked Sendable {
     /// near-instant for typical copy operations. Tunable via Settings in the future.
     @ObservationIgnored @Setting("pollingIntervalMs", default: 250)   var pollingIntervalMs: Int
     @ObservationIgnored @Setting("dedupCacheSize", default: 100)      var dedupCacheSize: Int
-    @ObservationIgnored @Setting("hookSameDirectoryFingerprint", default: true) var hookSameDirectoryFingerprint: Bool
+    @ObservationIgnored @Setting("macroSameDirectoryFingerprint", default: true) var macroSameDirectoryFingerprint: Bool
     @ObservationIgnored @Setting("needsAccessibilityForSyntheticPaste", default: false) var needsAccessibilityForSyntheticPaste: Bool
     @ObservationIgnored @Setting("launchAtLogin", default: false) var launchAtLogin: Bool
-    /// Behavior when a Hook fails (design-implementation.md §5: timeout / non-zero exit).
+    /// Behavior when a Macro fails (design-implementation.md §5: timeout / non-zero exit).
     /// - `restoreOriginalAndNotify` (default): restores the original content to the pasteboard, returns to the previous app, and posts a notification.
     /// - `notifyOnly`: posts a notification only; does not restore the pasteboard or the previous app.
     /// - `ignore`: does nothing (legacy no-alert behavior).
-    @ObservationIgnored @Setting("hookFailureBehavior", default: "restoreOriginalAndNotify") var hookFailureBehavior: String
+    @ObservationIgnored @Setting("macroFailureBehavior", default: "restoreOriginalAndNotify") var macroFailureBehavior: String
 
     var isAlwaysOnTop: Bool = false {
         didSet { UserDefaults.standard.set(isAlwaysOnTop, forKey: "isAlwaysOnTop") }
@@ -78,22 +78,22 @@ final class AppSettings: @unchecked Sendable {
         didSet { UserDefaults.standard.set(windowPositionMode, forKey: "windowPositionMode") }
     }
 
-    @ObservationIgnored @Setting("hookScriptsData", default: Data()) var hookScriptsData: Data
+    @ObservationIgnored @Setting("macroScriptsData", default: Data()) var macroScriptsData: Data
 
-    /// Hook script registrations.
+    /// Macro script registrations.
     /// Threading invariant (review #12): this property is mutated only on the main actor
     /// (SwiftUI views and `@MainActor` AppDelegate). `AppSettings` is `@unchecked Sendable`
-    /// because of the `shared` singleton; the `hookScripts` mutation path is safe as long
+    /// because of the `shared` singleton; the `macroScripts` mutation path is safe as long
     /// as callers keep main-actor access. Mutation is done by whole-array reassignment
-    /// (`settings.hookScripts = arr`), so `didSet` reliably fires and re-encodes to
-    /// `hookScriptsData` + posts `.hookScriptsChanged`. A full `@Observable`+`Sendable`
+    /// (`settings.macroScripts = arr`), so `didSet` reliably fires and re-encodes to
+    /// `macroScriptsData` + posts `.macroScriptsChanged`. A full `@Observable`+`Sendable`
     /// migration would make this enforced by the type system; deferred until that refactor.
-    var hookScripts: [HookScript] = [] {
+    var macroScripts: [MacroScript] = [] {
         didSet {
-            if let data = try? JSONEncoder().encode(hookScripts) {
-                hookScriptsData = data
+            if let data = try? JSONEncoder().encode(macroScripts) {
+                macroScriptsData = data
             }
-            NotificationCenter.default.post(name: .hookScriptsChanged, object: nil)
+            NotificationCenter.default.post(name: .macroScriptsChanged, object: nil)
         }
     }
 
@@ -104,9 +104,9 @@ final class AppSettings: @unchecked Sendable {
         previewWrapMode   = UserDefaults.standard.object(forKey: "previewWrapMode")   as? String ?? previewWrapMode
         windowPositionMode = UserDefaults.standard.object(forKey: "windowPositionMode") as? String ?? windowPositionMode
 
-        if !hookScriptsData.isEmpty,
-           let decoded = try? JSONDecoder().decode([HookScript].self, from: hookScriptsData) {
-            hookScripts = decoded
+        if !macroScriptsData.isEmpty,
+           let decoded = try? JSONDecoder().decode([MacroScript].self, from: macroScriptsData) {
+            macroScripts = decoded
         }
     }
 
@@ -131,9 +131,9 @@ extension UserDefaults {
         set { set(newValue, forKey: "hotkeyKeyCode") }
     }
 
-    /// Dynamic accessor for KVO-observing `hookScriptsData`.
-    @objc dynamic var hookScriptsRaw: Data {
-        get { object(forKey: "hookScriptsData") as? Data ?? Data() }
-        set { set(newValue, forKey: "hookScriptsData") }
+    /// Dynamic accessor for KVO-observing `macroScriptsData`.
+    @objc dynamic var macroScriptsRaw: Data {
+        get { object(forKey: "macroScriptsData") as? Data ?? Data() }
+        set { set(newValue, forKey: "macroScriptsData") }
     }
 }

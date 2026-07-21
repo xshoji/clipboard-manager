@@ -6,7 +6,7 @@ import AppKit
 /// character the user pressed (e.g. pressing the physical "B" key on a US layout returns "B",
 /// on a Dvorak layout returns "X").
 ///
-/// This is shared by all hotkey recorders (global hotkey + per-Hook + action hotkeys) so the
+/// This is shared by all hotkey recorders (global hotkey + per-Macro + action hotkeys) so the
 /// key-to-symbol logic is defined in one place (DRY). UI layers must not reach into Carbon directly.
 enum KeyLabelRenderer {
     /// Returns a display string for the given virtual key code.

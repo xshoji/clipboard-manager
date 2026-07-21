@@ -16,7 +16,7 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 4. **History edit**:
    - Text: inline edit, save as new entry (original preserved).
    - Image: edit in Preview.app as an external process; save (Cmd+S) and close window to add edited image as new entry (original preserved).
-5. **Paste hook scripts**: User-registered scripts transform clipboard content at paste time; invoked via a shortcut.
+5. **Paste macro scripts**: User-registered scripts transform clipboard content at paste time; invoked via a shortcut.
 6. **Retention settings**: Retention period (days, or unlimited) and max count; changes apply immediately.
 7. **Plain paste toggle**: Paste as plain text (strip rich text formatting) via a dedicated action.
 8. **Menu bar residency**: No Dock icon; the app lives in the menu bar.
@@ -32,6 +32,6 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 ## 4. Out of Scope for This Memo
 
 - Detailed UI layout, color theme, and interaction specs → see `docs/design-ui.md`.
-- Technical architecture, persistence, hotkey handling, Preview integration, hook script execution, and distribution notes → see `docs/design-implementation.md`.
+- Technical architecture, persistence, hotkey handling, Preview integration, macro script execution, and distribution notes → see `docs/design-implementation.md`.
 - Deferred or undecided items → see `docs/open-questions.md`.
 - Implementation status → see `docs/remaining-features.md`.

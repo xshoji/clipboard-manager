@@ -14,13 +14,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let menuBarController: MenuBarController
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: NSWindowController?
-    /// UserDefaults watcher so per-Hook shortcut changes are applied immediately.
-    private var hookScriptsObserver: NSObjectProtocol?
+    /// UserDefaults watcher so per-Macro shortcut changes are applied immediately.
+    private var macroScriptsObserver: NSObjectProtocol?
     /// UserDefaults watcher so action-hotkey changes are applied immediately.
     private var actionHotkeysObserver: NSObjectProtocol?
 
     /// Window-scoped action hotkey IDs ( design: edit / paste plain / etc., effective only while the history window is visible ).
-    /// Stable UInt32 ids passed straight to `RegisterEventHotKey`. Must not collide with `mainRegistryID` ( 0xABCD_0001 ) or hook eventIDs ( 0xABCD_1000+ ).
+    /// Stable UInt32 ids passed straight to `RegisterEventHotKey`. Must not collide with `mainRegistryID` ( 0xABCD_0001 ) or macro eventIDs ( 0xABCD_1000+ ).
     enum ActionHotkeyID {
         static let edit: UInt32 = 0xABCD_0002
         static let pastePlain: UInt32 = 0xABCD_0003
@@ -55,9 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager.register { [weak self] in
             self?.showMainWindow()
         }
-        // Per-Hook and per-action hotkeys are window-scoped: registered when the history window is shown,
+        // Per-Macro and per-action hotkeys are window-scoped: registered when the history window is shown,
         // and unregistered when it is hidden ( design: only effective while ClipboardManager's history UI is visible ).
-        startObservingHookScriptsChanges()
+        startObservingMacroScriptsChanges()
         startObservingActionHotkeysChanges()
         menuBarController.onShow = { [weak self] in self?.showMainWindow() }
         menuBarController.onSearch = { [weak self] in self?.showMainWindow(focusSearch: true) }
@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarController.onQuit = { NSApp.terminate(nil) }
         menuBarController.install()
 
-        // Requests notification-center authorization so the user can be notified on Hook failure (remaining-features #6).
+        // Requests notification-center authorization so the user can be notified on Macro failure (remaining-features #6).
         AppNotifier.requestAuthorizationIfNeeded()
 
         // Prevents the Dock icon from lingering when only the settings window was opened and closed (review #5).
@@ -145,38 +145,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.removeObserver(self)
     }
 
-    // MARK: - Window-scoped hotkeys ( design: per-Hook + per-action shortcuts are effective only while the history window is visible )
+    // MARK: - Window-scoped hotkeys ( design: per-Macro + per-action shortcuts are effective only while the history window is visible )
 
-    /// Installs all window-scoped hotkeys: per-Hook shortcuts and per-action shortcuts ( edit / paste plain / etc. ).
+    /// Installs all window-scoped hotkeys: per-Macro shortcuts and per-action shortcuts ( edit / paste plain / etc. ).
     /// Called from `showMainWindow` so they are active only while the history window is on screen.
     func installWindowScopedHotkeys() {
-        installHookHotkeys()
+        installMacroHotkeys()
         installActionHotkeys()
     }
 
     /// Uninstalls all window-scoped hotkeys when the history window is hidden.
     func uninstallWindowScopedHotkeys() {
-        hotkeyManager.unregisterAllHookHotkeys()
+        hotkeyManager.unregisterAllMacroHotkeys()
         hotkeyManager.unregisterAllActionHotkeys()
     }
 
-    /// Re-registers all HookScript hotkeys with Carbon.
-    /// Skips Hooks whose modifier keys are 0 and unregisters any existing registration.
-    private func installHookHotkeys() {
-        hotkeyManager.unregisterAllHookHotkeys()
-        for hook in settings.hookScripts {
+    /// Re-registers all MacroScript hotkeys with Carbon.
+    /// Skips Macros whose modifier keys are 0 and unregisters any existing registration.
+    private func installMacroHotkeys() {
+        hotkeyManager.unregisterAllMacroHotkeys()
+        for macro in settings.macroScripts {
             // macOS physical key code 0 corresponds to the A key, so it cannot be used to mean "unset".
-            guard hook.hotkeyModifiers != 0 else { continue }
-            let id = Self.stableHookID(for: hook.id)
-            let ok = hotkeyManager.registerHookHotkey(
-                hookID: id,
-                keyCode: hook.hotkeyCode,
-                modifiers: hook.hotkeyModifiers
+            guard macro.hotkeyModifiers != 0 else { continue }
+            let id = Self.stableMacroID(for: macro.id)
+            let ok = hotkeyManager.registerMacroHotkey(
+                macroID: id,
+                keyCode: macro.hotkeyCode,
+                modifiers: macro.hotkeyModifiers
             ) { [weak self] in
-                self?.runHookFromHotkey(hookID: id, original: hook)
+                self?.runMacroFromHotkey(macroID: id, original: macro)
             }
             if !ok {
-                Self.logger.error("Hook hotkey registration failed for \(hook.name, privacy: .public)")
+                Self.logger.error("Macro hotkey registration failed for \(macro.name, privacy: .public)")
             }
         }
     }
@@ -227,22 +227,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Runs the Hook when its shortcut fires.
+    /// Runs the Macro when its shortcut fires.
     /// If no ClipboardEntity is selected, only beeps and does nothing (requirement: behavior when nothing is selected).
-    private func runHookFromHotkey(hookID: UInt32, original: HookScript) {
-        // Refetch the latest Hook after settings changes (the captured `original` may be a stale snapshot).
-        guard let hook = settings.hookScripts.first(where: { Self.stableHookID(for: $0.id) == hookID }) else { return }
+    private func runMacroFromHotkey(macroID: UInt32, original: MacroScript) {
+        // Refetch the latest Macro after settings changes (the captured `original` may be a stale snapshot).
+        guard let macro = settings.macroScripts.first(where: { Self.stableMacroID(for: $0.id) == macroID }) else { return }
         guard let entityID = AppState.shared.selectedEntityID,
               let entity = fetchEntity(id: entityID) else {
             NSSound.beep()
             return
         }
-        // remaining-features #6: HookPasteService handles both success (pasteboard write / return to previous app) and failure fallback.
-        // HookRunner runs on a background queue, so wrap it in a Task (review #4).
-        let hookRef = hook
+        // remaining-features #6: MacroPasteService handles both success (pasteboard write / return to previous app) and failure fallback.
+        // MacroRunner runs on a background queue, so wrap it in a Task (review #4).
+        let macroRef = macro
         let entityRef = entity
         Task { @MainActor in
-            _ = await HookPasteService.run(hook: hookRef, entity: entityRef, settings: self.settings)
+            _ = await MacroPasteService.run(macro: macroRef, entity: entityRef, settings: self.settings)
         }
     }
 
@@ -255,7 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Fires the Edit action on the currently selected entity ( image → Preview.app, text → TextEditView sheet ).
-    /// Issues a system beep if nothing is selected, mirroring `runHookFromHotkey`.
+    /// Issues a system beep if nothing is selected, mirroring `runMacroFromHotkey`.
     private func runEditAction() {
         guard let entityID = AppState.shared.selectedEntityID,
               let entity = fetchEntity(id: entityID) else {
@@ -266,7 +266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Fires the Paste Plain action on the currently selected entity ( writes plain-text only to pasteboard and returns to previous app ).
-    /// Issues a system beep if nothing is selected, mirroring `runHookFromHotkey`.
+    /// Issues a system beep if nothing is selected, mirroring `runMacroFromHotkey`.
     private func runPastePlainAction() {
         guard let entityID = AppState.shared.selectedEntityID,
               let entity = fetchEntity(id: entityID) else {
@@ -284,20 +284,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    /// Observes `hookScriptsChanged` notifications and re-registers Hook hotkeys when they change.
-    private func startObservingHookScriptsChanges() {
+    /// Observes `macroScriptsChanged` notifications and re-registers Macro hotkeys when they change.
+    private func startObservingMacroScriptsChanges() {
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(hookScriptsDidChange),
-            name: .hookScriptsChanged,
+            selector: #selector(macroScriptsDidChange),
+            name: .macroScriptsChanged,
             object: nil
         )
     }
 
-    @objc private func hookScriptsDidChange() {
+    @objc private func macroScriptsDidChange() {
         // Re-register only if the window is currently visible; otherwise the next `showMainWindow` will install them.
         guard mainWindowController?.window?.isVisible == true else { return }
-        installHookHotkeys()
+        installMacroHotkeys()
     }
 
     /// Observes `actionHotkeysChanged` notifications and re-registers action hotkeys when they change.
@@ -315,9 +315,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installActionHotkeys()
     }
 
-    /// Converts a `HookScript.id` (UUID) into a stable UInt32 for Carbon.
+    /// Converts a `MacroScript.id` (UUID) into a stable UInt32 for Carbon.
     /// Uses the upper 32 bits of the UUID, expected to be unique within the same process.
-    static func stableHookID(for uuid: UUID) -> UInt32 {
+    static func stableMacroID(for uuid: UUID) -> UInt32 {
         let bytes = uuid.uuid
         return (UInt32(bytes.0) << 24) | (UInt32(bytes.1) << 16) | (UInt32(bytes.2) << 8) | UInt32(bytes.3)
     }
@@ -376,7 +376,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         mainWindowController?.showWindow(nil)
         mainWindowController?.window?.makeKeyAndOrderFront(nil)
-        // Window-scoped hotkeys ( per-Hook + per-action ) are active only while the history window is visible ( design ).
+        // Window-scoped hotkeys ( per-Macro + per-action ) are active only while the history window is visible ( design ).
         installWindowScopedHotkeys()
         if focusSearch {
             NotificationCenter.default.post(name: .focusSearchField, object: nil)
@@ -430,7 +430,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showSettings() {
         // Stay `.accessory` so the Dock icon does not appear while the Settings
-        // (or Hook Edit) window is open. The Settings window is raised to
+        // (or Macro Edit) window is open. The Settings window is raised to
         // `.floating+1` below so it stays above the always-on-top history panel.
         NSApp.activate(ignoringOtherApps: true)
 
@@ -566,7 +566,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if !hasOtherVisible {
             NSApp.setActivationPolicy(.accessory)
         }
-        // Window-scoped hotkeys ( per-Hook + per-action ) become inactive when the history window closes ( design ).
+        // Window-scoped hotkeys ( per-Macro + per-action ) become inactive when the history window closes ( design ).
         // Closing the window this controller owns is the authoritative "history UI hidden" signal.
         let appDelegate = NSApp.delegate as? AppDelegate
         appDelegate?.uninstallWindowScopedHotkeys()
@@ -596,7 +596,7 @@ extension Notification.Name {
     static let pollingIntervalChanged = Notification.Name("pollingIntervalChanged")
     static let mainHotkeyChanged = Notification.Name("mainHotkeyChanged")
     static let mainHotkeyRegistrationResult = Notification.Name("mainHotkeyRegistrationResult")
-    static let hookScriptsChanged = Notification.Name("hookScriptsChanged")
+    static let macroScriptsChanged = Notification.Name("macroScriptsChanged")
     static let actionHotkeysChanged = Notification.Name("actionHotkeysChanged")
     static let resetSelectionToTop = Notification.Name("resetSelectionToTop")
     /// Posted by `MainWindowController.windowWillClose` when the history window is

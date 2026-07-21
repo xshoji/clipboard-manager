@@ -1,9 +1,9 @@
 import SwiftUI
 import AppKit
 
-struct HookScriptRowView: View {
-    let hook: HookScript
-    let onUpdate: (HookScript) -> Void
+struct MacroScriptRowView: View {
+    let macro: MacroScript
+    let onUpdate: (MacroScript) -> Void
     @Environment(AppSettings.self) private var settings
     @State private var name: String
     @State private var sourceType: String
@@ -26,19 +26,19 @@ struct HookScriptRowView: View {
         "/usr/local/bin/zsh",
     ]
 
-    init(hook: HookScript, onUpdate: @escaping (HookScript) -> Void) {
-        self.hook = hook
+    init(macro: MacroScript, onUpdate: @escaping (MacroScript) -> Void) {
+        self.macro = macro
         self.onUpdate = onUpdate
-        _name = State(initialValue: hook.name)
-        _sourceType = State(initialValue: hook.inlineScript == nil ? "file" : "inline")
-        _path = State(initialValue: hook.scriptPath)
-        _inlineScript = State(initialValue: hook.inlineScript ?? "")
-        _interpreter = State(initialValue: hook.interpreter)
+        _name = State(initialValue: macro.name)
+        _sourceType = State(initialValue: macro.inlineScript == nil ? "file" : "inline")
+        _path = State(initialValue: macro.scriptPath)
+        _inlineScript = State(initialValue: macro.inlineScript ?? "")
+        _interpreter = State(initialValue: macro.interpreter)
         _interpreterPreset = State(
-            initialValue: Self.shellPresets.contains(hook.interpreter) ? hook.interpreter : "custom"
+            initialValue: Self.shellPresets.contains(macro.interpreter) ? macro.interpreter : "custom"
         )
-        _hotkeyCode = State(initialValue: hook.hotkeyCode)
-        _hotkeyModifiers = State(initialValue: hook.hotkeyModifiers)
+        _hotkeyCode = State(initialValue: macro.hotkeyCode)
+        _hotkeyModifiers = State(initialValue: macro.hotkeyModifiers)
     }
 
     var body: some View {
@@ -69,7 +69,7 @@ struct HookScriptRowView: View {
                 }
             }
             LabeledContent("Shortcut") {
-                HookHotkeyRecorderView(
+                MacroHotkeyRecorderView(
                     keyCode: $hotkeyCode,
                     modifiers: $hotkeyModifiers,
                     onShortcutChange: saveShortcut
@@ -126,7 +126,7 @@ struct HookScriptRowView: View {
             .padding(.bottom, 6)
         }
         .padding(.vertical, 2)
-        .onChange(of: hook) { previous, updated in
+        .onChange(of: macro) { previous, updated in
             syncState(from: previous, to: updated)
         }
     }
@@ -149,7 +149,7 @@ struct HookScriptRowView: View {
     }
 
     private func apply() {
-        var edited = hook
+        var edited = macro
         edited.name = name
         edited.scriptPath = path
         edited.inlineScript = sourceType == "inline" ? inlineScript : nil
@@ -162,20 +162,20 @@ struct HookScriptRowView: View {
     }
 
     private func saveShortcut(keyCode: Int, modifiers: Int) {
-        guard keyCode != hook.hotkeyCode || modifiers != hook.hotkeyModifiers else { return }
-        var edited = hook
+        guard keyCode != macro.hotkeyCode || modifiers != macro.hotkeyModifiers else { return }
+        var edited = macro
         edited.hotkeyCode = keyCode
         edited.hotkeyModifiers = modifiers
         onUpdate(edited)
     }
 
     private func remove() {
-        var arr = settings.hookScripts
-        arr.removeAll { $0.id == hook.id }
-        settings.hookScripts = arr
+        var arr = settings.macroScripts
+        arr.removeAll { $0.id == macro.id }
+        settings.macroScripts = arr
     }
 
-    private func syncState(from previous: HookScript, to updated: HookScript) {
+    private func syncState(from previous: MacroScript, to updated: MacroScript) {
         // Keep other unsaved inputs even when the parent value is updated by shortcut auto-saving.
         if name == previous.name { name = updated.name }
         if sourceType == (previous.inlineScript == nil ? "file" : "inline") {

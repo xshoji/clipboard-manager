@@ -5,9 +5,9 @@ struct SettingsView: View {
     @State private var retention: Int
     @State private var maxCount: Int
     @State private var maxItem: Int
-    @State private var confirmRebindSheet: HookScript?
+    @State private var confirmRebindSheet: MacroScript?
     @State private var confirmRebindIsNew: Bool = true
-    @State private var hotkeyRebindSheet: HookScript?
+    @State private var hotkeyRebindSheet: MacroScript?
     @State private var showHotkeyRegistrationError = false
     @State private var showActionHotkeyDuplicateError = false
 
@@ -57,7 +57,7 @@ struct SettingsView: View {
                 HStack {
                     Text("Edit")
                     Spacer()
-                    HookHotkeyRecorderView(
+                    MacroHotkeyRecorderView(
                         keyCode: Binding(get: { settings.editHotkeyCode }, set: { settings.editHotkeyCode = $0 }),
                         modifiers: Binding(get: { settings.editHotkeyModifiers }, set: { settings.editHotkeyModifiers = $0 }),
                         onShortcutChange: { keyCode, mods in
@@ -68,7 +68,7 @@ struct SettingsView: View {
                 HStack {
                     Text("Paste Plain")
                     Spacer()
-                    HookHotkeyRecorderView(
+                    MacroHotkeyRecorderView(
                         keyCode: Binding(get: { settings.pastePlainHotkeyCode }, set: { settings.pastePlainHotkeyCode = $0 }),
                         modifiers: Binding(get: { settings.pastePlainHotkeyModifiers }, set: { settings.pastePlainHotkeyModifiers = $0 }),
                         onShortcutChange: { keyCode, mods in
@@ -81,39 +81,39 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Hook Scripts") {
-                ForEach(settings.hookScripts) { hook in
-                    HookScriptRowView(hook: hook) { edited in
+            Section("Macro Scripts") {
+                ForEach(settings.macroScripts) { macro in
+                    MacroScriptRowView(macro: macro) { edited in
                         // When the executable content changes, validate and save via the confirmation sheet.
                         // Name/shortcut-only changes are saved immediately.
-                        if edited.scriptPath != hook.scriptPath
-                            || edited.inlineScript != hook.inlineScript {
+                        if edited.scriptPath != macro.scriptPath
+                            || edited.inlineScript != macro.inlineScript {
                             hotkeyRebindSheet = edited
                         } else {
-                            var arr = settings.hookScripts
+                            var arr = settings.macroScripts
                             if let idx = arr.firstIndex(where: { $0.id == edited.id }) {
                                 arr[idx] = edited
                             }
-                            settings.hookScripts = arr
+                            settings.macroScripts = arr
                         }
                     }
                     .padding(.vertical, 8)
                     .listRowSeparator(.hidden)
                 }
-                if settings.hookScripts.isEmpty {
-                    Text("No Hooks registered.").foregroundStyle(.secondary)
+                if settings.macroScripts.isEmpty {
+                    Text("No Macros registered.").foregroundStyle(.secondary)
                 }
-                Button("Add Hook…") {
+                Button("Add Macro…") {
                     // Passes an editable draft to the confirmation sheet (remaining-features #5).
-                    confirmRebindSheet = HookScript(name: "New Hook", scriptPath: "~/")
+                    confirmRebindSheet = MacroScript(name: "New Macro", scriptPath: "~/")
                     confirmRebindIsNew = true
                 }
             }
 
-            Section("Hook Behavior") {
-                Picker("On hook failure", selection: Binding(
-                    get: { settings.hookFailureBehavior },
-                    set: { settings.hookFailureBehavior = $0 }
+            Section("Macro Behavior") {
+                Picker("On macro failure", selection: Binding(
+                    get: { settings.macroFailureBehavior },
+                    set: { settings.macroFailureBehavior = $0 }
                 )) {
                     Text("Restore original + notify").tag("restoreOriginalAndNotify")
                     Text("Notify only").tag("notifyOnly")
@@ -122,8 +122,8 @@ struct SettingsView: View {
                 Toggle(
                     "Verify script fingerprint before run",
                     isOn: Binding(
-                        get: { settings.hookSameDirectoryFingerprint },
-                        set: { settings.hookSameDirectoryFingerprint = $0 }
+                        get: { settings.macroSameDirectoryFingerprint },
+                        set: { settings.macroSameDirectoryFingerprint = $0 }
                     )
                 )
             }
@@ -189,32 +189,32 @@ struct SettingsView: View {
         .alert("Hotkey unavailable", isPresented: $showHotkeyRegistrationError) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("That shortcut is already registered by another app or Hook. Choose a different shortcut.")
+            Text("That shortcut is already registered by another app or Macro. Choose a different shortcut.")
         }
         .alert("Action hotkey duplicate", isPresented: $showActionHotkeyDuplicateError) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Edit and Paste Plain action hotkeys cannot share the same shortcut. Choose a different shortcut for one of them.")
         }
-        .sheet(item: $confirmRebindSheet) { hook in
-            HookConfirmSheet(hook: hook, isNew: confirmRebindIsNew) { stored in
-                var arr = settings.hookScripts
+        .sheet(item: $confirmRebindSheet) { macro in
+            MacroConfirmSheet(macro: macro, isNew: confirmRebindIsNew) { stored in
+                var arr = settings.macroScripts
                 if let idx = arr.firstIndex(where: { $0.id == stored.id }) {
                     arr[idx] = stored
                 } else {
                     arr.append(stored)
                 }
-                settings.hookScripts = arr
+                settings.macroScripts = arr
             }
         }
-        .sheet(item: $hotkeyRebindSheet) { hook in
-            // Confirmation sheet for an existing Hook invoked from the Update button (remaining-features #5).
-            HookConfirmSheet(hook: hook, isNew: false) { stored in
-                var arr = settings.hookScripts
+        .sheet(item: $hotkeyRebindSheet) { macro in
+            // Confirmation sheet for an existing Macro invoked from the Update button (remaining-features #5).
+            MacroConfirmSheet(macro: macro, isNew: false) { stored in
+                var arr = settings.macroScripts
                 if let idx = arr.firstIndex(where: { $0.id == stored.id }) {
                     arr[idx] = stored
                 }
-                settings.hookScripts = arr
+                settings.macroScripts = arr
             }
         }
     }
@@ -232,12 +232,12 @@ struct SettingsView: View {
         case pastePlain
     }
 
-    /// Persists action-hotkey changes ( via `HookHotkeyRecorderView` Clear/Record ) and notifies AppDelegate to re-register immediately.
+    /// Persists action-hotkey changes ( via `MacroHotkeyRecorderView` Clear/Record ) and notifies AppDelegate to re-register immediately.
     private func saveActionHotkey(_ kind: ActionHotkeyKind, keyCode: Int, modifiers: Int) {
         // Duplicate guard (review #16): reject when the new binding collides with the
         // *other* action hotkey's current binding. Carbon's RegisterEventHotKey would
         // otherwise silently reject the second registration and one action would be a
-        // no-op. `HookHotkeyRecorderView` writes the new value through the Binding's
+        // no-op. `MacroHotkeyRecorderView` writes the new value through the Binding's
         // `set` before invoking `onShortcutChange`, so we revert here on collision.
         if modifiers != 0 {
             let prevEditKC = settings.editHotkeyCode

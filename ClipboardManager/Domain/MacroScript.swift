@@ -1,6 +1,6 @@
 import Foundation
 
-struct HookScript: Codable, Identifiable, Hashable, Sendable {
+struct MacroScript: Codable, Identifiable, Hashable, Sendable {
     var id: UUID
     var name: String
     var scriptPath: String

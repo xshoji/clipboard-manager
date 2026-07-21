@@ -33,7 +33,7 @@ final class ClipboardMonitor: @unchecked Sendable {
     private static let logger = Logger(subsystem: "com.xshoji.ClipboardManager", category: "ClipboardMonitor")
 
     /// Shared instance set by AppDelegate at launch.
-    /// Used by Infrastructure components such as `HookPasteService` to register suppression before a Hook paste.
+    /// Used by Infrastructure components such as `MacroPasteService` to register suppression before a Macro paste.
     /// Same pattern as `PersistenceController.shared`.
     ///
     /// `nonisolated(unsafe)`: the shared instance is assigned once on the main actor at
@@ -56,7 +56,7 @@ final class ClipboardMonitor: @unchecked Sendable {
     private var isObservingSettings = false
     private var isRunning = false
     /// Only mutated on the timer queue (serial).
-    /// Set of changeCounts written by this app (e.g., Hook paste) to exclude from history saving.
+    /// Set of changeCounts written by this app (e.g., Macro paste) to exclude from history saving.
     /// `suppressChangeCountRange` pre-registers a range before a write, and
     /// `finalizeSuppressionAfterWrite` cleans up orphaned entries after the write;
     /// the poll consumes a matching entry and skips saving.

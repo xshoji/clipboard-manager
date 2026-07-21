@@ -14,7 +14,7 @@
 | Settings storage | `UserDefaults` | KVS is enough, lightweight |
 | Global hotkey | Carbon `RegisterEventHotKey` | Bridged from Swift. Works even when app is not running |
 | Clipboard monitoring | `NSPasteboard.changeCount` polling | Reliable, 0.25s interval |
-| External process | `Process` | Hook script execution |
+| External process | `Process` | Macro script execution |
 | Image editing | `NSWorkspace.open` + Preview.app + Accessibility API | Launch Preview as an external process, detect edit completion via file watcher + AX window destruction + NSWorkspace termination |
 | Background execution | `LSUIElement = YES` | No Dock icon, menu bar resident |
 
@@ -38,20 +38,20 @@ ClipboardManager/
 │   ├── PreviewPane.swift             # Selected item preview (monospace/image)
 │   ├── FooterBar.swift               # Action buttons
 │   ├── TextEditView.swift            # Plain text edit (modal sheet)
-│   ├── SettingsView.swift            # Retention/count, hotkey, Hook registration
-│   ├── HookScriptRowView.swift       # Hook script row editor
+│   ├── SettingsView.swift            # Retention/count, hotkey, Macro registration
+│   ├── MacroScriptRowView.swift       # Macro script row editor
 │   ├── HotkeyRecorderView.swift      # Hotkey recorder UI
 │   └── MenuBarView.swift              # Menu bar resident UI (NSStatusItem)
 ├── Domain/                            # Models
 │   ├── ClipboardEntity.swift         # SwiftData @Model
-│   ├── HookScript.swift             # Hook script settings model
+│   ├── MacroScript.swift             # Macro script settings model
 │   ├── AppSettings.swift            # UserDefaults wrapper
 │   └── DedupCache.swift              # Recent hash cache for dedup
 ├── Infrastructure/                    # External API integration
 │   ├── ClipboardMonitor.swift        # changeCount monitor, save
 │   ├── HotkeyManager.swift          # Carbon API wrapper
 │   ├── PreviewImageEditor.swift      # Preview.app integration for image editing
-│   ├── HookRunner.swift              # Launch scripts via Process
+│   ├── MacroRunner.swift              # Launch scripts via Process
 │   ├── PersistenceController.swift  # SwiftData ModelContainer + cleanup
 │   ├── AppIconResolver.swift         # Resolve app icon from bundleID
 │   ├── ThumbnailGenerator.swift     # Image thumbnail generation
@@ -59,7 +59,7 @@ ClipboardManager/
 │   └── MenuBarController.swift      # NSStatusItem management
 └── Resources/
     ├── Assets.xcassets               # App icon, ColorSet (Any/Dark)
-    └── DefaultHooks/                 # Sample scripts (later)
+    └── DefaultMacros/                 # Sample scripts (later)
 ```
 
 ### Layer Responsibilities
@@ -88,7 +88,7 @@ ClipboardManager/
 |---|---|---|
 | Clipboard monitoring | `ClipboardMonitor` | Polls `NSPasteboard.changeCount` at 0.25s, saves on change |
 | Global hotkey | `HotkeyManager` | Registers hotkeys via Carbon `RegisterEventHotKey` |
-| Hook script execution | `HookRunner` | Launches scripts via `Process`, passes IO file paths via env vars (§4.2) |
+| Macro script execution | `MacroRunner` | Launches scripts via `Process`, passes IO file paths via env vars (§4.2) |
 | Preview.app image editing | `PreviewImageEditor` | Launches Preview.app as an external process, detects edit completion, saves edited image (§4.3) |
 | SwiftData persistence | `PersistenceController` | Builds `ModelContainer`, save + cleanup |
 | App icon resolution | `AppIconResolver` | Gets `NSImage` via `NSWorkspace.shared.icon(forFile:)` from `sourceBundleID`, supplies to `HistoryRowView` |
@@ -142,8 +142,8 @@ final class ClipboardEntity {
 - `maxItemSizeMB: Int`
 - `pollingIntervalMs: Int` (default 250)
 - `dedupCacheSize: Int` (default 100) — recent hash cache size
-- `hookScripts: [HookScript]` (JSON encoded)
-- `hookSameDirectoryFingerprint: Bool` (default true) — verify script fingerprint before run
+- `macroScripts: [MacroScript]` (JSON encoded)
+- `macroSameDirectoryFingerprint: Bool` (default true) — verify script fingerprint before run
 - `needsAccessibilityForSyntheticPaste: Bool` (default false) — enable synthetic `Cmd+V`
 
 #### UI State Persistence (corresponds to UI toggles in design-ui.md)
@@ -153,7 +153,7 @@ final class ClipboardEntity {
 - `isSplitView: Bool` (2-pane/1-pane toggle)
 - `previewWrapMode: String` (wrap mode, "wrap" / "nowrap")
 
-### 3.3 HookScript
+### 3.3 MacroScript
 
 | Attribute | Type | Purpose |
 |---|---|---|
@@ -193,7 +193,7 @@ final class ClipboardEntity {
   → Branch:
       Rich   → write RTFD + text to NSPasteboard
       Plain  → write text only
-      Hook   → write temp file → HookRunner.run(script, inputFile)
+      Macro   → write temp file → MacroRunner.run(script, inputFile)
              → read output file → write to pasteboard
   → NSApp.activate(ignoringOtherApps: true) to restore previous app
   → User presses Cmd+V to complete paste
@@ -203,19 +203,19 @@ final class ClipboardEntity {
 > - Synthetic `Cmd+V` events are not sent (to avoid requiring accessibility permission).
 > - An optional "allow synthetic Cmd+V" toggle can be added to `AppSettings` (`needsAccessibilityForSyntheticPaste: Bool`, default `false`). When enabled, sends `Cmd+V` via `AXUIElement` API.
 
-#### 4.2.1 HookRunner Interface
+#### 4.2.1 MacroRunner Interface
 
-`HookRunner.run()` launches external scripts with the following environment:
+`MacroRunner.run()` launches external scripts with the following environment:
 
 | Env var | Value | Required |
 |---|---|---|
-| `CB_INPUT_FILE` | Absolute path to input temp file (`.txt` or `.png`) | Hook must read |
-| `CB_OUTPUT_FILE` | Absolute path to output temp file (same extension as input) | Hook must write |
+| `CB_INPUT_FILE` | Absolute path to input temp file (`.txt` or `.png`) | Macro must read |
+| `CB_OUTPUT_FILE` | Absolute path to output temp file (same extension as input) | Macro must write |
 | `CB_ITEM_KIND` | `text` or `image` | For type detection |
 | `CB_ITEM_SOURCE` | Source bundle ID (if available) | Optional |
 
 - If the output file is not created, treat as **no transformation** and paste input content as-is.
-- exit != 0 or timeout 5s is treated as "Hook failure" (see §5 response table).
+- exit != 0 or timeout 5s is treated as "Macro failure" (see §5 response table).
 - Scripts may freely output to stdout/stderr (this app does not consume them).
 
 ### 4.3 Image Editing Flow via Preview.app
@@ -292,7 +292,7 @@ Key behaviors:
 #### 4.4.1 debounce / throttle policy
 
 - `retentionDays`, `maxHistoryCount` slider: 1 second debounce.
-- `hookScripts` add/edit: immediate (user action each time).
+- `macroScripts` add/edit: immediate (user action each time).
 - `pollingIntervalMs` change: immediate (ClipboardMonitor rebuilds timer on next poll).
 
 ## 5. Technical Concerns and Mitigations
@@ -301,25 +301,25 @@ Key behaviors:
 |---|---|
 | Paste method | Simple approach: write to pasteboard then activate previous app. Synthetic Cmd+V requires accessibility, so not prioritized (`AppSettings.needsAccessibilityForSyntheticPaste` for future) |
 | Plain text paste | Set only `NSStringPboardType` on `NSPasteboard` (do not co-write RTF) |
-| Hook file format | Assume `.txt` for text and `.png` for image. Detect output with same extension |
-| Hook failure | 5s timeout, exit != 0 → user notification + paste original content (default, configurable) |
+| Macro file format | Assume `.txt` for text and `.png` for image. Detect output with same extension |
+| Macro failure | 5s timeout, exit != 0 → user notification + paste original content (default, configurable) |
 | Large image rejection | `maxItemSizeMB` in UserDefaults, skip save + notify on exceed. Default 10MB |
 | Dedup | Recent SHA256 hash cache (`dedupCacheSize` default 100) |
 | Sanitize | Invalid RTF load via try/catch + Data validation, corrupt Entity deleted |
 
-### 5.1 Hook Script Safeguards
+### 5.1 Macro Script Safeguards
 
 Since arbitrary scripts run with Sandbox off, implement three layers of defense:
 
 1. **Confirmation on registration/change**
    - When registering a new script or changing `scriptPath` in `SettingsView`, require a confirmation dialog.
    - Message: "This script can access your clipboard contents. Do not specify untrusted scripts."
-   - After confirmation, save fingerprint and last-modified date to `HookScript.lastFingerprint / lastModified`.
+   - After confirmation, save fingerprint and last-modified date to `MacroScript.lastFingerprint / lastModified`.
 
 2. **Pre-run fingerprint verification**
-   - Compute SHA256 of the script file before `HookRunner.run()`.
+   - Compute SHA256 of the script file before `MacroRunner.run()`.
    - If it does not match `lastFingerprint`, abort and notify user ("The script has been modified. Please reconfirm in Settings.").
-   - `AppSettings.hookSameDirectoryFingerprint` toggles verification (default ON).
+   - `AppSettings.macroSameDirectoryFingerprint` toggles verification (default ON).
 
 3. **Path whitelist**
    - `scriptPath` must be **under the user's home directory (`~/`)**.
@@ -337,12 +337,12 @@ Carbon `RegisterEventHotKey` does not require Input Monitoring permission. There
 
 ### 5.3 Threat Model with Sandbox Off
 
-- **Premise**: App Sandbox is off. Hook scripts can freely access files/network with user privileges.
+- **Premise**: App Sandbox is off. Macro scripts can freely access files/network with user privileges.
 - **Threats**:
   1. Tampering with `UserDefaults` plist → malicious `scriptPath` swap → mitigated by path restriction in 5.1-3
-  2. `hookScripts` rewrite without UI → detected by `lastFingerprint` verification
+  2. `macroScripts` rewrite without UI → detected by `lastFingerprint` verification
   3. Exfiltration of sensitive clipboard contents by script → user responsibility (explicit via confirmation dialog)
-  4. Memory exhaustion from large images passed to Hook → pre-rejected by `maxItemSizeMB`
+  4. Memory exhaustion from large images passed to Macro → pre-rejected by `maxItemSizeMB`
 - **Responsibility**: Script behavior is the user's responsibility. This app only provides registration confirmation and fingerprint verification.
 
 ## 6. Permissions and External Dependencies
@@ -351,7 +351,7 @@ Carbon `RegisterEventHotKey` does not require Input Monitoring permission. There
 |---|---|---|
 | Accessibility | (1) Synthetic `Cmd+V` send. (2) Instant Preview window-close detection. | Optional (only when `needsAccessibilityForSyntheticPaste` is ON, or for faster Preview edit detection; without it Preview editing still works via app-quit/idle-timeout fallback) |
 | Full Disk Access | — | Not required |
-| App Sandbox | Off (to allow Hook execution freedom) | Off assumed. Distribution requires Developer ID + Notarization |
+| App Sandbox | Off (to allow Macro execution freedom) | Off assumed. Distribution requires Developer ID + Notarization |
 
 ## 7. Color Design (corresponds to design-ui.md §9)
 
@@ -380,9 +380,9 @@ Carbon `RegisterEventHotKey` does not require Input Monitoring permission. There
 > See `docs/open-questions.md` for a prioritized list. Key items:
 
 1. ~~Paste method: UI only or also synthetic Cmd+V~~ → **UI-only by default, synthetic Cmd+V as optional `AppSettings` toggle** (decided)
-2. Hook extensions: fixed `.txt` / `.png` or user-configurable
+2. Macro extensions: fixed `.txt` / `.png` or user-configurable
 3. Distribution: developer signing / notarization necessity
-4. Test policy: XCTest unit tests (`ClipboardMonitor`, `PersistenceController`, `HookRunner`, `PreviewImageEditor` prioritized) + XCUITest automation later
+4. Test policy: XCTest unit tests (`ClipboardMonitor`, `PersistenceController`, `MacroRunner`, `PreviewImageEditor` prioritized) + XCUITest automation later
 5. Localization: Japanese-first, use `String(localized:)` from the start to keep i18n-ready (English resources later)
 6. Unimplemented UI items (`design-ui.md §10`) priority
 7. Search optimization for 100,000+ items: SQLite FTS5 / N-gram index (v2+)

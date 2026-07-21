@@ -1,8 +1,8 @@
 import Foundation
 
-/// Result of Hook script path validation.
+/// Result of Macro script path validation.
 /// Design reference: design-implementation.md §5.1 (registration/change confirmation flow, pre-execution fingerprint check, path whitelist).
-struct HookScriptValidation {
+struct MacroScriptValidation {
     enum Failure: String {
         case pathEmpty
         case fileNotFound
@@ -23,7 +23,7 @@ struct HookScriptValidation {
 /// Helper that normalizes a script path, checks whether it is under the home directory, and obtains its fingerprint.
 /// Expands `~`, resolves `..` and symlinks, then checks location using standardized URLs.
 /// Design reference: design-implementation.md §5.1-3 / remaining-features #5, #14
-enum HookScriptPathValidator {
+enum MacroScriptPathValidator {
     /// Expands `~` and returns the URL with symlinks resolved. If resolution fails, returns the URL with expansion only.
     static func resolve(path: String) -> URL? {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -43,9 +43,9 @@ enum HookScriptPathValidator {
 
     /// Performs path validation and fingerprint retrieval in one pass.
     /// - Returns: The validation result. On failure, `failure` contains the reason.
-    static func validate(path: String) -> HookScriptValidation {
+    static func validate(path: String) -> MacroScriptValidation {
         guard let url = resolve(path: path) else {
-            return HookScriptValidation(
+            return MacroScriptValidation(
                 resolvedPath: path, isInsideHome: false, fileExists: false,
                 fingerprint: nil, lastModified: nil, failure: .pathEmpty
             )
@@ -67,7 +67,7 @@ enum HookScriptPathValidator {
             }
         }
 
-        let failure: HookScriptValidation.Failure?
+        let failure: MacroScriptValidation.Failure?
         if !fileExists {
             failure = .fileNotFound
         } else if !isInsideHome {
@@ -78,7 +78,7 @@ enum HookScriptPathValidator {
             failure = nil
         }
 
-        return HookScriptValidation(
+        return MacroScriptValidation(
             resolvedPath: resolvedPath,
             isInsideHome: isInsideHome,
             fileExists: fileExists,
