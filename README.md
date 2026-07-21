@@ -1,44 +1,90 @@
 # ClipboardManager
 
-A clipboard history manager for macOS.
-
-Invoke the UI via a global hotkey to search, edit, and paste text/image clipboard history. The app is menu bar resident and emphasizes a workflow where you return to the previous app and paste with `Cmd+V`.
-
+Copy something, then do everything else without leaving this app — run a
+script on it, edit the image in Preview, or extract text from a
+screenshot. Then just switch back and paste with `Cmd+V`.
 
 <img width="1046" height="686" alt="app-image" src="https://github.com/user-attachments/assets/52b802eb-8938-4cd2-9d39-0b02171f3b99" />
 
+---
 
+## Why this exists
+
+Most Mac clipboard managers make you pick two out of three: open-source
+and free (Maccy), scriptable but not Mac-native (CopyQ, built with Qt),
+or Mac-native with real automation but closed-source and paid (Paste,
+Maus). None of them let you edit a copied image or run a shell script
+against clipboard text without reaching for a separate app.
+
+This one is an attempt to be all three at once — open-source, free, and
+built specifically for engineers who'd rather write a 5-line bash script
+than learn a new automation language.
+
+The image-editing idea itself is inspired by BetterTouchTool's clipboard
+manager (BTT's source isn't public, so the implementation here is
+original — and deliberately uses Preview.app as an external process
+instead of an embedded editor window, to stay closer to public macOS
+APIs rather than private-API window hosting).
+
+### Why not Maccy / CopyQ / Maus?
+
+|                            | ClipboardManager | Maccy | CopyQ     | Maus |
+|----------------------------|:-----------------:|:-----:|:---------:|:----:|
+| Open source                | ✅                 | ✅    | ✅        | ❌   |
+| Free                       | ✅                 | ✅    | ✅        | Freemium |
+| Native macOS UI (SwiftUI)  | ✅                 | ✅    | ❌ (Qt)   | ✅   |
+| Script/macro execution     | ✅ (any shell script) | ❌ | ✅ (JS)  | ❌   |
+| Image editing via Preview  | ✅                 | ❌    | ❌        | ❌   |
+| On-device OCR paste        | ✅                 | ❌    | ❌        | ✅   |
+
+(Feature comparisons are based on public docs/websites as of 2026 and may
+be out of date — please file an issue if something's changed.)
 
 ---
 
 ## Features
 
-- **Clipboard monitoring** — automatically saves text and image copies (rich text supported)
-- **Incremental search** — real-time history filtering
-- **Global hotkey** — invoke the UI from any application (shortcut is configurable)
-- **Image history** — thumbnails for copied images, plus editing via macOS standard Preview.app
-- **Rich / plain paste** — choose whether to paste with or without formatting
-- **Macro scripts** — transform clipboard content at paste time with any scripting language (multiple registrations, shortcut-based invocation)
-- **Macro shortcuts & picker** — run any registered Macro instantly from a per-Macro shortcut, or open a keyboard-driven picker (Cmd+M) to select and run a Macro without leaving the keyboard
-- **OCR text paste** — running "Paste Plain" on an image history entry recognizes text with the on-device Vision framework and pastes the extracted text. Recognition language is configurable (English / Japanese / Japanese + English / Chinese / Korean; default English)
-- **Menu bar resident** — no Dock icon; operate from the menu bar icon
-- **Retention & count limits** — automatic cleanup by days and/or max count
+### Clipboard monitoring & search
+Automatically saves text and image copies (rich text supported), with
+real-time incremental search across history.
+
+### Macro scripts
+Most clipboard managers that support scripting (CopyQ, for example) use
+their own scripting language or AppleScript. If you already think in
+bash, that's one more language to learn for no reason. Macro scripts run
+**any** scripting language via a plain shell script instead — write it
+once, register it, and invoke it with its own hotkey or through the
+keyboard-driven picker (`Cmd+M`) without touching the mouse.
+
+### Image editing via Preview.app
+Hit Edit on an image entry and it opens in Preview — the same editor
+you already know, launched as a real external process rather than an
+embedded webview. `Cmd+S` saves back in place with no filename dialog,
+and the edited result is added to history as a new entry (original
+preserved). See [Image Editing via Preview.app](#image-editing-via-previewapp)
+below for exactly how that's detected and made safe.
+
+### OCR text paste
+Select an image entry, run "Paste Plain", and the text in it is
+recognized on-device with the Vision framework and pasted directly —
+no cloud, no separate OCR app. Recognition language is configurable
+(English / Japanese / Japanese + English / Chinese / Korean; default
+English).
+
+### Rich / plain paste
+Choose whether to paste with formatting intact or stripped, per entry.
+
+### Global hotkey & menu bar resident
+Invoke the UI from any application with a configurable shortcut. No
+Dock icon — it lives in the menu bar.
+
+### Retention & count limits
+Automatic cleanup by age and/or maximum item count, so history doesn't
+grow forever.
 
 ---
 
-## Development Environment
-
-| Item | Requirement |
-|---|---|
-| OS | **macOS 14 (Sonoma) or later** |
-| Xcode | **15 or later** (Swift 6.0+) |
-| Language | Swift |
-| UI framework | SwiftUI |
-| Persistence | SwiftData |
-
----
-
-## Build
+## Install / Build
 
 ### 1. Clone the repository
 
@@ -71,11 +117,11 @@ For a release build:
 open .build/debug/ClipboardManager.app
 ```
 
-You can also open `.build/debug/ClipboardManager.app` directly from Finder.
+You can also open `.build/debug/ClipboardManager.app` directly from
+Finder. `swift run` is still available if you want to run via the
+SwiftPM executable.
 
-`swift run` is still available if you want to run via the SwiftPM executable.
-
-#### Build and Run
+#### Build and Run in one step
 
 ```bash
 ./Scripts/build-app.sh; rm -rf /Applications/ClipboardManager.app; mv .build/debug/ClipboardManager.app /Applications/; open /Applications/ClipboardManager.app
@@ -83,34 +129,31 @@ You can also open `.build/debug/ClipboardManager.app` directly from Finder.
 
 ---
 
-## Test
-
-A lightweight launch smoke test is available. It builds the app via `swift build`, launches the executable, and verifies the process stays alive for several seconds without crashing. It does not interact with UI elements or clipboard history data.
-
-```bash
-swift test
-```
-
-Notes:
-- Run while no other `ClipboardManager` instance is running (Carbon hotkey registration conflicts otherwise, though it should not crash).
-- The app opens its real SwiftData store under `~/Library/Application Support`; the test only checks for crashes, not history contents. Clipboard monitoring will be active during the brief run.
-- Intended for local execution on macOS; headless CI environments may not be able to launch the GUI app.
-
----
-
 ## Runtime Permissions
 
-Normal use and the Carbon global hotkey do not require any additional privacy permissions.
+Normal use and the Carbon global hotkey do not require any additional
+privacy permissions.
 
-### Accessibility (optional but recommended)
+<details>
+<summary>Accessibility (optional, recommended for image editing)</summary>
 
-Accessibility permission is **recommended** for the best image-editing experience.
+Accessibility permission is **recommended** for the best image-editing
+experience.
 
-- **Used for**: detecting when the Preview window is closed during image editing, so the edited image can be saved to history immediately.
-- **Without it**: the app falls back to detecting Preview app termination or a 10-minute idle timeout. The app still works, but detection is delayed.
-- **How to grant**: open System Settings → Privacy & Security → Accessibility, and enable ClipboardManager. The app also provides a button in Settings to open System Settings directly.
+- **Used for**: detecting when the Preview window is closed during
+  image editing, so the edited image can be saved to history
+  immediately.
+- **Without it**: the app falls back to detecting Preview app
+  termination or a 10-minute idle timeout. The app still works, but
+  detection is delayed.
+- **How to grant**: open System Settings → Privacy & Security →
+  Accessibility, and enable ClipboardManager. The app also provides a
+  button in Settings to open System Settings directly.
 
-Synthetic `Cmd+V` event sending (if enabled in the future) would also require Accessibility permission. It is disabled by default.
+Synthetic `Cmd+V` event sending (if enabled in the future) would also
+require Accessibility permission. It is disabled by default.
+
+</details>
 
 ---
 
@@ -118,36 +161,95 @@ Synthetic `Cmd+V` event sending (if enabled in the future) would also require Ac
 
 The Edit button in the footer dispatches by the selected item's kind:
 
-- **Text**: opens an inline edit sheet; saving creates a new plain text history entry (original preserved).
-- **Image**: launches macOS standard Preview.app as an external process with a pre-prepared working file.
+- **Text**: opens an inline edit sheet; saving creates a new plain text
+  history entry (original preserved).
+- **Image**: launches macOS standard Preview.app as an external process
+  with a pre-prepared working file.
 
-### Image edit flow
+<details>
+<summary>Full image edit flow (click to expand)</summary>
 
 1. The selected image is copied to a working file at:
    ```
    ~/Downloads/ClipboardManagerEdit/<entityUUID>_edit.<original extension>
    ```
-   The directory and file are marked hidden. The original format/UTI and extension are preserved so Preview offers the correct edit menus.
-2. Preview.app is launched explicitly via `NSWorkspace` and opens the working file.
-3. Because the working file has real on-disk content, `Cmd+S` saves in place **without showing a filename dialog**.
-4. File writes are watched with `DispatchSourceFileSystemObject`. Preview's safe-save (atomic rename) is handled by reinstalling the watcher after rename/delete events. File events are debounced by ~500 ms.
-5. A SHA-256 hash check skips unchanged saves and deduplicates identical results. When a change is detected, the edited image is added as a new history entry. The session stays alive after a save so later saves in the same edit session are also captured.
+   The directory and file are marked hidden. The original format/UTI
+   and extension are preserved so Preview offers the correct edit
+   menus.
+2. Preview.app is launched explicitly via `NSWorkspace` and opens the
+   working file.
+3. Because the working file has real on-disk content, `Cmd+S` saves in
+   place **without showing a filename dialog**.
+4. File writes are watched with `DispatchSourceFileSystemObject`.
+   Preview's safe-save (atomic rename) is handled by reinstalling the
+   watcher after rename/delete events. File events are debounced by
+   ~500 ms.
+5. A SHA-256 hash check skips unchanged saves and deduplicates
+   identical results. When a change is detected, the edited image is
+   added as a new history entry. The session stays alive after a save
+   so later saves in the same edit session are also captured.
 6. Session completion is detected by any of:
-   - AX `kAXUIElementDestroyedNotification` on the Preview window (requires Accessibility permission)
+   - AX `kAXUIElementDestroyedNotification` on the Preview window
+     (requires Accessibility permission)
    - AX window-existence polling fallback
-   - `NSWorkspace.didTerminateApplicationNotification` for the Preview process
+   - `NSWorkspace.didTerminateApplicationNotification` for the Preview
+     process
    - 10-minute **idle** timeout, reset whenever the working file changes
-7. On completion: final hash check, watcher cancellation, AX/run-loop cleanup, workspace observer removal, timer/work-item cancellation, retained AX refcon release, work-file deletion, and session removal.
-8. Re-editing the same entity while its session is active activates the existing Preview app/session instead of creating a new one. Different entities can be edited concurrently.
-9. On app startup, `cleanupOrphanedEditFiles()` deletes stale `*_edit.*` work files left behind by previous sessions.
+7. On completion: final hash check, watcher cancellation, AX/run-loop
+   cleanup, workspace observer removal, timer/work-item cancellation,
+   retained AX refcon release, work-file deletion, and session removal.
+8. Re-editing the same entity while its session is active activates
+   the existing Preview app/session instead of creating a new one.
+   Different entities can be edited concurrently.
+9. On app startup, `cleanupOrphanedEditFiles()` deletes stale
+   `*_edit.*` work files left behind by previous sessions.
 
 ### Why Downloads?
 
-Preview could not overwrite files in another app's Application Support directory without presenting a save dialog. Placing the working file under `~/Downloads` avoids the dialog and lets `Cmd+S` save in place. If the app is sandboxed for App Store distribution, a `com.apple.security.files.downloads.read-write` entitlement may be required (see `docs/design-implementation.md §8`).
+Preview could not overwrite files in another app's Application Support
+directory without presenting a save dialog. Placing the working file
+under `~/Downloads` avoids the dialog and lets `Cmd+S` save in place.
+If the app is sandboxed for App Store distribution, a
+`com.apple.security.files.downloads.read-write` entitlement may be
+required (see `docs/design-implementation.md §8`).
+
+</details>
 
 ---
 
-## Tech Stack
+## Test
+
+A lightweight launch smoke test is available. It builds the app via
+`swift build`, launches the executable, and verifies the process stays
+alive for several seconds without crashing. It does not interact with
+UI elements or clipboard history data.
+
+```bash
+swift test
+```
+
+Notes:
+- Run while no other `ClipboardManager` instance is running (Carbon
+  hotkey registration conflicts otherwise, though it should not crash).
+- The app opens its real SwiftData store under
+  `~/Library/Application Support`; the test only checks for crashes,
+  not history contents. Clipboard monitoring will be active during the
+  brief run.
+- Intended for local execution on macOS; headless CI environments may
+  not be able to launch the GUI app.
+
+---
+
+<details>
+<summary>Development Environment & Tech Stack</summary>
+
+| Item | Requirement |
+|---|---|
+| OS | macOS 14 (Sonoma) or later |
+| Xcode | 15 or later (Swift 6.0+) |
+| Language | Swift |
+| UI framework | SwiftUI |
+| Persistence | SwiftData |
 
 | Purpose | Technology |
 |---|---|
@@ -159,15 +261,15 @@ Preview could not overwrite files in another app's Application Support directory
 | Macro script execution | `Process` |
 | Image editing | `NSWorkspace.open` + Preview.app + `DispatchSourceFileSystemObject` + AX API |
 
----
+</details>
 
-
-## Release
+<details>
+<summary>Release process</summary>
 
 The release flow for this repository is automated with GitHub Actions.
 Pushing Git tags triggers the release job.
 
-```
+```bash
 # Release
 git tag 0.0.1 && git push --tags
 
@@ -178,7 +280,4 @@ v="0.0.1"; git tag -d "${v}" && git push origin :"${v}"
 v="0.0.1"; git tag -d "${v}" && git push origin :"${v}"; git tag "${v}"; git push --tags
 ```
 
-
-## License
-
-MIT
+</details>
