@@ -100,6 +100,24 @@ struct HistoryListPane: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.separatorLine, lineWidth: 1))
         )
         .padding(8)
+        // Seamless arrow-key navigation from search to list (design-ui.md):
+        // While the search field is focused (incremental search active), pressing
+        // Up/Down moves focus to the history list and moves the selection so the
+        // user does not have to click the list first. Returning .handled also
+        // suppresses the system beep that would fire if the TextField received
+        // arrow keys it does not consume.
+        .onKeyPress(.upArrow) {
+            searchFocused = false
+            listFocused = true
+            moveSelection(.up)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            searchFocused = false
+            listFocused = true
+            moveSelection(.down)
+            return .handled
+        }
     }
 
     private var list: some View {
@@ -223,6 +241,13 @@ struct HistoryListPane: View {
         let next: Int
         switch direction {
         case .up:
+            // Already at the top: move focus back to the search field so the user
+            // can keep typing / refine the query without reaching for the mouse.
+            if currentIndex == 0 {
+                searchFocused = true
+                listFocused = false
+                return
+            }
             next = max((currentIndex ?? filteredItems.count) - 1, 0)
         case .down:
             next = min((currentIndex ?? -1) + 1, filteredItems.count - 1)
