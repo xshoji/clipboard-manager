@@ -40,6 +40,16 @@ struct HistoryListPane: View {
                 selectedEntity = filteredItems.first
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .historyWindowDidClose)) { _ in
+            // Drop search-field focus so the window does not reopen with the cursor
+            // already in the search field (and so the Delete key monitor does not
+            // depend on a stale `searchFocused` value). Move focus to the list so
+            // the arrow keys select history entries on reopen; without this, no
+            // view owns focus and arrow keys produce the system beep.
+            // `MainView` clears `query` and `selectedEntity` in parallel.
+            searchFocused = false
+            listFocused = true
+        }
         .onReceive(NotificationCenter.default.publisher(for: .deleteSelectedRequested)) { _ in
             // Triggered by FooterBar's More > Delete. Routes through the same logic as
             // the Delete key so post-delete selection stays consistent across entry points.
