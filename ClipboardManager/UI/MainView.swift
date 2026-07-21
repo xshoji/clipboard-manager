@@ -51,6 +51,13 @@ struct MainView: View {
         .onChange(of: selectedEntity?.id) { _, id in
             AppState.shared.selectedEntityID = id
         }
+        .onReceive(NotificationCenter.default.publisher(for: .resetSelectionToTop)) { _ in
+            // The history window is (re)shown. Clear the search query so the user
+            // starts from a fresh list every time, regardless of what they typed
+            // before closing the window. The dedicated publisher also resets the
+            // selection in `HistoryListPane`.
+            query = ""
+        }
         .onAppear {
             AppState.shared.selectedEntityID = selectedEntity?.id
         }

@@ -429,7 +429,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showSettings() {
-        NSApp.setActivationPolicy(.regular)
+        // Stay `.accessory` so the Dock icon does not appear while the Settings
+        // (or Hook Edit) window is open. The Settings window is raised to
+        // `.floating+1` below so it stays above the always-on-top history panel.
         NSApp.activate(ignoringOtherApps: true)
 
         if settingsWindowController == nil {
