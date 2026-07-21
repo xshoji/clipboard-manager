@@ -260,16 +260,27 @@ struct HistoryListPane: View {
     /// Installs an app-level local key monitor for Delete / Forward Delete.
     /// `.onKeyPress` on the ScrollView only fires while the list is focused and
     /// otherwise lets the event fall through, producing a system beep. The local
-    /// monitor catches the key regardless of focus and suppresses it only when the
-    /// search field is focused (so text editing still works) and an entry is selected.
+    /// monitor catches the key regardless of focus and suppresses it only when:
+    ///   - the user is editing a text field (search field, Settings/Hook edit
+    ///     TextFields, TextEdit sheet, etc.), OR
+    ///   - no history entry is selected.
+    /// The "editing a text field" guard uses the key window's `firstResponder`,
+    /// not the local `searchFocused` flag, so it also releases Delete when the
+    /// user is editing inside the Settings/Hook Edit window. Without this guard
+    /// the monitor hijacked Delete from any other window's text field and the
+    /// user could not delete characters there (history deletion fired instead).
     private func installDeleteKeyMonitor() {
         deleteKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let keyCode = event.keyCode
             let shouldConsume: Bool = MainActor.assumeIsolated {
                 // 51 = Delete (Backspace), 117 = Forward Delete (Fn+Delete)
                 guard keyCode == 51 || keyCode == 117 else { return false }
-                // Don't hijack Delete while editing the search field.
-                guard !searchFocused else { return false }
+                // Don't hijack Delete while a text field is being edited.
+                // SwiftUI `TextField` / `TextEditor` use an `NSTextView` as the
+                // first responder when focused, so this catches every text input
+                // across the app (main search field, Settings, Hook Edit sheet,
+                // TextEdit, etc.) regardless of which window owns it.
+                if Self.isEditingText() { return false }
                 // Only act when an entry is selected.
                 guard selectedEntity != nil else { return false }
                 deleteSelected()
@@ -277,6 +288,15 @@ struct HistoryListPane: View {
             }
             return shouldConsume ? nil : event
         }
+    }
+
+    /// Returns `true` when the current key window's first responder is an AppKit
+    /// text-editing view (`NSTextView` or any `NSText`). Used by the Delete key
+    /// monitor to avoid stealing Delete while the user is editing text in any
+    /// window (search field, Settings, Hook Edit, TextEdit, …).
+    private static func isEditingText() -> Bool {
+        guard let responder = NSApp.keyWindow?.firstResponder else { return false }
+        return responder is NSText
     }
 
     private func removeDeleteKeyMonitor() {
