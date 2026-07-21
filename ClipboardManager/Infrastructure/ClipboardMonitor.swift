@@ -16,18 +16,19 @@ import os
 /// - SwiftData `ModelContext` is `@MainActor`, so the final insert+save hops back to the
 ///   main actor via `Task { @MainActor }`. The expensive work (decode, hash, thumbnail)
 ///   has already completed by then, so the main actor is only touched for a quick insert.
-/// - `DedupCache` is internally locked, so it is safe to touch from the utility queue.
 /// - `suppressedChangeCounts` and `lastChangeCount` are only mutated from the single
 ///   serial timer queue, so they don't need extra locking: the `DispatchSourceTimer`
-///   fires its handler on the configured queue serially.
+///   fires its handler on the configured queue serially. `lastSavedContentHash` is
+///   likewise only mutated from the poll handler, so it is safe without a lock.
+/// `persistence` and `settings` are `@MainActor` types accessed only inside
+/// `Task { @MainActor }` blocks.
 ///
-/// `@unchecked Sendable`: the instance is shared via `ClipboardMonitor.shared` and reached
-/// from both the main actor (callers of `suppressChangeCountRange` /
+/// `@unchecked Sendable`: the shared instance is shared via `ClipboardMonitor.shared`
+/// and reached from both the main actor (callers of `suppressChangeCountRange` /
 /// `finalizeSuppressionAfterWrite`) and the utility poll
-/// queue. All mutable state is either internally locked (`DedupCache`) or only touched on
-/// the serial `pollQueue` (`lastChangeCount`, `suppressedChangeCounts`, `isRunning`,
-/// `isObservingSettings`, `timer`). `persistence` and `settings` are `@MainActor` types
-/// accessed only inside `Task { @MainActor }` blocks.
+/// queue. All mutable state is only touched on the serial `pollQueue`
+/// (`lastChangeCount`, `lastSavedContentHash`, `suppressedChangeCounts`, `isRunning`,
+/// `isObservingSettings`, `timer`).
 final class ClipboardMonitor: @unchecked Sendable {
     private static let logger = Logger(subsystem: "com.xshoji.ClipboardManager", category: "ClipboardMonitor")
 
@@ -41,11 +42,16 @@ final class ClipboardMonitor: @unchecked Sendable {
 
     private let persistence: PersistenceController
     private let settings: AppSettings
-    private let dedup: DedupCache
     private var timer: DispatchSourceTimer?
     /// Only mutated on the timer queue (serial). Read/written from the single timer
     /// handler, so no lock is required.
     private var lastChangeCount: Int = 0
+    /// Only mutated on the timer queue (serial). Holds the SHA256 hash of the most
+    /// recently saved entry. Used to skip the immediately-following identical copy so
+    /// `NSPasteboard.general` repeats (e.g. from app-internal pasteboard writes) do not
+    /// pile up as duplicate history entries. A previous ring-buffer (`DedupCache`)
+    /// skipped any duplicate within the last N entries and prevented the same content
+    /// from ever re-entering history until the ring evicted it.
     private var lastSavedContentHash: String?
     private var isObservingSettings = false
     private var isRunning = false
@@ -63,7 +69,6 @@ final class ClipboardMonitor: @unchecked Sendable {
     init(persistence: PersistenceController, settings: AppSettings) {
         self.persistence = persistence
         self.settings = settings
-        self.dedup = DedupCache(maxSize: settings.dedupCacheSize)
     }
 
     func start() {
@@ -82,9 +87,6 @@ final class ClipboardMonitor: @unchecked Sendable {
 
         guard !isObservingSettings else { return }
         isObservingSettings = true
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(dedupSizeChanged), name: .dedupCacheSizeChanged, object: nil
-        )
         NotificationCenter.default.addObserver(
             self, selector: #selector(pollingIntervalChanged), name: .pollingIntervalChanged, object: nil
         )
@@ -109,11 +111,6 @@ final class ClipboardMonitor: @unchecked Sendable {
             self?.timer?.cancel()
             self?.timer = nil
         }
-    }
-
-    @objc private func dedupSizeChanged() {
-        // `dedup` is internally locked; safe to call from either queue.
-        dedup.resizeIfNeeded(maxSize: settings.dedupCacheSize)
     }
 
     @objc private func pollingIntervalChanged() {
@@ -239,8 +236,14 @@ final class ClipboardMonitor: @unchecked Sendable {
             return
         }
         let hash = HashUtil.sha256Hex(of: data)
-        if dedup.shouldSkip(contentHash: hash) { return }
-        dedup.record(hash)
+        // Dedup: only skip when the content is identical to the immediately preceding
+        // copy. A ring buffer of recent hashes used to skip any duplicate within the
+        // last `dedupCacheSize` entries, which prevented re-saving the same content
+        // even after different content was copied in between — the copied text never
+        // re-entered history. Comparing against only `lastSavedContentHash` preserves
+        // the "don't save the same copy twice in a row" behavior while allowing the
+        // same content to be saved again once anything else has been copied.
+        if lastSavedContentHash == hash { return }
         lastSavedContentHash = hash
 
         // Thumbnail generation (lockFocus → tiffRepresentation) is heavy: run it here
@@ -286,8 +289,8 @@ final class ClipboardMonitor: @unchecked Sendable {
             return
         }
         let hash = HashUtil.sha256Hex(of: Data(text.utf8))
-        if dedup.shouldSkip(contentHash: hash) { return }
-        dedup.record(hash)
+        // See `prepareImageSave` for the rationale behind single-entry dedup.
+        if lastSavedContentHash == hash { return }
         lastSavedContentHash = hash
 
         let sourceBundle = pb.string(forType: NSPasteboard.PasteboardType("org.nspasteboard.sourceApp.bundleID"))
@@ -331,11 +334,5 @@ final class ClipboardMonitor: @unchecked Sendable {
         if let v = pb.string(forType: concealed), v == "1" { return true }
         if let v = pb.string(forType: autoGenerated), v == "1" { return true }
         return false
-    }
-}
-
-extension DedupCache {
-    func resizeIfNeeded(maxSize newMax: Int) {
-        if newMax != maxSize { resize(maxSize: newMax) }
     }
 }
