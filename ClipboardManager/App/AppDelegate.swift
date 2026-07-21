@@ -575,7 +575,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if hasVisibleOwnedNonPanel || hasVisibleOwnedPanel {
             return
         }
-        closingWindow?.orderOut(nil)
+        // Use `close()` (not `orderOut`) so that `windowWillClose` fires and the same
+        // teardown as the Esc path runs: `.historyWindowDidClose` is posted (so
+        // `HistoryListPane` resets `listFocused = true` for the next reopen), window-
+        // scoped hotkeys are uninstalled, and the activation policy returns to
+        // `.accessory`. Without this, hiding via blur after the Macro Picker (Cmd+M)
+        // stole focus left `listFocused = false`, so reopening showed no focused view
+        // and arrow keys produced the system beep.
+        closingWindow?.close()
     }
 
     func windowDidMove(_ notification: Notification) {
