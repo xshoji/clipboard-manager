@@ -570,6 +570,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // Closing the window this controller owns is the authoritative "history UI hidden" signal.
         let appDelegate = NSApp.delegate as? AppDelegate
         appDelegate?.uninstallWindowScopedHotkeys()
+        // Notify the history UI to reset its in-window state (search query, selection)
+        // so the next appearance starts fresh and the stale search results do not
+        // flash on screen while the window is re-shown.
+        NotificationCenter.default.post(name: .historyWindowDidClose, object: nil)
     }
 
     // MARK: - Non-zoomable (design-ui.md §1)
@@ -595,6 +599,13 @@ extension Notification.Name {
     static let hookScriptsChanged = Notification.Name("hookScriptsChanged")
     static let actionHotkeysChanged = Notification.Name("actionHotkeysChanged")
     static let resetSelectionToTop = Notification.Name("resetSelectionToTop")
+    /// Posted by `MainWindowController.windowWillClose` when the history window is
+    /// closed. Observed by `MainView` to reset the in-window state (search query
+    /// cleared, selection moved back to the latest entry) so the next time the
+    /// window is shown the user starts from a fresh list — without flashing the
+    /// previous search results on screen. Closing (not reopening) is the right
+    /// timing because the state is gone by the time the window reappears.
+    static let historyWindowDidClose = Notification.Name("historyWindowDidClose")
     /// Posted by AppDelegate when the Edit action hotkey fires. Object is the selected `ClipboardEntity`.
     /// `MainView` observes this and opens the TextEditView sheet ( so preview-image editing also works via the existing `FooterBar.editSelected` path ).
     static let editActionTriggered = Notification.Name("editActionTriggered")

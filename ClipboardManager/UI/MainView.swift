@@ -51,12 +51,16 @@ struct MainView: View {
         .onChange(of: selectedEntity?.id) { _, id in
             AppState.shared.selectedEntityID = id
         }
-        .onReceive(NotificationCenter.default.publisher(for: .resetSelectionToTop)) { _ in
-            // The history window is (re)shown. Clear the search query so the user
-            // starts from a fresh list every time, regardless of what they typed
-            // before closing the window. The dedicated publisher also resets the
-            // selection in `HistoryListPane`.
+        .onReceive(NotificationCenter.default.publisher(for: .historyWindowDidClose)) { _ in
+            // The history window is being closed. Reset the in-window state now so
+            // the *next* time the window is shown the user starts from a fresh
+            // list (no search query, no stale selection). Doing this on close
+            // rather than on reopen avoids flashing the previous search results
+            // for a frame and showing the detail of a filtered-list item.
+            // The selection itself is moved back to the latest entry on reopen
+            // via `.resetSelectionToTop` (posted by `AppDelegate.showMainWindow`).
             query = ""
+            selectedEntity = nil
         }
         .onAppear {
             AppState.shared.selectedEntityID = selectedEntity?.id
