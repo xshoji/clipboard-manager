@@ -97,10 +97,10 @@ Open items are centralized in `docs/open-questions.md`. Below are the key items 
 
 | Action | Maps to requirement |
 |---|---|
-| Standard | 2.2.1 Rich paste |
-| Paste Plain | 2.2.1 Plain paste |
+| Paste | 2.2.1 Rich paste |
+| Plain Text | 2.2.1 Plain paste |
 | Run Macro ▾ | 2.2.2 Transform script invocation |
-| Just Copy | Re-copy (no paste) |
+| Copy | Re-copy (no paste) |
 | Edit | 2.1.4 / 2.1.5 Edit invocation |
 | ⋯ (More menu) | 2.1.3 Individual delete / bulk delete / item info |
 

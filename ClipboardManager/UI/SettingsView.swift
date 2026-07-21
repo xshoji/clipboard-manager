@@ -66,7 +66,7 @@ struct SettingsView: View {
                     )
                 }
                 HStack {
-                    Text("Paste Plain")
+                    Text("Plain Text")
                     Spacer()
                     MacroHotkeyRecorderView(
                         keyCode: Binding(get: { settings.pastePlainHotkeyCode }, set: { settings.pastePlainHotkeyCode = $0 }),
@@ -87,8 +87,8 @@ struct SettingsView: View {
                        }
                    )
                }
-                Text("Defaults: Edit ⌘E, Paste Plain ⌘P. Set modifiers clear to unset an action.")
-                    .font(.caption2)
+                Text("Defaults: Edit ⌘E, Plain Text ⌘P. Set modifiers clear to unset an action.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                Text("Macro Picker opens a keyboard-driven list: ↑/↓ to navigate, Return to run, Esc to close.")
                    .font(.caption2)
@@ -159,7 +159,7 @@ struct SettingsView: View {
                     InputPermission().requestAccessibility()
                 }
                 Divider()
-                Text("Paste Plain on an image runs OCR and pastes the recognized text. Choose the recognition language set.")
+                Text("Plain Text on an image runs OCR and pastes the recognized text. Choose the recognition language set.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Picker("OCR languages", selection: Binding(
@@ -222,7 +222,7 @@ struct SettingsView: View {
         .alert("Action hotkey duplicate", isPresented: $showActionHotkeyDuplicateError) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Edit and Paste Plain action hotkeys cannot share the same shortcut. Choose a different shortcut for one of them.")
+            Text("Edit and Plain Text action hotkeys cannot share the same shortcut. Choose a different shortcut for one of them.")
         }
         .sheet(item: $confirmRebindSheet) { macro in
             MacroConfirmSheet(macro: macro, isNew: confirmRebindIsNew) { stored in

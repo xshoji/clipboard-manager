@@ -52,7 +52,7 @@ ClipboardManager/
 │   ├── HistoryListPane.swift       # search bar + history list
 │   ├── HistoryRowView.swift        # single history row
 │   ├── PreviewPane.swift           # detail preview for selected item
-│   ├── FooterBar.swift             # action buttons (Standard / Paste Plain / Edit / More)
+│   ├── FooterBar.swift             # action buttons (Paste / Plain Text / Copy / Edit / More)
 │   ├── TextEditView.swift          # text edit sheet
 │   ├── SettingsView.swift          # settings window
 │   ├── MacroScriptRowView.swift     # macro script settings row

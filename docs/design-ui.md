@@ -29,7 +29,7 @@ Single window with three regions stacked vertically:
 │ ▸ <image thumbnail>                 │
 │ ...                                 │
 ├─────────────────────────────────────┤
-│ Standard | Paste Plain | Edit | ⋯ │  ← Footer action bar
+│ Paste | Plain Text | Edit | ⋯ │  ← Footer action bar
 └─────────────────────────────────────┘
 ```
 
@@ -49,20 +49,20 @@ The window is resizable; the list pane grows/shrinks while the search bar and fo
   - For text: body text (truncated with ellipsis if long), source app name, and timestamp.
   - For images: image thumbnail, source app name, and timestamp.
 - The currently focused row is highlighted.
-- Keyboard navigation: ↑/↓ to move focus, Enter to execute the default action (Standard paste).
+- Keyboard navigation: ↑/↓ to move focus, Enter to execute the default action (Paste).
 - Hover behavior is optional; selection follows focus.
 
 ## 5. Footer Action Bar
 
 The footer is a single horizontal bar with the following actions. Actions operate on the currently focused list row.
 
-### 5.1 Standard
+### 5.1 Paste
 
 - Default action. Pastes the selected entry as rich text (or plain text if the entry is plain text).
 - After paste, brings the previous app to front so the user can press `Cmd+V`.
-- Enter on the list is equivalent to pressing Standard.
+- Enter on the list is equivalent to pressing Paste.
 
-### 5.2 Paste Plain
+### 5.2 Plain Text
 
 - Pastes the selected entry as plain text (rich text formatting is stripped).
 - After paste, brings the previous app to front so the user can press `Cmd+V`.
@@ -128,7 +128,7 @@ A separate standard-style window (not the menu bar popup) launched from the menu
 | Global hotkey | Show/hide history window |
 | `Esc` | Clear search / close window |
 | `↑` / `↓` | Move focus in list |
-| `Enter` | Standard paste |
+| `Enter` | Paste |
 | `Cmd+V` (in target app) | Paste from pasteboard |
 | `Cmd+S` (in Preview) | Save image edit (no filename dialog) |
 

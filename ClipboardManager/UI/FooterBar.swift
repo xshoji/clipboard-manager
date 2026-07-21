@@ -10,14 +10,14 @@ struct FooterBar: View {
     @State private var showMoreMenu: Bool = false
     @State private var showInfo: String?
     /// Mirrors `OcrPasteService`'s `.ocrProgressDidChange` so the footer can show
-    /// a progress indicator while OCR runs for "Paste Plain" on an image entry.
+    /// a progress indicator while OCR runs for "Paste as Text" on an image entry.
     @State private var isOcrInProgress: Bool = false
 
     var body: some View {
         HStack(spacing: 8) {
-            actionButton("Standard", system: "doc.on.clipboard.fill") { paste(rich: true) }
-            actionButton("Paste Plain", system: "textformat") { paste(rich: false) }
-            actionButton("Just Copy", system: "doc.on.doc") { justCopy() }
+            actionButton("Paste", system: "doc.on.clipboard.fill") { paste(rich: true) }
+            actionButton("Plain Text", system: "textformat") { paste(rich: false) }
+            actionButton("Copy", system: "doc.on.doc") { justCopy() }
             actionButton("Edit", system: "square.and.pencil") { editSelected() }
             macroMenuButton
             Spacer()
