@@ -18,6 +18,8 @@ Invoke the UI via a global hotkey to search, edit, and paste text/image clipboar
 - **Image history** — thumbnails for copied images, plus editing via macOS standard Preview.app
 - **Rich / plain paste** — choose whether to paste with or without formatting
 - **Macro scripts** — transform clipboard content at paste time with any scripting language (multiple registrations, shortcut-based invocation)
+- **Macro shortcuts & picker** — run any registered Macro instantly from a per-Macro shortcut, or open a keyboard-driven picker (Cmd+M) to select and run a Macro without leaving the keyboard
+- **OCR text paste** — running "Paste Plain" on an image history entry recognizes text with the on-device Vision framework and pastes the extracted text. Recognition language is configurable (English / Japanese / Japanese + English / Chinese / Korean; default English)
 - **Menu bar resident** — no Dock icon; operate from the menu bar icon
 - **Retention & count limits** — automatic cleanup by days and/or max count
 
