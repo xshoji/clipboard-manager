@@ -72,6 +72,7 @@ struct MacroPickerView: View {
         )
         .shadow(color: .black.opacity(0.25), radius: 16, y: 4)
         .focusable()
+        .focusEffectDisabled()
         .focused($focused)
         .onAppear {
             focused = true
@@ -110,8 +111,6 @@ struct MacroPickerView: View {
     private func row(for macro: MacroScript, idx: Int) -> some View {
         let isSelected = idx == selectedIndex
         HStack(spacing: 10) {
-            Image(systemName: "arrow.2.squarepath")
-                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(macro.name).lineLimit(1)
                 Text(macro.inlineScript != nil ? "inline" : macro.scriptPath)
@@ -121,11 +120,6 @@ struct MacroPickerView: View {
                     .truncationMode(.middle)
             }
             Spacer()
-            if isSelected {
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
