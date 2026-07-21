@@ -132,11 +132,29 @@ struct MacroScriptRowView: View {
     }
 
     private var canApply: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty
+        // The fields must be valid AND at least one must differ from the saved macro.
+        // When nothing has changed, "Update" is disabled so the user can see there
+        // is nothing to save (and the confirmation sheet is not shown unnecessarily).
+        hasContentChanges
+        && !name.trimmingCharacters(in: .whitespaces).isEmpty
         && !interpreter.trimmingCharacters(in: .whitespaces).isEmpty
         && (sourceType == "inline"
             ? !inlineScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             : !path.trimmingCharacters(in: .whitespaces).isEmpty)
+    }
+
+    /// `true` when any editable field ( name / source type / path / inline script /
+    /// interpreter / hotkey ) differs from the saved `macro`. Hotkey changes are
+    /// saved immediately via `saveShortcut`, so they are not expected to stay dirty,
+    /// but are included here for correctness.
+    private var hasContentChanges: Bool {
+        name != macro.name
+        || sourceType != (macro.inlineScript == nil ? "file" : "inline")
+        || path != macro.scriptPath
+        || inlineScript != (macro.inlineScript ?? "")
+        || interpreter != macro.interpreter
+        || hotkeyCode != macro.hotkeyCode
+        || hotkeyModifiers != macro.hotkeyModifiers
     }
 
     private func browse() {
@@ -208,8 +226,12 @@ struct ShellScriptEditor: NSViewRepresentable {
         scrollView.drawsBackground = false
 
         let textView = NSTextView()
-        textView.delegate = context.coordinator
+        // Set the string BEFORE assigning the delegate so the initial content
+        // does not fire `textDidChange` and overwrite the binding with a
+        // normalized copy (e.g. newline normalization), which would make the
+        // row appear "dirty" and keep the Update button enabled on open.
         textView.string = text
+        textView.delegate = context.coordinator
         textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         textView.isRichText = false
         textView.isVerticallyResizable = true
@@ -231,7 +253,12 @@ struct ShellScriptEditor: NSViewRepresentable {
         context.coordinator.parent = self
         guard let textView = scrollView.documentView as? NSTextView,
               textView.string != text else { return }
+        // Suppress `textDidChange` while we programmatically sync the text view
+        // from the binding so the coordinator does not write a normalized copy
+        // back into the binding and create a spurious "dirty" state.
+        context.coordinator.isUpdatingFromParent = true
         textView.string = text
+        context.coordinator.isUpdatingFromParent = false
     }
 
     static func containsSmartQuotes(in text: String) -> Bool {
@@ -240,12 +267,16 @@ struct ShellScriptEditor: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ShellScriptEditor
+        /// `true` while the parent is programmatically setting `textView.string`,
+        /// so `textDidChange` is ignored and the binding is not overwritten.
+        var isUpdatingFromParent = false
 
         init(parent: ShellScriptEditor) {
             self.parent = parent
         }
 
         func textDidChange(_ notification: Notification) {
+            guard !isUpdatingFromParent else { return }
             guard let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
         }
