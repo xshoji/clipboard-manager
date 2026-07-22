@@ -24,28 +24,29 @@ enum MacroPasteService {
             text: entity.text,
             sourceBundleID: entity.sourceBundleID
         )
-        let result: Result<Data, Error>
+        let result: Result<MacroRunner.MacroOutput, Error>
         do {
-            let out = try await MacroRunner.runAsync(
+            let output = try await MacroRunner.runAsync(
                 script: macro,
                 input: input,
                 verifyFingerprint: settings.macroSameDirectoryFingerprint
             )
             // review #6: Reject non-UTF8 text outputs only when the output is not an
             // image, so image -> image / image -> text macros are evaluated on their
-            // own merits.
-            if NSImage(data: out) == nil,
-               String(data: out, encoding: .utf8) == nil,
-               !out.isEmpty {
+            // own merits. The image check was already performed on the background task
+            // inside MacroRunner, so no NSImage decode happens on the main actor here.
+            if !output.isImage,
+               String(data: output.data, encoding: .utf8) == nil,
+               !output.data.isEmpty {
                 throw MacroError.invalidOutputEncoding
             }
-            result = .success(out)
+            result = .success(output)
         } catch {
             result = .failure(error)
         }
         switch result {
-        case .success(let out):
-            writePasteboard(data: out)
+        case .success(let output):
+            writePasteboard(data: output.data, isImage: output.isImage)
             AppActivator.shared.activatePreviousAppAndPasteSynthetically(
                 needsSynthetic: settings.needsAccessibilityForSyntheticPaste
             )
@@ -63,7 +64,7 @@ enum MacroPasteService {
 
     // MARK: - Pasteboard
 
-    private static func writePasteboard(data: Data) {
+    private static func writePasteboard(data: Data, isImage: Bool) {
         let pb = NSPasteboard.general
         // Do not add pasteboard writes made by this app itself to the clipboard history.
         // This write changes changeCount; suppress it so ClipboardMonitor does not mistake it for a user copy (design-implementation.md §4.2).
@@ -77,13 +78,17 @@ enum MacroPasteService {
         // just landed at `pre` is not wrongly suppressed. After the write,
         // `finalizeSuppressionAfterWrite` removes any pre-registered entries above the actual
         // post-write changeCount so they cannot orphan-suppress a future user copy.
+        //
+        // The `isImage` flag was determined on the background task inside MacroRunner,
+        // so no NSImage decode happens here on the main actor (previously NSImage(data:)
+        // was called twice on the main actor — once in run() and once here).
         let pre = pb.changeCount
         ClipboardMonitor.shared?.suppressChangeCountRange((pre + 1)..<(pre + 3))
         pb.clearContents()
         // Determine the output *content*, not the input entity kind: a macro may
-        // transform an image into text (e.g. OCR) or text into an image. We treat
-        // the data as an image only when it decodes as PNG; otherwise as text.
-        if let img = NSImage(data: data), img.isValid {
+        // transform an image into text (e.g. OCR) or text into an image. The image
+        // check was already performed on the background task; just use the result.
+        if isImage {
             pb.setData(data, forType: .png)
         } else {
             // review #6: Non-UTF8 output is already rejected in run(), so this is safe.

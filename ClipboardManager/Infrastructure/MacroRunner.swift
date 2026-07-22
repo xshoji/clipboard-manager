@@ -35,26 +35,78 @@ enum MacroRunner {
         let sourceBundleID: String?
     }
 
-    /// Runs the Macro script on a background queue and returns the resulting Data.
-    /// Does not block the main thread (review #4).
-    /// On timeout, sends SIGINT → SIGTERM, then waits reliably with `waitUntilExit()` (review #3).
+    /// Sendable output containing the processed data and whether it decoded as an image.
+    /// The image check is performed on the background task so the main actor never pays
+    /// the decode cost (previously `NSImage(data:)` was called twice on the main actor).
+    struct MacroOutput: Sendable {
+        let data: Data
+        let isImage: Bool
+    }
+
+    /// Process and temporary file paths, boxed as `@unchecked Sendable` so it can
+    /// cross the `Task.detached` boundary. `Process` is reference-typed but is only
+    /// accessed from a single logical flow after launch.
+    private struct LaunchedProcess: @unchecked Sendable {
+        let proc: Process
+        let inputURL: URL
+        let outputURL: URL
+        let inlineScriptURL: URL?
+    }
+
+    /// Runs the Macro script asynchronously without blocking the cooperative thread pool.
+    ///
+    /// Previous implementation used `Task.detached` + `RunLoop.current.run` polling inside
+    /// `Process.waitUntilTimeout`, which occupied a cooperative thread-pool worker for up
+    /// to 5 s (+2 s on timeout). This version uses `terminationHandler` + `withTaskGroup`
+    /// so no worker is held during the wait, and the `await` continuation returns to the
+    /// main actor promptly after process exit.
     static func runAsync(
         script: MacroScript,
         input: MacroInput,
         verifyFingerprint: Bool
-    ) async throws -> Data {
-        try await Task.detached(priority: .userInitiated) {
-            try run(script: script, input: input, verifyFingerprint: verifyFingerprint)
+    ) async throws -> MacroOutput {
+        // Prepare and launch on a background task (file I/O, fingerprint, etc.).
+        let launched = try await Task.detached(priority: .userInitiated) {
+            try prepareAndLaunch(script: script, input: input, verifyFingerprint: verifyFingerprint)
+        }.value
+
+        // Wait for process exit asynchronously (no thread-pool occupation).
+        let timedOut = await waitForProcess(launched.proc, timeout: 5)
+
+        if timedOut {
+            cleanupFiles(launched)
+            throw MacroError.timeout
+        }
+        if launched.proc.terminationStatus != 0 {
+            cleanupFiles(launched)
+            throw MacroError.exitStatus(launched.proc.terminationStatus)
+        }
+
+        // Read output and determine kind on a background task (image decode is heavy).
+        return try await Task.detached(priority: .userInitiated) {
+            defer { cleanupFiles(launched) }
+            let fm = FileManager.default
+            let outData: Data
+            if let out = fm.contents(atPath: launched.outputURL.path), !out.isEmpty {
+                outData = out
+            } else {
+                // If the output file was not created, there was no processing; paste the input as-is.
+                outData = try Data(contentsOf: launched.inputURL)
+            }
+            let isImage = !outData.isEmpty && NSImage(data: outData)?.isValid == true
+            return MacroOutput(data: outData, isImage: isImage)
         }.value
     }
 
-    /// Synchronous Macro execution. Intended to be called on a background Task.
-    /// Calling directly from the main thread blocks the UI while spinning the RunLoop.
-    static func run(
+    // MARK: - Preparation
+
+    /// Creates temp files, validates the script, writes input, and launches the process.
+    /// Runs inside `Task.detached` so all file I/O and fingerprint work stays off the main actor.
+    private static func prepareAndLaunch(
         script: MacroScript,
         input: MacroInput,
         verifyFingerprint: Bool
-    ) throws -> Data {
+    ) throws -> LaunchedProcess {
         let fm = FileManager.default
         let ext = input.isImage ? "png" : "txt"
         let tmp = NSTemporaryDirectory()
@@ -62,13 +114,6 @@ enum MacroRunner {
         let outputURL = URL.fileTemporary("cb_output", ext: ext, base: tmp)
         let inlineScriptURL = script.inlineScript.map { _ in
             URL.fileTemporary("cb_macro", ext: "sh", base: tmp)
-        }
-        defer {
-            try? fm.removeItem(at: inputURL)
-            try? fm.removeItem(at: outputURL)
-            if let inlineScriptURL {
-                try? fm.removeItem(at: inlineScriptURL)
-            }
         }
 
         let executableScriptPath: String
@@ -132,24 +177,54 @@ enum MacroRunner {
         proc.standardError = pipe
 
         try proc.run()
-        proc.waitUntilTimeout(timeout: 5)
-
-        switch proc.terminationReason {
-        case .uncaughtSignal:
-            throw MacroError.timeout
-        default:
-            break
-        }
-        if proc.terminationStatus != 0 {
-            throw MacroError.exitStatus(proc.terminationStatus)
-        }
-
-        if let outData = fm.contents(atPath: outputURL.path), !outData.isEmpty {
-            return outData
-        }
-        // If the output file was not created, there was no processing; paste the input as-is.
-        return try Data(contentsOf: inputURL)
+        return LaunchedProcess(proc: proc, inputURL: inputURL, outputURL: outputURL, inlineScriptURL: inlineScriptURL)
     }
+
+    // MARK: - Process waiting
+
+    /// Waits for the process to exit or times out.
+    ///
+    /// Does NOT block the cooperative thread pool: uses `terminationHandler` +
+    /// `withTaskGroup` instead of `RunLoop.current.run` polling. On timeout,
+    /// sends SIGINT → SIGTERM and waits for actual exit so that
+    /// `terminationStatus` / `terminationReason` are well-defined (review #3).
+    /// - Returns: `true` if timed out, `false` if the process exited normally.
+    private static func waitForProcess(_ proc: Process, timeout: TimeInterval) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            // Task 1: wait for process termination via terminationHandler.
+            group.addTask {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                    proc.terminationHandler = { _ in
+                        continuation.resume(returning: false)
+                    }
+                }
+            }
+
+            // Task 2: timeout.
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                return true
+            }
+
+            let first = await group.next()!
+
+            if first {
+                // Timeout: SIGINT first, then SIGTERM.
+                proc.interrupt()
+                proc.terminate()
+            }
+
+            // Wait for the remaining task to complete.
+            // On timeout: proc.terminate() triggers terminationHandler → Task 1 resumes.
+            // On normal exit: group.cancelAll() cancels Task 2's sleep.
+            group.cancelAll()
+            _ = await group.next()
+
+            return first
+        }
+    }
+
+    // MARK: - Helpers
 
     private static func writeInput(to url: URL, input: MacroInput) throws {
         if input.isImage, let png = input.imageData {
@@ -160,6 +235,15 @@ enum MacroRunner {
             try Data().write(to: url)
         }
     }
+
+    private static func cleanupFiles(_ launched: LaunchedProcess) {
+        let fm = FileManager.default
+        try? fm.removeItem(at: launched.inputURL)
+        try? fm.removeItem(at: launched.outputURL)
+        if let inlineScriptURL = launched.inlineScriptURL {
+            try? fm.removeItem(at: inlineScriptURL)
+        }
+    }
 }
 
 private extension URL {
@@ -167,30 +251,5 @@ private extension URL {
         URL(fileURLWithPath: base)
             .appendingPathComponent("\(name)_\(UUID().uuidString)")
             .appendingPathExtension(ext)
-    }
-}
-
-private extension Process {
-    func waitUntilTimeout(timeout: TimeInterval) {
-        let deadline = Date().addingTimeInterval(timeout)
-        while isRunning, Date() < deadline {
-            let _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
-        }
-        if isRunning {
-            // Send SIGINT first; if there is no response, force termination with SIGTERM.
-            // In either case, wait for the process to actually exit with `waitUntilExit()` before reading
-            // terminationStatus / terminationReason, otherwise the values are undefined (review #3).
-            interrupt()
-            terminate()
-            // After forced termination the process should exit immediately, but wait a short bounded time to be sure.
-            let forceDeadline = Date().addingTimeInterval(2.0)
-            while isRunning, Date() < forceDeadline {
-                let _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
-            }
-            // Last resort when RunLoop.spin did not catch the exit: synchronous wait.
-            if isRunning {
-                waitUntilExit()
-            }
-        }
     }
 }

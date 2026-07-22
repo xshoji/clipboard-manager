@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import SwiftData
 import os
+import os.lock
 
 /// Monitors the system pasteboard and records new entries to history.
 ///
@@ -55,12 +56,14 @@ final class ClipboardMonitor: @unchecked Sendable {
     private var lastSavedContentHash: String?
     private var isObservingSettings = false
     private var isRunning = false
-    /// Only mutated on the timer queue (serial).
-    /// Set of changeCounts written by this app (e.g., Macro paste) to exclude from history saving.
-    /// `suppressChangeCountRange` pre-registers a range before a write, and
-    /// `finalizeSuppressionAfterWrite` cleans up orphaned entries after the write;
-    /// the poll consumes a matching entry and skips saving.
-    private var suppressedChangeCounts: Set<Int> = []
+    /// Suppression set guarded by an `OSAllocatedUnfairLock`.
+    ///
+    /// Previously this was a plain `Set<Int>` accessed via `pollQueue.sync` from the
+    /// main actor. When the poll queue was busy with heavy work (SHA256 hashing,
+    /// thumbnail generation on large images), the `sync` call blocked the main actor.
+    /// The unfair lock is extremely cheap (spinning, microseconds) and independent of
+    /// the poll queue, so main-actor suppression operations never wait on poll work.
+    private let suppressedChangeCountsLock = OSAllocatedUnfairLock(initialState: Set<Int>())
     /// Serial queue used for polling. Reading the pasteboard (especially large image
     /// data) and generating thumbnails can take tens of ms; running on a utility queue
     /// keeps the main actor responsive (review #6).
@@ -136,11 +139,11 @@ final class ClipboardMonitor: @unchecked Sendable {
     /// monitor.suppressChangeCountRange((pre + 1)..<(pre + 3));
     /// monitor.finalizeSuppressionAfterWrite(preChangeCount: pre)`.
     func suppressChangeCountRange(_ range: Range<Int>) {
-        // `sync` so the range is visible on `pollQueue` before this method returns.
-        pollQueue.sync { [weak self] in
-            guard let self else { return }
+        // Uses an unfair lock instead of `pollQueue.sync` so the main actor is never
+        // blocked by heavy poll-queue work (image hashing, thumbnail generation).
+        suppressedChangeCountsLock.withLock { set in
             for c in range {
-                self.suppressedChangeCounts.insert(c)
+                set.insert(c)
             }
         }
     }
@@ -162,19 +165,18 @@ final class ClipboardMonitor: @unchecked Sendable {
     /// could suppress future user copies). Must be called on the main actor
     /// **immediately after** the pasteboard write completes.
     func finalizeSuppressionAfterWrite(preChangeCount pre: Int) {
-        // `sync` so the cleanup is visible on `pollQueue` before this method returns
-        // and before any subsequent poll fires.
-        pollQueue.sync { [weak self] in
-            guard let self else { return }
+        // Uses an unfair lock instead of `pollQueue.sync` so the main actor is never
+        // blocked by heavy poll-queue work (image hashing, thumbnail generation).
+        suppressedChangeCountsLock.withLock { set in
             let post = NSPasteboard.general.changeCount
             // Ensure the actual post-write changeCount is suppressed even if the
             // write produced more bumps than the pre-registered range covered.
-            self.suppressedChangeCounts.insert(post)
+            set.insert(post)
             // Remove pre-registered entries above `post`; they were never produced
             // by this write and would otherwise orphan-suppress a future user copy.
             for c in (pre + 1)..<(pre + 3) {
                 if c > post {
-                    self.suppressedChangeCounts.remove(c)
+                    set.remove(c)
                 }
             }
         }
@@ -186,7 +188,7 @@ final class ClipboardMonitor: @unchecked Sendable {
         guard count != lastChangeCount else { return }
         lastChangeCount = count
 
-        if suppressedChangeCounts.remove(count) != nil {
+        if suppressedChangeCountsLock.withLock({ $0.remove(count) != nil }) {
             return
         }
 
