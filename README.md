@@ -6,6 +6,7 @@ screenshot. Then just switch back and paste with `Cmd+V`.
 
 <img width="1046" height="686" alt="app-image" src="https://github.com/user-attachments/assets/52b802eb-8938-4cd2-9d39-0b02171f3b99" />
 
+
 ---
 
 ## Why this exists
@@ -22,9 +23,9 @@ than learn a new automation language.
 
 The image-editing idea itself is inspired by BetterTouchTool's clipboard
 manager (BTT's source isn't public, so the implementation here is
-original — and deliberately uses Preview.app as an external process
-instead of an embedded editor window, to stay closer to public macOS
-APIs rather than private-API window hosting).
+original). This app deliberately launches Preview.app as a real
+external process rather than hosting an embedded editor window, so
+image editing stays on documented, public macOS APIs.
 
 ### Why not Maccy / CopyQ / Maus?
 
@@ -36,6 +37,7 @@ APIs rather than private-API window hosting).
 | Script/macro execution     | ✅ (any shell script) | ❌ | ✅ (JS)  | ❌   |
 | Image editing via Preview  | ✅                 | ❌    | ❌        | ❌   |
 | On-device OCR paste        | ✅                 | ❌    | ❌        | ✅   |
+| Fully local (no cloud sync)| ✅                 | Optional (iCloud) | ✅ | ✅ |
 
 (Feature comparisons are based on public docs/websites as of 2026 and may
 be out of date — please file an issue if something's changed.)
@@ -58,11 +60,12 @@ keyboard-driven picker (`Cmd+M`) without touching the mouse.
 
 ### Image editing via Preview.app
 Hit Edit on an image entry and it opens in Preview — the same editor
-you already know, launched as a real external process rather than an
-embedded webview. `Cmd+S` saves back in place with no filename dialog,
-and the edited result is added to history as a new entry (original
-preserved). See [Image Editing via Preview.app](#image-editing-via-previewapp)
-below for exactly how that's detected and made safe.
+you already know, launched as a real external process. `Cmd+S` saves
+back in place with no filename dialog, and the edited result is added
+to history as a new entry (original preserved). A working copy is kept
+under `~/Downloads/ClipboardManagerEdit/` while editing — see
+[Image Editing via Preview.app](#image-editing-via-previewapp) below
+for exactly how that's detected and made safe.
 
 ### OCR text paste
 Select an image entry, run "Paste Plain", and the text in it is
@@ -81,6 +84,11 @@ Dock icon — it lives in the menu bar.
 ### Retention & count limits
 Automatic cleanup by age and/or maximum item count, so history doesn't
 grow forever.
+
+### Fully local, no cloud sync
+Clipboard history, images, and OCR recognition all stay on-device.
+Nothing is uploaded anywhere, and there's no account or cloud sync —
+your history never leaves the machine it was copied on.
 
 ---
 
@@ -166,6 +174,14 @@ The Edit button in the footer dispatches by the selected item's kind:
 - **Image**: launches macOS standard Preview.app as an external process
   with a pre-prepared working file.
 
+**A note on `~/Downloads`**: while an image is being edited, a working
+copy is kept at `~/Downloads/ClipboardManagerEdit/<entityUUID>_edit.<ext>`
+(hidden). This app writes to your Downloads folder for this reason —
+Preview can't overwrite a file in another app's Application Support
+directory without popping a save dialog, and `~/Downloads` is a
+location Preview can save into directly, so `Cmd+S` works without a
+dialog. The working file is deleted once editing is done.
+
 <details>
 <summary>Full image edit flow (click to expand)</summary>
 
@@ -204,11 +220,8 @@ The Edit button in the footer dispatches by the selected item's kind:
 9. On app startup, `cleanupOrphanedEditFiles()` deletes stale
    `*_edit.*` work files left behind by previous sessions.
 
-### Why Downloads?
+### Sandboxing note
 
-Preview could not overwrite files in another app's Application Support
-directory without presenting a save dialog. Placing the working file
-under `~/Downloads` avoids the dialog and lets `Cmd+S` save in place.
 If the app is sandboxed for App Store distribution, a
 `com.apple.security.files.downloads.read-write` entitlement may be
 required (see `docs/design-implementation.md §8`).
@@ -281,3 +294,9 @@ v="0.0.1"; git tag -d "${v}" && git push origin :"${v}"; git tag "${v}"; git pus
 ```
 
 </details>
+
+---
+
+## License
+
+MIT
