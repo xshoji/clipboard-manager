@@ -522,6 +522,10 @@ final class PreviewImageEditor {
                 self?.saveToHistory(data: workData, hash: hash)
                 self?.sessions[sessionID]?.lastSavedHash = hash
                 self?.rescheduleSessionTimeout(for: sessionID)
+                // After a successful save, close the Preview window automatically
+                // (the edit's purpose is fulfilled). Only the session's window is
+                // closed; other Preview windows are left untouched.
+                self?.closePreviewWindow(for: sessionID)
             }
         }
     }
@@ -699,6 +703,66 @@ final class PreviewImageEditor {
                     )
                 }
             }
+        }
+    }
+
+    // MARK: - Close Preview window
+
+    /// Closes the Preview window for the given session after a successful save.
+    ///
+    /// Uses the AX API to press the target window's close button when Accessibility
+    /// permission is granted (consistent with the existing AX-based detection). Falls
+    /// back to AppleScript when AX is not available, targeting the window by file name.
+    /// Only the window matching this session's work file is closed; other Preview
+    /// windows are left untouched.
+    private func closePreviewWindow(for sessionID: UUID) {
+        guard let s = sessions[sessionID], !s.didFinish else { return }
+
+        if AXIsProcessTrusted() {
+            // AX path: press the close button on the matching window.
+            let appEl = AXUIElementCreateApplication(s.pid)
+            var windowsRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef)
+            let windows = (windowsRef as? [AXUIElement]) ?? []
+            let targetStem = s.workFile.deletingPathExtension().lastPathComponent
+            let targetName = s.workFile.lastPathComponent
+            for window in windows {
+                var titleRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
+                let title = titleRef as? String
+                var docRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(window, kAXDocumentAttribute as CFString, &docRef)
+                let doc = docRef as? String
+                let matched = (title == targetStem)
+                    || (doc?.hasSuffix(targetName) ?? false)
+                    || (doc?.contains(targetName) ?? false)
+                guard matched else { continue }
+                // Press the close button.
+                var closeButtonRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(window, kAXCloseButtonAttribute as CFString, &closeButtonRef)
+                if let closeButton = closeButtonRef {
+                    AXUIElementPerformAction(closeButton as! AXUIElement, kAXPressAction as CFString)
+                }
+                return
+            }
+        }
+
+        // Fallback: AppleScript. Close the window whose name matches the work file.
+        // This may trigger a one-time automation permission dialog on first use.
+        let windowName = s.workFile.deletingPathExtension().lastPathComponent
+        let script = """
+        tell application "Preview"
+            repeat with w in windows
+                if name of w is "\(windowName)" then
+                    close w
+                    exit repeat
+                end if
+            end repeat
+        end tell
+        """
+        if let appleScript = NSAppleScript(source: script) {
+            var errorInfo: NSDictionary?
+            appleScript.executeAndReturnError(&errorInfo)
         }
     }
 
