@@ -10,8 +10,9 @@ screenshot. Then just switch back and paste with `Cmd+V`.
 
 ## Why this exists
 
-Most Mac clipboard managers make you pick two out of three: open-source
-and free (Maccy), scriptable but not Mac-native (CopyQ, built with Qt), or Mac-native with real automation but closed-source, with paid tiers or one-time purchases (Paste, Maus, BetterTouchTool — Maus has a free tier with a one-time Pro upgrade, while Paste and BTT are subscription/paid). BetterTouchTool's clipboard manager can already annotate/edit images with its own built-in editor and run scripts on clipboard content, but it's paid, closed-source, and script execution is configured as one of BTT's many general-purpose actions rather than a dedicated, single-purpose feature.
+Looking at existing Mac clipboard managers, none seemed to combine open-source, Mac-native automation, and dedicated script/macro support all at once: Maccy is open-source and free but has no scripting; CopyQ is scriptable but built with Qt rather than native macOS UI; Paste, Maus, and BetterTouchTool offer real Mac-native automation but are closed-source, with paid tiers or one-time purchases. BetterTouchTool's clipboard manager in particular already supports image annotation and script execution on clipboard content — but that script execution is configured as one of BTT's many general-purpose actions/triggers, which is flexible but adds real setup overhead for something as simple as "run this script on the clipboard item I just copied."
+This project tries to combine open-source, free, and a Macro feature built around a single idea: register a script, get a hotkey, and run it directly against the selected clipboard entry — aimed at engineers who'd rather write a 5-line bash script than learn a new automation language.
+
 
 This one is an attempt to be all three at once — open-source, free, and
 built specifically for engineers who'd rather write a 5-line bash script
