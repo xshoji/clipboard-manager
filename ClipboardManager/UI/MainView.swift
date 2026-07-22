@@ -12,6 +12,7 @@ struct MainView: View {
     @State private var editingEntity: ClipboardEntity?
     @State private var sidebarVisible: Bool
    @State private var macroPickerPresented: Bool = false
+    @State private var isOcrInProgress: Bool = false
 
     init(
         focusSearch: Bool,
@@ -60,6 +61,12 @@ struct MainView: View {
            }
        }
        .animation(.easeOut(duration: 0.12), value: macroPickerPresented)
+        .overlay {
+            if isOcrInProgress {
+                OcrProgressOverlay()
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: isOcrInProgress)
         .sheet(item: $editingEntity) { entity in
             TextEditView(original: entity)
         }
@@ -98,6 +105,11 @@ struct MainView: View {
                return
            }
            macroPickerPresented.toggle()
+       }
+       .onReceive(NotificationCenter.default.publisher(for: .ocrProgressDidChange)) { note in
+           if let v = note.userInfo?["inProgress"] as? Bool {
+               isOcrInProgress = v
+           }
        }
     }
 

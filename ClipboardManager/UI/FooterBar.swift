@@ -9,7 +9,6 @@ struct FooterBar: View {
     @State private var showMacroMenu: Bool = false
     @State private var showMoreMenu: Bool = false
     @State private var showInfo: String?
-    @State private var isOcrInProgress: Bool = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -25,24 +24,6 @@ struct FooterBar: View {
         .padding(.vertical, 8)
         .background(Color.appBackground.opacity(0.95))
         .overlay(alignment: .top) { Divider().opacity(0.2) }
-        .overlay(alignment: .top) {
-            if isOcrInProgress {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Running OCR…").font(.caption).foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-                .background(Color.appBackground.opacity(0.95))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .padding(.top, 2)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .ocrProgressDidChange)) { note in
-            if let v = note.userInfo?["inProgress"] as? Bool {
-                isOcrInProgress = v
-            }
-        }
     }
 
     private func actionButton(_ title: String, system: String, action: @escaping () -> Void) -> some View {
