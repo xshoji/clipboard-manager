@@ -448,6 +448,14 @@ final class PreviewImageEditor {
         // The inode may have changed due to safe-save, so reopen the watcher from the path.
         if event.contains(.rename) || event.contains(.delete) {
             reinstallFileWatcher(for: sessionID, path: s.workFile.path)
+        } else if !FileManager.default.fileExists(atPath: s.workFile.path) {
+            // A `.write` event arrived but the work file is gone — Preview's safe-save
+            // deleted the original and has not yet renamed the temp file into place.
+            // Without this, no `.rename`/`.delete` event triggers `reinstallFileWatcher`,
+            // so the parent-dir watcher is never installed and the file reappearance
+            // is missed entirely (root cause of "edited image not saved to history"
+            // when saving a large multi-annotation edit).
+            installParentDirWatcher(for: sessionID, path: s.workFile.path)
         }
         scheduleFileChangeDebounce(for: sessionID)
     }
@@ -468,6 +476,8 @@ final class PreviewImageEditor {
 
     /// Hash check when a file change is detected. The session continues (final teardown on window close / termination).
     /// Skips if the hash matches the original image or the last saved hash (duplicate guard for auto-save).
+    /// File read and hash computation run on a background task so the main actor is not
+    /// blocked while processing large edited images (prevents spinning-rainbow cursor).
     private func performFileChangeCheck(sessionID: UUID, retryCount: Int = 0) {
         guard let s = sessions[sessionID], !s.didFinish else { return }
         guard let workData = try? Data(contentsOf: s.workFile) else {
@@ -482,24 +492,38 @@ final class PreviewImageEditor {
                }
                sessions[sessionID]?.debounceWork = work
                DispatchQueue.main.asyncAfter(deadline: .now() + fileReadRetryInterval, execute: work)
+           } else {
+               // Retries exhausted — the file is still absent (large-image safe-save
+               // can take longer than 3 s). Install a parent-dir watcher so the moment
+               // the file reappears we pick it up. Without this, the session silently
+               // loses the save event and the edited image never enters history.
+               installParentDirWatcher(for: sessionID, path: s.workFile.path)
            }
            return
        }
-        let hash = HashUtil.sha256Hex(of: workData)
-        guard hash != s.originalHash else { return }
-        guard hash != s.lastSavedHash else { return }
-        let maxBytes = AppSettings.shared.maxItemSizeMB * 1024 * 1024
-        guard workData.count <= maxBytes else {
-            AppNotifier.notify(
-                title: "Edited image not saved",
-                body: "The edited image exceeds the \(AppSettings.shared.maxItemSizeMB) MB size limit.",
-                deduplicationKey: "edited-image-size-limit"
-            )
-            return
+        let originalHash = s.originalHash
+        let lastSavedHash = s.lastSavedHash
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let hash = HashUtil.sha256Hex(of: workData)
+            guard hash != originalHash else { return }
+            guard hash != lastSavedHash else { return }
+            let maxBytes = AppSettings.shared.maxItemSizeMB * 1024 * 1024
+            guard workData.count <= maxBytes else {
+                await MainActor.run {
+                    AppNotifier.notify(
+                        title: "Edited image not saved",
+                        body: "The edited image exceeds the \(AppSettings.shared.maxItemSizeMB) MB size limit.",
+                        deduplicationKey: "edited-image-size-limit"
+                    )
+                }
+                return
+            }
+            await MainActor.run {
+                self?.saveToHistory(data: workData, hash: hash)
+                self?.sessions[sessionID]?.lastSavedHash = hash
+                self?.rescheduleSessionTimeout(for: sessionID)
+            }
         }
-        saveToHistory(data: workData, hash: hash)
-        sessions[sessionID]?.lastSavedHash = hash
-       rescheduleSessionTimeout(for: sessionID)
     }
 
     // MARK: - AX window detection (main)
@@ -620,39 +644,61 @@ final class PreviewImageEditor {
         sessions[sessionID]?.didFinish = true
 
        if let workData = try? Data(contentsOf: s.workFile) {
-            let hash = HashUtil.sha256Hex(of: workData)
-           if hash != s.originalHash && hash != s.lastSavedHash {
-               let maxBytes = AppSettings.shared.maxItemSizeMB * 1024 * 1024
-               if workData.count <= maxBytes {
-                   saveToHistory(data: workData, hash: hash)
-                   sessions[sessionID]?.lastSavedHash = hash
+            let originalHash = s.originalHash
+            let lastSavedHash = s.lastSavedHash
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let hash = HashUtil.sha256Hex(of: workData)
+                guard hash != originalHash, hash != lastSavedHash else {
+                    await MainActor.run {
+                        self?.teardown(sessionID: sessionID)
+                    }
+                    return
+                }
+                let maxBytes = AppSettings.shared.maxItemSizeMB * 1024 * 1024
+                guard workData.count <= maxBytes else {
+                    await MainActor.run {
+                        self?.teardown(sessionID: sessionID)
+                    }
+                    return
+                }
+                await MainActor.run {
+                    self?.saveToHistory(data: workData, hash: hash)
+                    self?.sessions[sessionID]?.lastSavedHash = hash
+                    self?.teardown(sessionID: sessionID)
                 }
             }
+       } else {
+            teardown(sessionID: sessionID)
        }
-        teardown(sessionID: sessionID)
     }
 
     private func saveToHistory(data: Data, hash: String) {
         guard let persistence = PersistenceController.shared else { return }
-        let thumb = ThumbnailGenerator.thumbnailData(from: data, maxEdge: 64)
-        let entity = ClipboardEntity(
-            kind: "image",
-            imageData: data,
-            thumbnail: thumb,
-            contentHash: hash
-        )
-        let ctx = persistence.container.mainContext
-        ctx.insert(entity)
-        do {
-            try ctx.save()
-            persistence.scheduleEnforceWithDebounce()
-        } catch {
-            ctx.delete(entity)
-            AppNotifier.notify(
-                title: "Edited image not saved",
-                body: "The edited image could not be added to clipboard history.",
-                deduplicationKey: "edited-image-save-failed"
-            )
+        // Thumbnail generation (lockFocus → tiffRepresentation) is heavy for large
+        // images; run it on a background task so the main actor is not blocked.
+        Task.detached(priority: .userInitiated) {
+            let thumb = ThumbnailGenerator.thumbnailData(from: data, maxEdge: 64)
+            await MainActor.run {
+                let entity = ClipboardEntity(
+                    kind: "image",
+                    imageData: data,
+                    thumbnail: thumb,
+                    contentHash: hash
+                )
+                let ctx = persistence.container.mainContext
+                ctx.insert(entity)
+                do {
+                    try ctx.save()
+                    persistence.scheduleEnforceWithDebounce()
+                } catch {
+                    ctx.delete(entity)
+                    AppNotifier.notify(
+                        title: "Edited image not saved",
+                        body: "The edited image could not be added to clipboard history.",
+                        deduplicationKey: "edited-image-save-failed"
+                    )
+                }
+            }
         }
     }
 
