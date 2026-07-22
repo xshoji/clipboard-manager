@@ -13,6 +13,9 @@
 # Output dir
 .build
 
+# Xcode
+.swiftpm
+
 # archive
 docs/archive/*
 !docs/archive/.gitkeep
