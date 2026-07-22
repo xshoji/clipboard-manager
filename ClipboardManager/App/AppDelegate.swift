@@ -556,12 +556,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
-        appDelegate?.uninstallWindowScopedHotkeys()
-        if settings.isAlwaysOnTop {
-            return
-        }
-        // Skip auto-close when another window owned by this app (e.g., Settings window or text-edit sheet) is still
-        // visible, so opening Settings… from the header or editing a text entry does not dismiss the history underneath.
+        // Skip hotkey uninstall and auto-close when another window owned by this app
+        // (e.g., Settings window, text-edit sheet) is still visible. Without this,
+        // opening a text-edit sheet unregisters Cmd+E, and after closing the sheet
+        // the hotkey is never re-registered, so Cmd+E stops working (beep only).
         let closingWindow = notification.object as? NSWindow
         let hasVisibleOwnedNonPanel = NSApp.windows.contains { other in
             other !== closingWindow
@@ -570,7 +568,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 && other.canBecomeKey
         }
         // Sheets presented on the history panel itself are NSPanels; treat any other visible NSPanel
-        // owned by this app (e.g., edit sheet) as "do not auto-close" too.
+        // owned by this app (e.g., edit sheet) as "do not uninstall / do not auto-close" too.
         let hasVisibleOwnedPanel = NSApp.windows.contains { other in
             other !== closingWindow
                 && other.isVisible
@@ -578,6 +576,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 && other.canBecomeKey
         }
         if hasVisibleOwnedNonPanel || hasVisibleOwnedPanel {
+            return
+        }
+
+        appDelegate?.uninstallWindowScopedHotkeys()
+        if settings.isAlwaysOnTop {
             return
         }
         // Use `close()` (not `orderOut`) so that `windowWillClose` fires and the same
