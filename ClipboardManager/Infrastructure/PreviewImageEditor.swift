@@ -715,8 +715,12 @@ final class PreviewImageEditor {
     /// back to AppleScript when AX is not available, targeting the window by file name.
     /// Only the window matching this session's work file is closed; other Preview
     /// windows are left untouched.
+    ///
+    /// After issuing the close, focus is restored to the ClipboardManager history
+    /// window on a delay so the close action is not interrupted by activating this app.
     private func closePreviewWindow(for sessionID: UUID) {
         guard let s = sessions[sessionID], !s.didFinish else { return }
+        var didCloseViaAX = false
 
         if AXIsProcessTrusted() {
             // AX path: press the close button on the matching window.
@@ -742,27 +746,56 @@ final class PreviewImageEditor {
                 AXUIElementCopyAttributeValue(window, kAXCloseButtonAttribute as CFString, &closeButtonRef)
                 if let closeButton = closeButtonRef {
                     AXUIElementPerformAction(closeButton as! AXUIElement, kAXPressAction as CFString)
+                    didCloseViaAX = true
                 }
-                return
+                break
             }
         }
 
-        // Fallback: AppleScript. Close the window whose name matches the work file.
-        // This may trigger a one-time automation permission dialog on first use.
-        let windowName = s.workFile.deletingPathExtension().lastPathComponent
-        let script = """
-        tell application "Preview"
-            repeat with w in windows
-                if name of w is "\(windowName)" then
-                    close w
-                    exit repeat
-                end if
-            end repeat
-        end tell
-        """
-        if let appleScript = NSAppleScript(source: script) {
-            var errorInfo: NSDictionary?
-            appleScript.executeAndReturnError(&errorInfo)
+        if !didCloseViaAX {
+            // Fallback: AppleScript. Close the window whose name matches the work file.
+            // This may trigger a one-time automation permission dialog on first use.
+            let windowName = s.workFile.deletingPathExtension().lastPathComponent
+            let script = """
+            tell application "Preview"
+                repeat with w in windows
+                    if name of w is "\(windowName)" then
+                        close w
+                        exit repeat
+                    end if
+                end repeat
+            end tell
+            """
+            if let appleScript = NSAppleScript(source: script) {
+                var errorInfo: NSDictionary?
+                appleScript.executeAndReturnError(&errorInfo)
+            }
+        }
+
+        // After closing the Preview window, restore key focus to the ClipboardManager
+        // history window so window-scoped hotkeys (Cmd+E, etc.) work immediately.
+        // Delayed so the close action (AX press or AppleScript `close`) completes first;
+        // activating this app immediately can interrupt Preview's asynchronous close.
+        restoreHistoryWindowFocus()
+    }
+
+    /// Brings the ClipboardManager history window back to the foreground after
+    /// Preview's window is closed, so the user can immediately use action hotkeys
+    /// (Cmd+E, etc.) without manually clicking the history window.
+    /// Delayed by 0.5s to avoid interrupting Preview's window-close animation.
+    private func restoreHistoryWindowFocus() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            Task { @MainActor in
+                guard self != nil else { return }
+                // Find the history window (NSPanel) owned by this app and make it key.
+                for window in NSApp.windows where window.isVisible && window.canBecomeKey {
+                    if window is NSPanel {
+                        window.makeKeyAndOrderFront(nil)
+                        NSApp.activate(ignoringOtherApps: true)
+                        return
+                    }
+                }
+            }
         }
     }
 

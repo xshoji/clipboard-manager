@@ -544,16 +544,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // window means ClipboardManager is no longer frontmost, so unregister them here
         // so the user's own Cmd+E ( etc. ) works in other apps. They will be reinstalled
         // on the next showMainWindow.
-        appDelegate?.uninstallWindowScopedHotkeys()
-        if settings.isAlwaysOnTop {
+
+        // Skip auto-close AND hotkey uninstall while an image edit session in Preview.app
+        // is active. The user edits in another process; auto-closing the history window
+        // or unregistering window-scoped hotkeys here would prevent them from confirming
+        // that the saved image was appended and from using Cmd+E / other action hotkeys
+        // immediately after Preview's window closes. The session is considered active
+        // until Preview's window closes / it quits (PreviewImageEditor sets didFinish
+        // and tears the session down).
+        if PreviewImageEditor.shared.hasActiveSession {
             return
         }
-        // Skip auto-close while an image edit session in Preview.app is active.
-        // The user edits in another process; auto-closing the history window here
-        // would prevent them from confirming that the saved image was appended.
-        // The session is considered active until Preview's window closes / it quits
-        // (PreviewImageEditor sets didFinish and tears the session down).
-        if PreviewImageEditor.shared.hasActiveSession {
+
+        appDelegate?.uninstallWindowScopedHotkeys()
+        if settings.isAlwaysOnTop {
             return
         }
         // Skip auto-close when another window owned by this app (e.g., Settings window or text-edit sheet) is still
