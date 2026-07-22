@@ -6,7 +6,6 @@ screenshot. Then just switch back and paste with `Cmd+V`.
 
 <img width="1046" height="686" alt="app-image" src="https://github.com/user-attachments/assets/52b802eb-8938-4cd2-9d39-0b02171f3b99" />
 
-
 ---
 
 ## Why this exists
@@ -14,12 +13,15 @@ screenshot. Then just switch back and paste with `Cmd+V`.
 Most Mac clipboard managers make you pick two out of three: open-source
 and free (Maccy), scriptable but not Mac-native (CopyQ, built with Qt),
 or Mac-native with real automation but closed-source and paid (Paste,
-Maus). None of them let you edit a copied image or run a shell script
-against clipboard text without reaching for a separate app.
+Maus, BetterTouchTool). BetterTouchTool's clipboard manager can already
+edit images and run scripts on clipboard content, but it's paid,
+closed-source, and script execution is configured as one of BTT's many
+general-purpose actions rather than a dedicated, single-purpose feature.
 
 This one is an attempt to be all three at once — open-source, free, and
 built specifically for engineers who'd rather write a 5-line bash script
-than learn a new automation language.
+than learn a new automation language, with a Macro feature that's just:
+register a script, get a hotkey.
 
 The image-editing idea itself is inspired by BetterTouchTool's clipboard
 manager (BTT's source isn't public, so the implementation here is
@@ -27,17 +29,17 @@ original). This app deliberately launches Preview.app as a real
 external process rather than hosting an embedded editor window, so
 image editing stays on documented, public macOS APIs.
 
-### Why not Maccy / CopyQ / Maus?
+### Why not BTT / Maccy / CopyQ / Maus?
 
-|                            | ClipboardManager | Maccy | CopyQ     | Maus |
-|----------------------------|:-----------------:|:-----:|:---------:|:----:|
-| Open source                | ✅                 | ✅    | ✅        | ❌   |
-| Free                       | ✅                 | ✅    | ✅        | Freemium |
-| Native macOS UI (SwiftUI)  | ✅                 | ✅    | ❌ (Qt)   | ✅   |
-| Script/macro execution     | ✅ (any shell script) | ❌ | ✅ (JS)  | ❌   |
-| Image editing via Preview  | ✅                 | ❌    | ❌        | ❌   |
-| On-device OCR paste        | ✅                 | ❌    | ❌        | ✅   |
-| Fully local (no cloud sync)| ✅                 | Optional (iCloud) | ✅ | ✅ |
+|                            | ClipboardManager | BTT's Clipboard Manager | Maccy | CopyQ | Maus |
+|----------------------------|:----------------:|:---:|:-----:|:------:|:----:|
+| Open source                | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Native macOS UI (SwiftUI)  | ✅ | ✅ | ✅ | ❌<br>(Qt) | ✅ |
+| Script/macro execution     | ✅<br>(any shell script) | ✅<br>(JS / shell, via generic actions) | ❌ | ✅<br>(JS) | ❌ |
+| Dedicated Macro setup      | ✅<br>register a script, get a hotkey + picker | ⚠️<br>Configured as one of BTT's many general-purpose actions/triggers — more flexible, but a steeper setup for "just run a script on paste" | — | ✅<br>dedicated scripting UI | — |
+| Image editing              | ✅<br>(opens in Preview.app) | ✅<br>(built-in embedded editor) | ❌ | ❌ | ❌ |
+| On-device OCR paste        | ✅<br>built into "Paste Plain" | ⚠️<br>(separate predefined action you chain yourself) | ❌ | ❌ | ✅ |
+| Fully local (no cloud sync)| ✅ | ✅ | Optional (iCloud) | ✅ | ✅ |
 
 (Feature comparisons are based on public docs/websites as of 2026 and may
 be out of date — please file an issue if something's changed.)
