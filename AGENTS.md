@@ -55,8 +55,7 @@ ClipboardManager/
 │   ├── FooterBar.swift             # action buttons (Paste / Plain Text / Copy / Edit / More)
 │   ├── TextEditView.swift          # text edit sheet
 │   ├── SettingsView.swift          # settings window
-│   ├── MacroScriptRowView.swift     # macro script settings row
-│   ├── MacroConfirmSheet.swift      # macro execution confirmation sheet
+│   ├── MacroScriptRowView.swift     # macro script settings row (with register/change confirmation dialog)
 │   ├── HotkeyRecorderView.swift    # hotkey registration UI
 │   └── Colors.swift                # color definitions
 ├── Domain/

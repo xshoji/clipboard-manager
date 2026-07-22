@@ -270,7 +270,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Fires the Edit action on the currently selected entity ( image → Preview.app, text → TextEditView sheet ).
     /// Issues a system beep if nothing is selected, mirroring `runMacroFromHotkey`.
+    /// Action hotkeys are global Carbon registrations; silently ignore when the history
+    /// window is not the key window so they only fire while ClipboardManager is focused.
     private func runEditAction() {
+        guard mainWindowController?.window?.isKeyWindow == true else { return }
         guard let entityID = AppState.shared.selectedEntityID,
               let entity = fetchEntity(id: entityID) else {
             NSSound.beep()
@@ -281,7 +284,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Fires the Paste Plain action on the currently selected entity ( writes plain-text only to pasteboard and returns to previous app ).
     /// Issues a system beep if nothing is selected, mirroring `runMacroFromHotkey`.
+    /// Action hotkeys are global Carbon registrations; silently ignore when the history
+    /// window is not the key window so they only fire while ClipboardManager is focused.
     private func runPastePlainAction() {
+        guard mainWindowController?.window?.isKeyWindow == true else { return }
         guard let entityID = AppState.shared.selectedEntityID,
               let entity = fetchEntity(id: entityID) else {
             NSSound.beep()
@@ -307,15 +313,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-   /// Fires the Macro Picker overlay on the currently selected entity.
-   /// The overlay lists all registered Macros and lets the user pick one with the
-   /// keyboard; Enter runs it against the selected history entry (design: Cmd+M flow).
-   /// Issues a system beep if nothing is selected, mirroring `runMacroFromHotkey`.
-   private func runMacroPickerAction() {
-       guard AppState.shared.selectedEntityID != nil else {
-           NSSound.beep()
-           return
-       }
+    /// Fires the Macro Picker overlay on the currently selected entity.
+    /// The overlay lists all registered Macros and lets the user pick one with the
+    /// keyboard; Enter runs it against the selected history entry (design: Cmd+M flow).
+    /// Issues a system beep if nothing is selected, mirroring `runMacroFromHotkey`.
+    ///  Action hotkeys are global Carbon registrations; silently ignore when the history
+    /// window is not the key window so they only fire while ClipboardManager is focused.
+    private func runMacroPickerAction() {
+        guard mainWindowController?.window?.isKeyWindow == true else { return }
+        guard AppState.shared.selectedEntityID != nil else {
+            NSSound.beep()
+            return
+        }
        NotificationCenter.default.post(name: .macroPickerTriggered, object: nil)
    }
 
@@ -394,6 +403,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panel.contentView = NSHostingView(rootView: contentView)
             let controller = MainWindowController(window: panel, settings: settings)
             controller.persistence = persistence
+            controller.appDelegate = self
             mainWindowController = controller
         } else {
             // When re-showing, reposition the window only if the user has not moved it
@@ -483,10 +493,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.isReleasedWhenClosed = false
             window.center()
             window.contentViewController = NSHostingController(rootView: contentView)
-            // The history panel is an always-on-top NSPanel (.floating). Keep the Settings
-            // window above it so it isn't hidden when the history list is visible.
             window.level = .floating+1
-            settingsWindowController = NSWindowController(window: window)
+            let controller = SettingsWindowController(window: window)
+            controller.onWindowWillClose = { [weak self] in
+                self?.settingsWindowController = nil
+            }
+            settingsWindowController = controller
         }
 
         settingsWindowController?.showWindow(nil)
@@ -510,6 +522,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     var settings: AppSettings
     var persistence: PersistenceController?
+    /// Weak reference to AppDelegate so NSApp.delegate ( which SwiftUI replaces ) is not needed.
+    weak var appDelegate: AppDelegate?
     /// Last window frame the user explicitly positioned (via drag). `nil` until the user moves the window.
     /// Used by `AppDelegate.showMainWindow` to decide whether to reposition near the cursor on re-show.
     private(set) var lastUserFrame: NSRect?
@@ -544,6 +558,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // matching the "peep and dismiss" UX of standard clipboard managers (design-ui.md §1: "disappears on blur or Esc").
         // When the user has pinned the panel (always-on-top), keep it visible even without focus
         // so they can refer to it while working in other apps.
+        // Action / Macro hotkeys are Carbon system-wide registrations: releasing the key
+        // window means ClipboardManager is no longer frontmost, so unregister them here
+        // so the user's own Cmd+E ( etc. ) works in other apps. They will be reinstalled
+        // on the next showMainWindow.
+        appDelegate?.uninstallWindowScopedHotkeys()
         if settings.isAlwaysOnTop {
             return
         }
@@ -599,6 +618,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         // If another normal visible window (e.g., settings) is still open, keep the Dock icon (.regular) (review #5).
+        appDelegate?.uninstallWindowScopedHotkeys()
         let closingWindow = notification.object as? NSWindow
         let hasOtherVisible = NSApp.windows.contains { other in
             other !== closingWindow
@@ -610,8 +630,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         // Window-scoped hotkeys ( per-Macro + per-action ) become inactive when the history window closes ( design ).
         // Closing the window this controller owns is the authoritative "history UI hidden" signal.
-        let appDelegate = NSApp.delegate as? AppDelegate
-        appDelegate?.uninstallWindowScopedHotkeys()
         // Notify the history UI to reset its in-window state (search query, selection)
         // so the next appearance starts fresh and the stale search results do not
         // flash on screen while the window is re-shown.
@@ -624,6 +642,85 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // Suppress zoom (green button) entirely. The standard zoom button is also hidden in
         // AppDelegate.showMainWindow; this is a defense-in-depth guard if invoked via Cmd+Ctrl+F
         // or accessibility actions.
+    }
+}
+
+@MainActor
+final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+    /// Observer for `.macroSaveSettleComplete` while a "Save all unsaved Macros"
+    /// flow is in progress. Registered on Save and removed either when the
+    /// settle completes or in `windowWillClose`. Stored on the main actor (no
+    /// `nonisolated(unsafe)`) so `deinit` does not race with handler threads.
+    private var saveSettleObserver: NSObjectProtocol?
+    var onWindowWillClose: (() -> Void)?
+
+    override init(window: NSWindow?) {
+        super.init(window: window)
+        window?.delegate = self
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func windowWillClose(_ notification: Notification) {
+        removeSaveSettleObserver()
+        onWindowWillClose?()
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard !AppState.shared.unsavedMacroIDs.isEmpty else {
+            AppState.shared.settingsWindowShouldCloseAfterSave = false
+            return true
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Unsaved Macro Changes"
+        alert.informativeText = "You have unsaved changes to one or more Macros. Save before closing?"
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Discard")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn:
+            AppState.shared.settingsWindowShouldCloseAfterSave = true
+            // Arm the settle counter with the number of rows that must report.
+            let pending = AppState.shared.unsavedMacroIDs.count
+            AppState.shared.startMacroSaveCycle(expected: pending)
+            // Observe a single settle-complete event to close the window once
+            // every row has either saved or cancelled. Re-registering each
+            // time the user picks "Save" avoids a long-lived observer.
+            removeSaveSettleObserver()
+            saveSettleObserver = NotificationCenter.default.addObserver(
+                forName: .macroSaveSettleComplete,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    guard AppState.shared.settingsWindowShouldCloseAfterSave else { return }
+                    // Final convenience close: every row has settled by this
+                    // point, so no 50 ms polling is needed.
+                    AppState.shared.settingsWindowShouldCloseAfterSave = false
+                    self?.removeSaveSettleObserver()
+                    self?.close()
+                }
+            }
+            NotificationCenter.default.post(name: .saveAllUnsavedMacros, object: nil)
+            return false
+        case .alertSecondButtonReturn:
+            AppState.shared.unsavedMacroIDs.removeAll()
+            AppState.shared.settingsWindowShouldCloseAfterSave = false
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func removeSaveSettleObserver() {
+        if let token = saveSettleObserver {
+            NotificationCenter.default.removeObserver(token)
+            saveSettleObserver = nil
+        }
     }
 }
 
@@ -659,6 +756,14 @@ extension Notification.Name {
    /// `MainView` observes this and shows the `MacroPickerView` overlay so the user can
    /// pick a Macro with the keyboard and run it against the currently selected entity.
    static let macroPickerTriggered = Notification.Name("macroPickerTriggered")
+    /// Posted by `SettingsWindowController` when the user chooses "Save" on an
+    /// unsaved-changes alert so each `MacroScriptRowView` can persist its edits.
+    static let saveAllUnsavedMacros = Notification.Name("saveAllUnsavedMacros")
+    /// Posted by `AppState` once every expected Macro row has settled its save
+    /// flow (saved or cancelled) after a `.saveAllUnsavedMacros` broadcast.
+    /// Observed by `SettingsWindowController` to close the window only after
+    /// every row has reported its outcome, instead of polling on a timer.
+    static let macroSaveSettleComplete = Notification.Name("macroSaveSettleComplete")
     /// Posted by `OcrPasteService` when an OCR-driven Paste Plain starts/ends so
     /// `FooterBar` can show/hide its progress indicator. `userInfo["inProgress"]` is Bool.
     static let ocrProgressDidChange = Notification.Name("ocrProgressDidChange")
