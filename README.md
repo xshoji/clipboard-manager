@@ -13,10 +13,7 @@ screenshot. Then just switch back and paste with `Cmd+V`.
 Most Mac clipboard managers make you pick two out of three: open-source
 and free (Maccy), scriptable but not Mac-native (CopyQ, built with Qt),
 or Mac-native with real automation but closed-source and paid (Paste,
-Maus, BetterTouchTool). BetterTouchTool's clipboard manager can already
-edit images and run scripts on clipboard content, but it's paid,
-closed-source, and script execution is configured as one of BTT's many
-general-purpose actions rather than a dedicated, single-purpose feature.
+Maus, BetterTouchTool). BetterTouchTool's clipboard manager can already annotate/edit images with its own built-in editor and run scripts on clipboard content, but it's paid, closed-source, and script execution is configured as one of BTT's many general-purpose actions rather than a dedicated, single-purpose feature.
 
 This one is an attempt to be all three at once — open-source, free, and
 built specifically for engineers who'd rather write a 5-line bash script
