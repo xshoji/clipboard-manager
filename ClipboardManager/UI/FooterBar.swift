@@ -9,8 +9,6 @@ struct FooterBar: View {
     @State private var showMacroMenu: Bool = false
     @State private var showMoreMenu: Bool = false
     @State private var showInfo: String?
-    /// Mirrors `OcrPasteService`'s `.ocrProgressDidChange` so the footer can show
-    /// a progress indicator while OCR runs for "Paste as Text" on an image entry.
     @State private var isOcrInProgress: Bool = false
 
     var body: some View {

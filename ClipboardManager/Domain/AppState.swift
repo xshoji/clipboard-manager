@@ -9,7 +9,6 @@ final class AppState {
     /// The ID of the currently selected `ClipboardEntity` in `MainView`. `nil` when nothing is selected.
     var selectedEntityID: UUID?
 
-    /// IDs of Macros that have unsaved changes in the Settings UI.
     var unsavedMacroIDs: Set<UUID> = []
 
     /// Set to `true` when the user chooses "Save" in the unsaved-changes alert on window close.
@@ -43,4 +42,3 @@ final class AppState {
         completedMacroSaveCount = 0
     }
 }
-

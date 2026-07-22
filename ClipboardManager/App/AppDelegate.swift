@@ -14,9 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let menuBarController: MenuBarController
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: NSWindowController?
-    /// UserDefaults watcher so per-Macro shortcut changes are applied immediately.
     private var macroScriptsObserver: NSObjectProtocol?
-    /// UserDefaults watcher so action-hotkey changes are applied immediately.
     private var actionHotkeysObserver: NSObjectProtocol?
 
     /// Window-scoped action hotkey IDs ( design: edit / paste plain / etc., effective only while the history window is visible ).
@@ -79,7 +77,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        // Cleans up leftover image-editing working files from the previous session.
         PreviewImageEditor.shared.cleanupOrphanedEditFiles()
         // Periodically sweep orphaned working files so crashed-session files do not sit in
         // Downloads between launches (review #7).
@@ -127,9 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Returns the app to `.accessory` if no other visible windows remain, so the Dock icon does not linger (review #5).
     @objc private func anyWindowWillClose(_ note: Notification) {
         guard let window = note.object as? NSWindow else { return }
-        // Main window close is already handled in MainWindowController.windowWillClose.
         if window === mainWindowController?.window { return }
-        // If another normal visible window is still present (e.g., main and settings open together), do nothing.
         let hasOtherVisible = NSApp.windows.contains { other in
             other !== window
                 && other !== mainWindowController?.window
@@ -148,21 +143,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Window-scoped hotkeys ( design: per-Macro + per-action shortcuts are effective only while the history window is visible )
 
-    /// Installs all window-scoped hotkeys: per-Macro shortcuts and per-action shortcuts ( edit / paste plain / etc. ).
-    /// Called from `showMainWindow` so they are active only while the history window is on screen.
     func installWindowScopedHotkeys() {
         installMacroHotkeys()
         installActionHotkeys()
     }
 
-    /// Uninstalls all window-scoped hotkeys when the history window is hidden.
     func uninstallWindowScopedHotkeys() {
         hotkeyManager.unregisterAllMacroHotkeys()
         hotkeyManager.unregisterAllActionHotkeys()
     }
 
-    /// Re-registers all MacroScript hotkeys with Carbon.
-    /// Skips Macros whose modifier keys are 0 and unregisters any existing registration.
     private func installMacroHotkeys() {
         hotkeyManager.unregisterAllMacroHotkeys()
         for macro in settings.macroScripts {
@@ -182,8 +172,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Registers the per-action hotkeys ( edit / paste plain / etc. ) with Carbon.
-    /// Skips actions whose modifier keys are 0 ( unset ).
     private func installActionHotkeys() {
         hotkeyManager.unregisterAllActionHotkeys()
         var anyFailed = false
@@ -241,7 +229,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Runs the Macro when its shortcut fires.
     /// If no ClipboardEntity is selected, only beeps and does nothing (requirement: behavior when nothing is selected).
     private func runMacroFromHotkey(macroID: UInt32, original: MacroScript) {
         // Refetch the latest Macro after settings changes (the captured `original` may be a stale snapshot).
@@ -328,7 +315,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
        NotificationCenter.default.post(name: .macroPickerTriggered, object: nil)
    }
 
-    /// Observes `macroScriptsChanged` notifications and re-registers Macro hotkeys when they change.
     private func startObservingMacroScriptsChanges() {
         NotificationCenter.default.addObserver(
             self,
@@ -344,7 +330,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installMacroHotkeys()
     }
 
-    /// Observes `actionHotkeysChanged` notifications and re-registers action hotkeys when they change.
     private func startObservingActionHotkeysChanges() {
         NotificationCenter.default.addObserver(
             self,
@@ -426,7 +411,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if focusSearch {
             NotificationCenter.default.post(name: .focusSearchField, object: nil)
         }
-        // When the window is shown again (e.g., by hotkey), reset the selection to the top (latest history).
         NotificationCenter.default.post(name: .resetSelectionToTop, object: nil)
     }
 
@@ -442,7 +426,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Centers the window on the screen that contains the cursor.
     private func positionWindowAtCenter(_ window: NSWindow) {
         let cursor = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(cursor) }) ?? NSScreen.main
@@ -467,7 +450,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             x: cursor.x - size.width / 2,
             y: cursor.y - size.height / 2
         )
-        // Clamp the window rectangle to stay fully inside the visibleFrame of the screen.
         origin.x = max(visible.minX, min(origin.x, visible.maxX - size.width))
         origin.y = max(visible.minY, min(origin.y, visible.maxY - size.height))
         window.setFrameOrigin(origin)
@@ -684,7 +666,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         switch response {
         case .alertFirstButtonReturn:
             AppState.shared.settingsWindowShouldCloseAfterSave = true
-            // Arm the settle counter with the number of rows that must report.
             let pending = AppState.shared.unsavedMacroIDs.count
             AppState.shared.startMacroSaveCycle(expected: pending)
             // Observe a single settle-complete event to close the window once

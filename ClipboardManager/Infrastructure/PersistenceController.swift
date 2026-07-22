@@ -11,7 +11,6 @@ final class PersistenceController {
     let container: ModelContainer
     private let settings: AppSettings
     private var enforceDebouncer: DispatchWorkItem?
-    /// Logger for store lifecycle events (initialization, backup, recovery).
     private static let logger = Logger(
         subsystem: "com.xshoji.ClipboardManager",
         category: "Persistence"
@@ -154,7 +153,6 @@ final class PersistenceController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(settingsChanged), name: .maxCountChanged, object: nil
         )
-        // Run once at launch.
         scheduleEnforceWithDebounce()
     }
 

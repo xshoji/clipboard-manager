@@ -204,7 +204,6 @@ final class ClipboardMonitor: @unchecked Sendable {
             prepareImageSave(pb, pngData)
             return
         }
-        // RTFD -> text
         if let rtfData = pb.data(forType: .rtfd), !rtfData.isEmpty {
             prepareTextSave(pb, rich: rtfData)
             return

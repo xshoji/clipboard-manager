@@ -128,7 +128,6 @@ final class PreviewImageEditor {
         for id in ids {
             teardown(sessionID: id)
         }
-        // Also clear pending launches that have not registered a session yet.
         pendingEdits = 0
         stopOrphanCleanupTimer()
     }
@@ -147,8 +146,6 @@ final class PreviewImageEditor {
         orphanCleanupTimer = t
     }
 
-    /// Stops the periodic orphan cleanup timer. Called from `teardownAllSessions()` on
-    /// app termination to release the timer deterministically.
     func stopOrphanCleanupTimer() {
         orphanCleanupTimer?.cancel()
         orphanCleanupTimer = nil
@@ -156,7 +153,6 @@ final class PreviewImageEditor {
 
     // MARK: - Public entry
 
-    /// Edits the selected image entity with Preview.app.
     func editImage(entity: ClipboardEntity) {
        // If a session for the same entity already exists, just bring its Preview window to the front.
        // Starting a new session without closing the old window would delete and recreate the working file at the same path,
@@ -193,7 +189,6 @@ final class PreviewImageEditor {
         let workFile = workDir.appendingPathComponent("\(randomPrefix)_\(entity.id.uuidString)_edit.\(ext)")
         do {
             try data.write(to: workFile, options: .atomic)
-            // Also hide the working file from Finder.
             try? (workFile as NSURL).setResourceValue(true, forKey: .isHiddenKey)
         } catch {
             pendingEdits -= 1
@@ -248,8 +243,6 @@ final class PreviewImageEditor {
         workFile: URL,
         originalHash: String
     ) {
-        // The pending edit has now resolved (launch succeeded or failed).
-        // On success the session is registered below, keeping hasActiveSession true.
         if pendingEdits > 0 { pendingEdits -= 1 }
 
         if let error {
@@ -295,7 +288,6 @@ final class PreviewImageEditor {
        rescheduleSessionTimeout(for: sessionID)
         startAXPolling(for: sessionID)
 
-        // If Accessibility permission is not granted, notify the user that detection will be slower and guide them to Settings.
         if !AXIsProcessTrusted() {
             AppNotifier.notify(
                 title: "Enable Accessibility for faster edit detection",
@@ -307,8 +299,6 @@ final class PreviewImageEditor {
 
     // MARK: - File change watcher (primary detection)
 
-   /// Brings Preview to the front for an existing session of the same entity.
-   /// When the user edits the same image again, activates the already open window.
    private func activatePreview(for session: Session) {
        session.runningApp?.activate(options: [.activateAllWindows])
    }
@@ -347,11 +337,9 @@ final class PreviewImageEditor {
                || (doc?.contains(targetName) ?? false)
        }
        if !exists {
-           // Target window closed. Run a final hash check and end the session.
            scheduleHashCheck(for: sessionID, delay: 0.3)
            return
        }
-       // Still open. Recheck after 5 seconds.
        let next = DispatchWorkItem { [weak self] in
            Task { @MainActor in
                self?.pollWindowExistence(sessionID: sessionID)
@@ -442,8 +430,6 @@ final class PreviewImageEditor {
        source.setEventHandler { [weak self] in
            Task { @MainActor in
                guard let self, let s = self.sessions[sessionID], !s.didFinish else { return }
-               // Parent directory changed. If the work file has reappeared, switch back to
-               // per-file watching and trigger a hash check to pick up the safe-save result.
                guard FileManager.default.fileExists(atPath: path) else { return }
                self.sessions[sessionID]?.dirWatchSource?.cancel()
                self.sessions[sessionID]?.dirWatchSource = nil
@@ -513,7 +499,6 @@ final class PreviewImageEditor {
         }
         saveToHistory(data: workData, hash: hash)
         sessions[sessionID]?.lastSavedHash = hash
-        // A file write occurred, so extend the idle timeout.
        rescheduleSessionTimeout(for: sessionID)
     }
 
@@ -589,7 +574,6 @@ final class PreviewImageEditor {
         }
     }
 
-    /// Entry point via callback from AX. Detected window closure.
     func onWindowDestroyed(sessionID: UUID) {
         // Give Preview time to finish writing when the window closes.
         scheduleHashCheck(for: sessionID, delay: 0.5)
@@ -635,7 +619,6 @@ final class PreviewImageEditor {
         guard let s = sessions[sessionID], !s.didFinish else { return }
         sessions[sessionID]?.didFinish = true
 
-        // Final check to pick up any changes missed by the file watcher.
        if let workData = try? Data(contentsOf: s.workFile) {
             let hash = HashUtil.sha256Hex(of: workData)
            if hash != s.originalHash && hash != s.lastSavedHash {

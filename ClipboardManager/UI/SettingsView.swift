@@ -233,14 +233,12 @@ struct SettingsView: View {
         NotificationCenter.default.post(name: name, object: nil)
     }
 
-    /// Action keys that have user-configurable window-scoped hotkeys ( design: edit / paste plain / etc. ).
     private enum ActionHotkeyKind {
         case edit
         case pastePlain
        case macroPicker
     }
 
-    /// Persists action-hotkey changes ( via `MacroHotkeyRecorderView` Clear/Record ) and notifies AppDelegate to re-register immediately.
     private func saveActionHotkey(_ kind: ActionHotkeyKind, keyCode: Int, modifiers: Int) {
         // Duplicate guard (review #16): reject when the new binding collides with the
         // *other* action hotkey's current binding. Carbon's RegisterEventHotKey would
@@ -280,7 +278,6 @@ struct SettingsView: View {
         NotificationCenter.default.post(name: .actionHotkeysChanged, object: nil)
     }
 
-    /// Snapshot of all window-scoped action hotkey bindings for duplicate detection.
     private struct ActionHotkeySnapshot {
         var edit: (Int, Int)
         var pastePlain: (Int, Int)

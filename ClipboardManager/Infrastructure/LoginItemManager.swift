@@ -9,12 +9,10 @@ final class LoginItemManager {
 
     private init() {}
 
-    /// Returns `true` when the app is currently registered as a login item.
     var isRegistered: Bool {
         SMAppService.mainApp.status == .enabled
     }
 
-    /// Registers the app as a login item. Returns `true` on success.
     @discardableResult
     func enable() -> Bool {
         do {
@@ -25,7 +23,6 @@ final class LoginItemManager {
         }
     }
 
-    /// Unregisters the app as a login item. Returns `true` on success.
     @discardableResult
     func disable() -> Bool {
         do {
@@ -36,7 +33,6 @@ final class LoginItemManager {
         }
     }
 
-    /// Synchronizes the OS registration state with `enabled`.
     func updateRegistration(enabled: Bool) {
         if enabled {
             enable()

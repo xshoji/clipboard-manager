@@ -17,12 +17,12 @@ final class HotkeyManager {
     /// Registration table for per-Macro shortcuts.
     /// The key is EventHotKeyID.id (a unique internal sequence number).
     private struct MacroRegistration {
-        let macroID: UInt32      // The original MacroScript.id.hashValue converted to UInt32
+        let macroID: UInt32
         let hotkeyRef: EventHotKeyRef
         let callback: @MainActor () -> Void
     }
-    private var macroRegistrations: [UInt32: MacroRegistration] = [:]     // [eventID: registration]
-    private var macroIDToEventID: [UInt32: UInt32] = [:]               // [macroID: eventID]
+    private var macroRegistrations: [UInt32: MacroRegistration] = [:]
+    private var macroIDToEventID: [UInt32: UInt32] = [:]
     private var eventIDCounter: UInt32 = 0xABCD_1000
 
     /// Registration table for per-action shortcuts (edit / paste plain / etc.).
@@ -32,7 +32,7 @@ final class HotkeyManager {
         let hotkeyRef: EventHotKeyRef
         let callback: @MainActor () -> Void
     }
-    private var actionRegistrations: [UInt32: ActionRegistration] = [:]   // [actionID: registration]
+    private var actionRegistrations: [UInt32: ActionRegistration] = [:]
 
     init(settings: AppSettings) {
         self.settings = settings

@@ -49,7 +49,6 @@ enum ThumbnailImageCache {
         return img
     }
 
-    /// Empties the cache. Useful for tests or when the user clears history.
     static func clear() {
         cache.removeAllObjects()
     }

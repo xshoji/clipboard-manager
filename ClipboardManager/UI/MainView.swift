@@ -101,9 +101,6 @@ struct MainView: View {
        }
     }
 
-    /// Direct paste from the history list (double-click / Enter).
-    /// Same as FooterBar.paste(rich:): writes to pasteboard, hides this app, and restores the previous app.
-    /// If `needsAccessibilityForSyntheticPaste` is ON, also sends a synthetic Cmd+V to finish pasting.
     private func pasteStandard(entity: ClipboardEntity, rich: Bool) {
         // Register a suppression range BEFORE the write so the utility-queue poll cannot
         // race with the pasteboard write and save our own write as a history item (review #6).

@@ -163,7 +163,6 @@ enum AppNotifier {
             trigger: nil
         )
         UNUserNotificationCenter.current().add(req) { _ in }
-        // Also print to the console for visibility.
         logger.info("\(title, privacy: .public): \(body, privacy: .public)")
     }
 

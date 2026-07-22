@@ -41,19 +41,16 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         NSColor.black.setFill()
 
-        // クリップボードのボード（輪郭）
         let boardRect = NSRect(x: 3.5, y: 2.5, width: 11, height: 13)
         let boardPath = NSBezierPath(roundedRect: boardRect, xRadius: 1.5, yRadius: 1.5)
         boardPath.lineWidth = 1.2
         boardPath.stroke()
 
-        // クリップ（上部）
         let clipRect = NSRect(x: 7, y: 14, width: 4, height: 2.5)
         let clipPath = NSBezierPath(roundedRect: clipRect, xRadius: 1, yRadius: 1)
         clipPath.lineWidth = 1.0
         clipPath.stroke()
 
-        // 書類内の3本の水平線（アプリアイコンの青・シアン・紫のラインに対応）
         for index in 0..<3 {
             let lineRect = NSRect(x: 5.5, y: 10 - CGFloat(index) * 2.5, width: 7, height: 1.0)
             lineRect.fill()

@@ -1,6 +1,5 @@
 import Foundation
 
-/// Result of Macro script path validation.
 /// Design reference: design-implementation.md §5.1 (registration/change confirmation flow, pre-execution fingerprint check, path whitelist).
 struct MacroScriptValidation {
     enum Failure: String {
@@ -20,7 +19,6 @@ struct MacroScriptValidation {
     var isValid: Bool { failure == nil }
 }
 
-/// Helper that normalizes a script path, checks whether it is under the home directory, and obtains its fingerprint.
 /// Expands `~`, resolves `..` and symlinks, then checks location using standardized URLs.
 /// Design reference: design-implementation.md §5.1-3 / remaining-features #5, #14
 enum MacroScriptPathValidator {
@@ -41,8 +39,6 @@ enum MacroScriptPathValidator {
         return url.resolvingSymlinksInPath()
     }
 
-    /// Performs path validation and fingerprint retrieval in one pass.
-    /// - Returns: The validation result. On failure, `failure` contains the reason.
     static func validate(path: String) -> MacroScriptValidation {
         guard let url = resolve(path: path) else {
             return MacroScriptValidation(
@@ -88,7 +84,6 @@ enum MacroScriptPathValidator {
         )
     }
 
-    /// Checks whether `url` is under the `base` directory by comparing standardized URL path prefixes.
     /// For remaining-features #14, enforces a directory boundary instead of a plain `hasPrefix(home)`.
     static func isPath(url: URL, inside base: URL) -> Bool {
         let a = url.standardizedFileURL.path

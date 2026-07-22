@@ -192,13 +192,11 @@ struct HistoryListPane: View {
                     return nil
                 }
             }
-            // Map IDs back to entities on the main actor and apply the result.
             await MainActor.run {
                 let idSet = Set(filteredIDs)
                 let ordered = items.filter { idSet.contains($0.id) }
                 filteredItems = ordered
                 indexByID = Dictionary(uniqueKeysWithValues: ordered.enumerated().map { ($1.id, $0) })
-                // Move selection to the first visible item if the current selection was filtered out.
                 if selectedEntity.map({ indexByID[$0.id] == nil }) ?? true {
                     selectedEntity = ordered.first
                 }
@@ -316,10 +314,9 @@ struct HistoryListPane: View {
                 // across the app (main search field, Settings, Macro Edit sheet,
                 // TextEdit, etc.) regardless of which window owns it.
                 if Self.isEditingText() { return false }
-                // Only act when an entry is selected.
                 guard selectedEntity != nil else { return false }
                 deleteSelected()
-                return true // consume the event
+                return true
             }
             return shouldConsume ? nil : event
         }
@@ -341,7 +338,6 @@ struct HistoryListPane: View {
         }
     }
 
-    /// Performs the actual deletion. Called from the confirmation alert's "Delete" button.
     private func confirmDelete() {
         guard let entity = selectedEntity else { return }
         let nextSelection: ClipboardEntity? = {
