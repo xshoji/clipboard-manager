@@ -5,9 +5,6 @@ struct SettingsView: View {
     @State private var retention: Int
     @State private var maxCount: Int
     @State private var maxItem: Int
-    @State private var confirmRebindSheet: MacroScript?
-    @State private var confirmRebindIsNew: Bool = true
-    @State private var hotkeyRebindSheet: MacroScript?
     @State private var showHotkeyRegistrationError = false
     @State private var showActionHotkeyDuplicateError = false
 
@@ -97,20 +94,23 @@ struct SettingsView: View {
 
             Section("Macro Scripts") {
                 ForEach(settings.macroScripts) { macro in
-                    MacroScriptRowView(macro: macro) { edited in
-                        // When the executable content changes, validate and save via the confirmation sheet.
-                        // Name/shortcut-only changes are saved immediately.
-                        if edited.scriptPath != macro.scriptPath
-                            || edited.inlineScript != macro.inlineScript {
-                            hotkeyRebindSheet = edited
-                        } else {
+                    MacroScriptRowView(
+                        macro: macro,
+                        onUpdate: { edited in
                             var arr = settings.macroScripts
                             if let idx = arr.firstIndex(where: { $0.id == edited.id }) {
                                 arr[idx] = edited
                             }
                             settings.macroScripts = arr
+                        },
+                        onDirtyChange: { id, dirty in
+                            if dirty {
+                                AppState.shared.unsavedMacroIDs.insert(id)
+                            } else {
+                                AppState.shared.unsavedMacroIDs.remove(id)
+                            }
                         }
-                    }
+                    )
                     .padding(.vertical, 8)
                     .listRowSeparator(.hidden)
                 }
@@ -118,9 +118,9 @@ struct SettingsView: View {
                     Text("No Macros registered.").foregroundStyle(.secondary)
                 }
                 Button("Add Macro…") {
-                    // Passes an editable draft to the confirmation sheet (remaining-features #5).
-                    confirmRebindSheet = MacroScript(name: "New Macro", scriptPath: "~/")
-                    confirmRebindIsNew = true
+                    // Adds an empty row that the user edits in place; the row's Save
+                    // button presents the registration confirmation dialog (design-implementation.md §5.1-1).
+                    settings.macroScripts.append(MacroScript(name: "New Macro", scriptPath: "~/"))
                 }
             }
 
@@ -223,27 +223,6 @@ struct SettingsView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Edit and Plain Text action hotkeys cannot share the same shortcut. Choose a different shortcut for one of them.")
-        }
-        .sheet(item: $confirmRebindSheet) { macro in
-            MacroConfirmSheet(macro: macro, isNew: confirmRebindIsNew) { stored in
-                var arr = settings.macroScripts
-                if let idx = arr.firstIndex(where: { $0.id == stored.id }) {
-                    arr[idx] = stored
-                } else {
-                    arr.append(stored)
-                }
-                settings.macroScripts = arr
-            }
-        }
-        .sheet(item: $hotkeyRebindSheet) { macro in
-            // Confirmation sheet for an existing Macro invoked from the Update button (remaining-features #5).
-            MacroConfirmSheet(macro: macro, isNew: false) { stored in
-                var arr = settings.macroScripts
-                if let idx = arr.firstIndex(where: { $0.id == stored.id }) {
-                    arr[idx] = stored
-                }
-                settings.macroScripts = arr
-            }
         }
     }
 
