@@ -34,7 +34,7 @@ image editing stays on documented, public macOS APIs.
 | Native macOS UI (SwiftUI)  | ✅ | ✅ | ✅ | ❌<br>(Qt) | ✅ |
 | Script/macro execution     | ✅<br>(any shell script) | ✅<br>(JS / shell / AppleScript / etc.) | ❌ | ✅<br>(JS / external commands) | ❌ |
 | Dedicated Macro setup      | ✅<br>register a script, get a hotkey + picker | ⚠️<br>Configured as one of BTT's many general-purpose actions/triggers — more flexible, but a steeper setup for "just run a script on paste" | — | ✅<br>Dedicated command UI | — |
-| Image editing              | ✅<br>(opens in Preview.app) | ✅<br>(Preview-based editor) | ❌ | ❌ | ❌ |
+| Image editing              | ✅<br>(opens in Preview.app) | ✅<br>(built-in annotation editor) | ❌ | ❌ | ❌ |
 | On-device OCR paste        | ✅<br>built into "Paste Plain" | ⚠️<br>(separate predefined action you chain yourself) | ❌ | ❌ | ✅ |
 | Fully local (no cloud sync)| ✅ | ✅ | Optional (iCloud) | ✅ | ✅ |
 
