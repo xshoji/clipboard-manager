@@ -34,7 +34,6 @@ image editing stays on documented, public macOS APIs.
 | Dedicated Macro setup      | ✅<br>register a script, get a hotkey + picker | ⚠️<br>Configured as one of BTT's many general-purpose actions/triggers — more flexible, but a steeper setup for "just run a script on paste" | — | ✅<br>Dedicated command UI | — |
 | Image editing              | ✅<br>(opens in Preview.app) | ✅<br>(built-in annotation editor) | ❌ | ❌ | ❌ |
 | On-device OCR paste        | ✅<br>built into "Paste Plain" | ⚠️<br>(separate predefined action you chain yourself) | ❌ | ❌ | ✅ |
-| Fully local (no cloud sync)| ✅ | ✅ | Optional (iCloud) | ✅ | ✅ |
 
 (Feature comparisons are based on public docs/websites as of 2026 and may
 be out of date — please file an issue if something's changed.)
