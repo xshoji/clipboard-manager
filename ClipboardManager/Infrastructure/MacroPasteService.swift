@@ -31,8 +31,12 @@ enum MacroPasteService {
                 input: input,
                 verifyFingerprint: settings.macroSameDirectoryFingerprint
             )
-            // Avoid pasting an empty string for non-UTF8 text output by routing to the error path (review #6).
-            if !entity.isImage, String(data: out, encoding: .utf8) == nil, !out.isEmpty {
+            // review #6: Reject non-UTF8 text outputs only when the output is not an
+            // image, so image -> image / image -> text macros are evaluated on their
+            // own merits.
+            if NSImage(data: out) == nil,
+               String(data: out, encoding: .utf8) == nil,
+               !out.isEmpty {
                 throw MacroError.invalidOutputEncoding
             }
             result = .success(out)
@@ -41,7 +45,7 @@ enum MacroPasteService {
         }
         switch result {
         case .success(let out):
-            writePasteboard(data: out, entity: entity)
+            writePasteboard(data: out)
             AppActivator.shared.activatePreviousAppAndPasteSynthetically(
                 needsSynthetic: settings.needsAccessibilityForSyntheticPaste
             )
@@ -59,7 +63,7 @@ enum MacroPasteService {
 
     // MARK: - Pasteboard
 
-    private static func writePasteboard(data: Data, entity: ClipboardEntity) {
+    private static func writePasteboard(data: Data) {
         let pb = NSPasteboard.general
         // Do not add pasteboard writes made by this app itself to the clipboard history.
         // This write changes changeCount; suppress it so ClipboardMonitor does not mistake it for a user copy (design-implementation.md §4.2).
@@ -76,7 +80,10 @@ enum MacroPasteService {
         let pre = pb.changeCount
         ClipboardMonitor.shared?.suppressChangeCountRange((pre + 1)..<(pre + 3))
         pb.clearContents()
-        if entity.isImage {
+        // Determine the output *content*, not the input entity kind: a macro may
+        // transform an image into text (e.g. OCR) or text into an image. We treat
+        // the data as an image only when it decodes as PNG; otherwise as text.
+        if let img = NSImage(data: data), img.isValid {
             pb.setData(data, forType: .png)
         } else {
             // review #6: Non-UTF8 output is already rejected in run(), so this is safe.
