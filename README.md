@@ -2,7 +2,9 @@
 
 Copy something, then do everything else without leaving this app — run a
 script on it, edit the image in Preview, or extract text from a
-screenshot. Then just switch back and paste with `Cmd+V`.
+screenshot. Invoke the UI with a global hotkey, select an entry with the
+arrow keys, and press `Enter` to paste it straight into the app you were
+using.
 
 <img width="1046" height="686" alt="app-image" src="https://github.com/user-attachments/assets/52b802eb-8938-4cd2-9d39-0b02171f3b99" />
 
@@ -11,13 +13,9 @@ screenshot. Then just switch back and paste with `Cmd+V`.
 ## Why this exists
 
 Looking at existing Mac clipboard managers, none seemed to combine open-source, Mac-native automation, and dedicated script/macro support all at once: Maccy is open-source and free but has no scripting; CopyQ is scriptable but built with Qt rather than native macOS UI; Paste, Maus, and BetterTouchTool offer real Mac-native automation but are closed-source, with paid tiers or one-time purchases. BetterTouchTool's clipboard manager in particular already supports image annotation and script execution on clipboard content — but that script execution is configured as one of BTT's many general-purpose actions/triggers, which is flexible but adds real setup overhead for something as simple as "run this script on the clipboard item I just copied."
-This project tries to combine open-source, free, and a Macro feature built around a single idea: register a script, get a hotkey, and run it directly against the selected clipboard entry — aimed at engineers who'd rather write a 5-line bash script than learn a new automation language.
-
-
-This one is an attempt to be all three at once — open-source, free, and
-built specifically for engineers who'd rather write a 5-line bash script
-than learn a new automation language, with a Macro feature that's just:
-register a script, get a hotkey.
+This project tries to combine open-source, free, and a Macro feature
+built around a single idea: register a script, get a hotkey, and run it
+directly against the selected clipboard entry.
 
 The image-editing idea itself is inspired by BetterTouchTool's clipboard
 manager (BTT's source isn't public, so the implementation here is
@@ -140,23 +138,30 @@ Normal use and the Carbon global hotkey do not require any additional
 privacy permissions.
 
 <details>
-<summary>Accessibility (optional, recommended for image editing)</summary>
+<summary>Accessibility (strongly recommended)</summary>
 
-Accessibility permission is **recommended** for the best image-editing
-experience.
+Accessibility permission is **strongly recommended**. Without it, two
+core workflows degrade significantly:
 
-- **Used for**: detecting when the Preview window is closed during
-  image editing, so the edited image can be saved to history
-  immediately.
-- **Without it**: the app falls back to detecting Preview app
-  termination or a 10-minute idle timeout. The app still works, but
-  detection is delayed.
+- **Enter to paste (synthetic `Cmd+V`)**: when you select an entry and
+  press `Enter`, the app writes to the pasteboard and brings the
+  previous app to the front. With Accessibility permission (and the
+  synthetic paste setting enabled), it also sends a synthetic `Cmd+V`
+  so the entry is pasted automatically. Without it, the app stops at
+  activating the previous app — you must press `Cmd+V` yourself every
+  time.
+- **Image editing completion detection**: Accessibility enables instant
+  detection of Preview window close, so the edited image is saved to
+  history as soon as you finish. Without it, the app falls back to
+  Preview app termination or a 10-minute idle timeout, so detection is
+  delayed.
+
+In short: without Accessibility, every paste requires a manual
+`Cmd+V` and image edits are detected much later.
+
 - **How to grant**: open System Settings → Privacy & Security →
   Accessibility, and enable ClipboardManager. The app also provides a
   button in Settings to open System Settings directly.
-
-Synthetic `Cmd+V` event sending (if enabled in the future) would also
-require Accessibility permission. It is disabled by default.
 
 </details>
 
