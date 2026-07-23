@@ -10,13 +10,9 @@ screenshot. Then just switch back and paste with `Cmd+V`.
 
 ## Why this exists
 
-Most Mac clipboard managers make you pick two out of three: open-source
-and free (Maccy), scriptable but not Mac-native (CopyQ, built with Qt),
-or Mac-native with real automation but closed-source and paid (Paste,
-Maus, BetterTouchTool). BetterTouchTool's clipboard manager can already
-edit images and run scripts on clipboard content, but it's paid,
-closed-source, and script execution is configured as one of BTT's many
-general-purpose actions rather than a dedicated, single-purpose feature.
+Looking at existing Mac clipboard managers, none seemed to combine open-source, Mac-native automation, and dedicated script/macro support all at once: Maccy is open-source and free but has no scripting; CopyQ is scriptable but built with Qt rather than native macOS UI; Paste, Maus, and BetterTouchTool offer real Mac-native automation but are closed-source, with paid tiers or one-time purchases. BetterTouchTool's clipboard manager in particular already supports image annotation and script execution on clipboard content — but that script execution is configured as one of BTT's many general-purpose actions/triggers, which is flexible but adds real setup overhead for something as simple as "run this script on the clipboard item I just copied."
+This project tries to combine open-source, free, and a Macro feature built around a single idea: register a script, get a hotkey, and run it directly against the selected clipboard entry — aimed at engineers who'd rather write a 5-line bash script than learn a new automation language.
+
 
 This one is an attempt to be all three at once — open-source, free, and
 built specifically for engineers who'd rather write a 5-line bash script
@@ -37,9 +33,8 @@ image editing stays on documented, public macOS APIs.
 | Native macOS UI (SwiftUI)  | ✅ | ✅ | ✅ | ❌<br>(Qt) | ✅ |
 | Script/macro execution     | ✅<br>(any shell script) | ✅<br>(JS / shell / AppleScript / etc.) | ❌ | ✅<br>(JS / external commands) | ❌ |
 | Dedicated Macro setup      | ✅<br>register a script, get a hotkey + picker | ⚠️<br>Configured as one of BTT's many general-purpose actions/triggers — more flexible, but a steeper setup for "just run a script on paste" | — | ✅<br>Dedicated command UI | — |
-| Image editing              | ✅<br>(opens in Preview.app) | ✅<br>(Preview-based editor) | ❌ | ❌ | ❌ |
+| Image editing              | ✅<br>(opens in Preview.app) | ✅<br>(built-in annotation editor) | ❌ | ❌ | ❌ |
 | On-device OCR paste        | ✅<br>built into "Paste Plain" | ⚠️<br>(separate predefined action you chain yourself) | ❌ | ❌ | ✅ |
-| Fully local (no cloud sync)| ✅ | ✅ | Optional (iCloud) | ✅ | ✅ |
 
 (Feature comparisons are based on public docs/websites as of 2026 and may
 be out of date — please file an issue if something's changed.)
