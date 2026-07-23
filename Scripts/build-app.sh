@@ -5,19 +5,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CONFIGURATION="${1:-debug}"
 ARCH="${2:-}"
-# Optional 3rd argument: codesign identity (Team ID or certificate name).
-# When omitted, falls back to ad-hoc signing ("-").
-SIGN_IDENTITY="${3:-}"
-
-usage() {
-    echo "Usage: $0 [debug|release] [arch] [sign-identity]" >&2
-    echo "  sign-identity: codesign identity (e.g. Team ID \"9********3\"). Defaults to ad-hoc (\"-\")." >&2
-}
 
 case "$CONFIGURATION" in
     debug|release) ;;
     *)
-        usage
+        echo "Usage: $0 [debug|release] [arch]" >&2
         exit 2
         ;;
 esac
@@ -60,11 +52,7 @@ if ! xcrun actool \
 fi
 /usr/libexec/PlistBuddy -c "Merge $ASSET_PARTIAL_PLIST" "$CONTENTS_DIR/Info.plist"
 
-# Code signing: use the provided identity (Team ID / certificate name) if given,
-# otherwise fall back to ad-hoc signing ("-").
-CODESIGN_IDENTITY="${SIGN_IDENTITY:--}"
-echo "Code signing with identity: $CODESIGN_IDENTITY"
-codesign --force --deep --sign "$CODESIGN_IDENTITY" \
+codesign --force --deep --sign - \
     --identifier com.xshoji.ClipboardManager \
     "$APP_BUNDLE"
 
