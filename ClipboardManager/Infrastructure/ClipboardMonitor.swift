@@ -258,6 +258,10 @@ final class ClipboardMonitor: @unchecked Sendable {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+            let ctx = self.persistence.container.mainContext
+            // Dedup: remove any older entries with the same content hash so the
+            // newly copied item bubbles up to the top without leaving duplicates.
+            self.removeDuplicates(hash: hash, in: ctx)
             let entity = ClipboardEntity(
                 kind: kind,
                 text: text,
@@ -267,7 +271,6 @@ final class ClipboardMonitor: @unchecked Sendable {
                 sourceBundleID: sourceBundle,
                 contentHash: hash
             )
-            let ctx = self.persistence.container.mainContext
             ctx.insert(entity)
             self.persistence.saveContext(ctx, purpose: "saveImage")
             self.scheduleEnforce()
@@ -302,6 +305,10 @@ final class ClipboardMonitor: @unchecked Sendable {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+            let ctx = self.persistence.container.mainContext
+            // Dedup: remove any older entries with the same content hash so the
+            // newly copied item bubbles up to the top without leaving duplicates.
+            self.removeDuplicates(hash: hash, in: ctx)
             let entity = ClipboardEntity(
                 kind: kind,
                 text: text,
@@ -311,7 +318,6 @@ final class ClipboardMonitor: @unchecked Sendable {
                 sourceBundleID: sourceBundle,
                 contentHash: hash
             )
-            let ctx = self.persistence.container.mainContext
             ctx.insert(entity)
             self.persistence.saveContext(ctx, purpose: "saveText")
             self.scheduleEnforce()
@@ -320,6 +326,18 @@ final class ClipboardMonitor: @unchecked Sendable {
 
     @MainActor private func scheduleEnforce() {
         persistence.scheduleEnforceWithDebounce()
+    }
+
+    /// Removes all existing entities with the same `contentHash` so the newly
+    /// inserted copy replaces older duplicates instead of stacking them.
+    @MainActor private func removeDuplicates(hash: String, in ctx: ModelContext) {
+        let descriptor = FetchDescriptor<ClipboardEntity>(
+            predicate: #Predicate { $0.contentHash == hash }
+        )
+        guard let duplicates = try? ctx.fetch(descriptor), !duplicates.isEmpty else { return }
+        for entity in duplicates {
+            ctx.delete(entity)
+        }
     }
 
     /// Determines whether the pasteboard contains a concealed copy from a password manager.
