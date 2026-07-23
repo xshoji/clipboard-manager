@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
         hotkeyManager.register { [weak self] in
-            self?.showMainWindow()
+            self?.showMainWindow(focusSearch: true)
         }
         // Per-Macro and per-action hotkeys are window-scoped: registered when the history window is shown,
         // and unregistered when it is hidden ( design: only effective while ClipboardManager's history UI is visible ).
