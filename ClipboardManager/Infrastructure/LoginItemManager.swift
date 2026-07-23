@@ -9,10 +9,6 @@ final class LoginItemManager {
 
     private init() {}
 
-    var isRegistered: Bool {
-        SMAppService.mainApp.status == .enabled
-    }
-
     @discardableResult
     func enable() -> Bool {
         do {

@@ -12,10 +12,6 @@ struct InputPermission {
         var observer: NSObjectProtocol?
     }
 
-    func checkAccessibility() -> Bool {
-        AXIsProcessTrusted()
-    }
-
     func requestAccessibility() {
         // The Settings window is kept at `.floating + 1` so it stays above the
         // always-on-top history panel. The system Accessibility confirmation

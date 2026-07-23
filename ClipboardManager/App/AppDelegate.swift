@@ -14,8 +14,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let menuBarController: MenuBarController
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: NSWindowController?
-    private var macroScriptsObserver: NSObjectProtocol?
-    private var actionHotkeysObserver: NSObjectProtocol?
 
     /// Window-scoped action hotkey IDs ( design: edit / paste plain / etc., effective only while the history window is visible ).
     /// Stable UInt32 ids passed straight to `RegisterEventHotKey`. Must not collide with `mainRegistryID` ( 0xABCD_0001 ) or macro eventIDs ( 0xABCD_1000+ ).
@@ -726,11 +724,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 extension Notification.Name {
     static let focusSearchField = Notification.Name("focusSearchField")
     static let alwaysOnTopChanged = Notification.Name("alwaysOnTopChanged")
-    static let sidebarVisibilityChanged = Notification.Name("sidebarVisibilityChanged")
-    static let splitViewChanged = Notification.Name("splitViewChanged")
     static let retentionChanged = Notification.Name("retentionChanged")
     static let maxCountChanged = Notification.Name("maxCountChanged")
-    static let dedupCacheSizeChanged = Notification.Name("dedupCacheSizeChanged")
     static let pollingIntervalChanged = Notification.Name("pollingIntervalChanged")
     static let mainHotkeyChanged = Notification.Name("mainHotkeyChanged")
     static let mainHotkeyRegistrationResult = Notification.Name("mainHotkeyRegistrationResult")

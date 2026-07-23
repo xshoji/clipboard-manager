@@ -53,7 +53,6 @@ final class AppSettings: @unchecked Sendable {
     /// shorter than Maccy (<100 ms) but far less busy than 500 ms while still feeling
     /// near-instant for typical copy operations. Tunable via Settings in the future.
     @ObservationIgnored @Setting("pollingIntervalMs", default: 250)   var pollingIntervalMs: Int
-    @ObservationIgnored @Setting("dedupCacheSize", default: 100)      var dedupCacheSize: Int
     @ObservationIgnored @Setting("macroSameDirectoryFingerprint", default: true) var macroSameDirectoryFingerprint: Bool
     @ObservationIgnored @Setting("needsAccessibilityForSyntheticPaste", default: false) var needsAccessibilityForSyntheticPaste: Bool
     @ObservationIgnored @Setting("launchAtLogin", default: false) var launchAtLogin: Bool
@@ -131,18 +130,5 @@ final class AppSettings: @unchecked Sendable {
         if flags & NSEvent.ModifierFlags.option.rawValue != 0 { mods |= UInt32(optionKey) }
         if flags & NSEvent.ModifierFlags.command.rawValue != 0 { mods |= UInt32(cmdKey) }
         return mods
-    }
-}
-
-extension UserDefaults {
-    @objc dynamic var observedHotkeyKeyCode: Int {
-        get { integer(forKey: "hotkeyKeyCode") }
-        set { set(newValue, forKey: "hotkeyKeyCode") }
-    }
-
-    /// Dynamic accessor for KVO-observing `macroScriptsData`.
-    @objc dynamic var macroScriptsRaw: Data {
-        get { object(forKey: "macroScriptsData") as? Data ?? Data() }
-        set { set(newValue, forKey: "macroScriptsData") }
     }
 }

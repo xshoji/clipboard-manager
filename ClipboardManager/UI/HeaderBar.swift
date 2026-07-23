@@ -57,18 +57,6 @@ struct HeaderBar: View {
             helpText: settings.isAlwaysOnTop ? "Always on top (pinned)" : "Always on top"
         )
     }
-
-    private var splitButton: some View {
-        HeaderBarButton(
-            isActive: settings.isSplitView,
-            action: {
-                settings.isSplitView.toggle()
-                NotificationCenter.default.post(name: .splitViewChanged, object: nil)
-            },
-            label: { Image(systemName: "rectangle.split.2x1") },
-            helpText: "Toggle split view"
-        )
-    }
 }
 
 // MARK: - Reusable Button Style
