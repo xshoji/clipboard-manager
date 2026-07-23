@@ -6,8 +6,6 @@ struct FooterBar: View {
     let selected: Binding<ClipboardEntity?>
     let onEdit: (ClipboardEntity) -> Void
     let onClearAll: () -> Void
-    @State private var showMacroMenu: Bool = false
-    @State private var showMoreMenu: Bool = false
     @State private var showInfo: String?
 
     var body: some View {
