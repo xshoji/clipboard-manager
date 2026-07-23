@@ -1,22 +1,24 @@
 import AppKit
 import ApplicationServices
 import CryptoKit
-import Security
 import UniformTypeIdentifiers
 
 /// Edits an image from history using macOS Preview.app, then saves the edited image as a new history entry.
 ///
 /// Design intent (spec-compliant):
 /// - Launch Preview as an external process instead of embedding it in the app.
-/// - Prepare a real file (`<uniqueID>_edit.<ext>`) beforehand so that Cmd+S does not show a save dialog.
+/// - Prepare a real file (`.ClipboardManagerEdit.<ext>`) beforehand so that Cmd+S does not show a save dialog.
 ///   Open it in Preview. The extension and UTI match the original image.
+///   The working file uses a fixed path (directly in Downloads) so safe-save's inode churn
+///   stays on a constant path, eliminating the "file not found" race that occasionally lost edits.
+/// - Because the path is fixed, only one edit session may be active at a time. If the user
+///   triggers Edit while another session is active, an alert is shown and the new edit is rejected.
 /// - Edit completion detection uses a two-stage approach:
 ///   1. Main: Accessibility API monitors the target document window's
 ///      `kAXUIElementDestroyedNotification`, triggering immediately when the window closes.
 ///   2. Fallback: `NSWorkspace.didTerminateApplicationNotification` catches the target PID's
 ///      Preview process termination (safety net when AX permission is missing or a window close is missed).
-/// - Sessions are managed by PID and unique session ID so simultaneous editing of multiple images does not interfere.
-/// - Cleans up leftovers (`*_edit.*`) from previous sessions at app launch.
+/// - Cleans up leftovers (`.ClipboardManagerEdit.*`) from previous sessions at app launch.
 /// - Determines whether changes were made via SHA256 hash diff, and deletes the working file if unchanged.
 @MainActor
 final class PreviewImageEditor {
@@ -58,36 +60,44 @@ final class PreviewImageEditor {
 
     private var sessions: [UUID: Session] = [:]
 
-    /// Number of `editImage` calls that have started but not yet registered a `Session`
-    /// (i.e., still waiting for `NSWorkspace.open`'s async completion).
-    /// Bridges the gap between the synchronous Edit action and the async session registration,
-    /// so the history window does not auto-close during the brief launch window on the first edit.
-    private var pendingEdits = 0
+    /// Internal editing-status flag. This is the single source of truth for whether an
+    /// image edit session is currently active.
+    ///
+    /// Set to `true` at the start of `editImage` (before launching Preview), and reset to
+    /// `false` when the session ends — either in `teardown` (triggered by Preview window
+    /// close, Preview termination, or session idle timeout) or on any error path that
+    /// aborts the edit before a session is registered.
+    ///
+    /// `editImage` gates on this flag instead of checking for the existence of the fixed
+    /// working file (`.ClipboardManagerEdit.<ext>`). This means that even if a stale file
+    /// remains on disk (e.g., the previous Preview window was closed without saving and
+    /// the file was not cleaned up), a new edit can start by overwriting the file.
+    private var isEditing = false
 
-    /// Working directory: ~/Downloads/.ClipboardManagerEdit/
+    /// Working file path prefix: ~/Downloads/.ClipboardManagerEdit
     /// Preview.app is a sandboxed app and cannot write under other apps' Application Support directories.
     /// Place it under Downloads, where the user can write, so Cmd+S does not show a save dialog.
     ///
-    /// Safety (review #7):
-    /// - The directory name starts with a dot (`.`) so Finder and Open/Save panels do not list it
-    ///   by default. This reduces the chance of casual exposure of in-flight edit files.
-    /// - Each working file is prefixed with a random 16-char hex string so the filename is
-    ///   not guessable, in addition to being UUID-based. This mitigates the "plain exposure
-    ///   while the file sits in Downloads" risk.
-    /// - Working files are still deleted after the edit session ends, and a periodic orphan
-    ///   cleanup (`startOrphanCleanupTimer`) runs every 5 minutes so files left behind by a
-    ///   crash do not sit in Downloads until the next app launch.
+    /// The file is placed directly in Downloads (no subdirectory) with a dot-prefixed name
+    /// (`.ClipboardManagerEdit.<ext>`) so Finder and Open/Save panels do not list it by default.
+    /// Because concurrent edits are rejected by `editImage`, a single fixed file is sufficient
+    /// and the filename race that lost edits under unique-per-session names is eliminated.
+    ///
+    /// Working files are deleted after the edit session ends, and a periodic orphan cleanup
+    /// (`startOrphanCleanupTimer`) runs every 5 minutes so files left behind by a crash do
+    /// not sit in Downloads until the next app launch.
+    ///
     /// Note: If this app is sandboxed, writing to Downloads requires
     /// the `com.apple.security.files.downloads.read-write` entitlement.
     /// Currently unsandboxed, so no issue, but verify when distributing (notarization/App Store).
-    private let workDir: URL = {
+    private let workFilePrefix: URL = {
         let downloads = FileManager.default
             .urls(for: .downloadsDirectory, in: .userDomainMask)
             .first!
-        return downloads.appendingPathComponent(".ClipboardManagerEdit", isDirectory: true)
+        return downloads.appendingPathComponent(".ClipboardManagerEdit")
     }()
 
-    /// Timer that periodically sweeps orphaned `*_edit.*` files left behind by crashed sessions.
+    /// Timer that periodically sweeps orphaned `.ClipboardManagerEdit.*` files left behind by crashed sessions.
     /// Without this, files from a crashed session would sit in Downloads until the next app
     /// launch. Runs every 5 minutes so the exposure window is bounded (review #7).
     private var orphanCleanupTimer: DispatchSourceTimer?
@@ -117,7 +127,7 @@ final class PreviewImageEditor {
     /// while the user is editing an image in Preview.app, so they can verify
     /// that the saved image was appended to the history.
     var hasActiveSession: Bool {
-        pendingEdits > 0 || sessions.contains { !$0.value.didFinish }
+        isEditing
     }
 
     /// Tears down every active edit session. Called by AppDelegate on termination so
@@ -128,7 +138,7 @@ final class PreviewImageEditor {
         for id in ids {
             teardown(sessionID: id)
         }
-        pendingEdits = 0
+        isEditing = false
         stopOrphanCleanupTimer()
     }
 
@@ -154,18 +164,28 @@ final class PreviewImageEditor {
     // MARK: - Public entry
 
     func editImage(entity: ClipboardEntity) {
-       // If a session for the same entity already exists, just bring its Preview window to the front.
-       // Starting a new session without closing the old window would delete and recreate the working file at the same path,
-       // leaving Preview in an undefined state, so a new session is not started.
-       if let existing = sessions.first(where: { $0.value.entityID == entity.id }) {
-           activatePreview(for: existing.value)
-           return
-       }
+        // Gate on the internal editing-status flag. Unlike file-existence checks,
+        // this flag is reliably reset by the window-close monitoring teardown, so a
+        // stale `.ClipboardManagerEdit.<ext>` file left behind by a previous session
+        // does not block the next edit — the file is simply overwritten below.
+        if isEditing {
+            let alert = NSAlert()
+            alert.messageText = "Image edit already in progress"
+            alert.informativeText = "Another image is being edited in Preview. Please close that edit first, then start a new one."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+                alert.beginSheetModal(for: window) { _ in }
+            } else {
+                alert.runModal()
+            }
+            return
+        }
 
-        pendingEdits += 1
+        isEditing = true
 
         guard let data = entity.imageData, !data.isEmpty else {
-            pendingEdits -= 1
+            isEditing = false
             AppNotifier.notify(
                 title: "Image cannot be edited",
                 body: "The selected item has no image data.",
@@ -174,24 +194,19 @@ final class PreviewImageEditor {
             return
         }
 
-        let fm = FileManager.default
-        try? fm.createDirectory(at: workDir, withIntermediateDirectories: true)
-        // Hide the working directory from Finder (dot-prefix does most of the work, this
-        // is a secondary defense for tools that list dotfiles).
-        try? (workDir as NSURL).setResourceValue(true, forKey: .isHiddenKey)
-
         let ext = fileExtension(for: data)
-        // Compose a hard-to-guess filename: 16-char random hex + UUID + "_edit.<ext>".
-        // The random prefix is generated per file with `SecRandomCopyBytes` for
-        // non-determinism so even in a shared Downloads directory a third party cannot
-        // trivially find/scan the in-flight file (review #7).
-        let randomPrefix = Self.randomHexPrefix(length: 16)
-        let workFile = workDir.appendingPathComponent("\(randomPrefix)_\(entity.id.uuidString)_edit.\(ext)")
+        // Fixed working file path: ~/Downloads/.ClipboardManagerEdit.<ext>
+        // Because concurrent edits are rejected by `isEditing` above, a single fixed path
+        // covers all sessions; safe-save's inode churn stays on this constant path,
+        // eliminating the "file not found" race that occasionally lost edits.
+        // If a stale file from a previous session remains, it is overwritten by the
+        // atomic write below.
+        let workFile = workFilePrefix.appendingPathExtension(ext)
         do {
             try data.write(to: workFile, options: .atomic)
             try? (workFile as NSURL).setResourceValue(true, forKey: .isHiddenKey)
         } catch {
-            pendingEdits -= 1
+            isEditing = false
             AppNotifier.notify(
                 title: "Image cannot be edited",
                 body: "Failed to prepare a working file: \(error.localizedDescription)",
@@ -203,13 +218,13 @@ final class PreviewImageEditor {
         guard let previewURL = NSWorkspace.shared.urlForApplication(
             withBundleIdentifier: Self.previewBundleID
         ) else {
-            pendingEdits -= 1
+            isEditing = false
             AppNotifier.notify(
                 title: "Preview unavailable",
                 body: "Preview.app could not be located on this system.",
                 deduplicationKey: "preview-app-missing"
             )
-            try? fm.removeItem(at: workFile)
+            try? FileManager.default.removeItem(at: workFile)
             return
         }
 
@@ -243,9 +258,8 @@ final class PreviewImageEditor {
         workFile: URL,
         originalHash: String
     ) {
-        if pendingEdits > 0 { pendingEdits -= 1 }
-
         if let error {
+            isEditing = false
             AppNotifier.notify(
                 title: "Preview launch failed",
                 body: error.localizedDescription,
@@ -255,6 +269,7 @@ final class PreviewImageEditor {
             return
         }
         guard let runningApp else {
+            isEditing = false
             AppNotifier.notify(
                 title: "Preview launch failed",
                 body: "Preview.app did not start.",
@@ -299,13 +314,9 @@ final class PreviewImageEditor {
 
     // MARK: - File change watcher (primary detection)
 
-   private func activatePreview(for session: Session) {
-       session.runningApp?.activate(options: [.activateAllWindows])
-   }
-
    /// Periodically checks Preview's window list and ends the session when the target window closes.
-   /// AX notifications alone can miss closures due to permission or window-matching issues, so polling ensures reliable detection.
-   /// Skipped when AX permission is absent since it would be wasted effort.
+    /// AX notifications alone can miss closures due to permission or window-matching issues, so polling ensures reliable detection.
+    /// Skipped when AX permission is absent since it would be wasted effort.
    private func startWindowPolling(for sessionID: UUID) {
        guard AXIsProcessTrusted() else { return }
        let work = DispatchWorkItem { [weak self] in
@@ -826,38 +837,27 @@ final class PreviewImageEditor {
        }
         try? FileManager.default.removeItem(at: s.workFile)
         sessions[sessionID] = nil
+        isEditing = false
     }
 
     // MARK: - Cleanup on launch
 
-    /// Called at app launch. Deletes all leftover `*_edit.*` files from previous sessions.
-    /// No active sessions exist at launch, so all editing files under the working directory can be safely deleted.
-    /// Also called periodically by `startOrphanCleanupTimer()` so crashed-session files do
-    /// not accumulate between launches (review #7).
+    /// Called at app launch. Deletes leftover `.ClipboardManagerEdit.*` files from
+    /// previous sessions. No active sessions exist at launch, so all editing files
+    /// in Downloads matching the prefix can be safely deleted.
+    /// Also called periodically by `startOrphanCleanupTimer()` so crashed-session files
+    /// do not accumulate between launches (review #7).
     func cleanupOrphanedEditFiles() {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: workDir.path) else { return }
-        guard let entries = try? fm.contentsOfDirectory(at: workDir, includingPropertiesForKeys: nil) else { return }
-        for url in entries where url.lastPathComponent.contains("_edit.") {
+        let downloads = fm.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+        guard let entries = try? fm.contentsOfDirectory(at: downloads, includingPropertiesForKeys: nil) else { return }
+        let prefix = workFilePrefix.lastPathComponent + "."
+        for url in entries where url.lastPathComponent.hasPrefix(prefix) {
             try? fm.removeItem(at: url)
         }
     }
 
     // MARK: - Helpers
-
-    /// Generates a `length`-character cryptographically-strong random hex string used to
-    /// prefix working file names. The prefix makes filenames hard to guess, so a third
-    /// party casually scanning Downloads cannot trivially locate in-flight edit files
-    /// (review #7). Falls back to `UUID` if `SecRandomCopyBytes` fails for any reason.
-    private static func randomHexPrefix(length: Int) -> String {
-        var bytes = [UInt8](repeating: 0, count: length / 2)
-        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        if status == errSecSuccess {
-            return bytes.map { String(format: "%02x", $0) }.joined()
-        }
-        // Defensive fallback: still non-deterministic enough for filename obfuscation.
-        return String(UUID().uuidString.prefix(length))
-    }
 
     /// Determines the actual UTI from image data and returns the corresponding file extension.
     /// Falls back to PNG (the app's save format) if it cannot be determined.

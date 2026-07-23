@@ -228,7 +228,7 @@ Rationale: The Markup sharing service had issues with service identifier instabi
 [Image history selected + Edit button pressed]
   → PreviewImageEditor.editImage(entity):
       1. Create working file:
-         - Copy the original image to `<workDir>/<entity.id>_edit.<ext>`
+         - Copy the original image to `<workDir>/edit.<ext>`
          - Work directory: ~/Downloads/ClipboardManagerEdit/ (Preview is sandboxed
            and cannot write to other apps' Application Support; Downloads is
            user-writable. Hidden attribute is set to keep it out of Finder.)
@@ -273,10 +273,10 @@ Rationale: The Markup sharing service had issues with service identifier instabi
 Key behaviors:
 - **No save dialog**: Because the working file is a real on-disk file at a user-writable path, Cmd+S in Preview overwrites it directly. No file name modal appears.
 - **Multiple saves per session**: Each Cmd+S within a session saves a new history entry (deduped by `lastSavedHash`). The session continues until window close / app exit / idle timeout.
-- **Concurrent edits**: Each session uses a unique working file path derived from the entity UUID, so editing multiple images simultaneously does not conflict. Re-editing the same entity while a session is active brings the existing Preview window to the front instead of starting a new session (avoids deleting and recreating the working file under the live Preview window).
+- **Concurrent edits**: Rejected. Because the working file uses a fixed path (`edit.<ext>`), only one edit session may be active at a time. Triggering Edit while another session is active shows an alert and rejects the new edit. This keeps safe-save's inode churn on a constant path and eliminates the "file not found" race that occasionally lost edits.
 - **Accessibility permission**: Required for instant detection on window close (detectors b and c). Without it, only detector d (Preview quit) and e (5-min idle) terminate the session, so monitoring may linger after the window is closed. The app notifies the user to enable Accessibility in Settings → Paste Behavior when AX is not trusted.
-- **Cleanup on launch**: `AppDelegate` calls `PreviewImageEditor.shared.cleanupOrphanedEditFiles()` at startup to delete any `*_edit.*` files left from a previous crashed session. Additionally, `AppDelegate` starts `PreviewImageEditor.shared.startOrphanCleanupTimer()` which sweeps orphaned files every 5 minutes (review #7), so crashed-session files do not sit in Downloads between launches.
-- **Working file location & naming (review #7)**: Files live under `~/Downloads/.ClipboardManagerEdit/` (dot-prefixed so Finder hides it). Each file is named `<random16hex>_<UUID>_edit.<ext>` using a cryptographically-random prefix (`SecRandomCopyBytes`) so the filename is not guessable. This is hardening, not a full Application Support migration — Preview.app is sandboxed and cannot write to another app's Application Support directory without presenting a save dialog, so Downloads is kept as the working location to preserve the in-place `Cmd+S` UX.
+- **Cleanup on launch**: `AppDelegate` calls `PreviewImageEditor.shared.cleanupOrphanedEditFiles()` at startup to delete any `edit.*` files left from a previous crashed session. Additionally, `AppDelegate` starts `PreviewImageEditor.shared.startOrphanCleanupTimer()` which sweeps orphaned files every 5 minutes (review #7), so crashed-session files do not sit in Downloads between launches.
+- **Working file location & naming (review #7)**: Files live under `~/Downloads/.ClipboardManagerEdit/` (dot-prefixed so Finder hides it). The working file uses a fixed name `edit.<ext>` for the active session. Because concurrent edits are rejected, a single fixed path suffices; this also keeps safe-save's inode churn on a constant path, eliminating the "file not found" race that occasionally lost edits. The previously-generated random filename scheme (16-char hex prefix + UUID) was removed in favor of this fixed name. Downloads is kept as the working location because Preview.app is sandboxed and cannot write to another app's Application Support directory without presenting a save dialog, so the in-place `Cmd+S` UX is preserved.
 - **AX refcon lifetime**: The `SessionBox` passed as the AX observer refcon is `Unmanaged.passRetained` so it survives until `teardown` explicitly `release()`s it, even if the session is removed from the dictionary before a late AX callback fires.
 
 ### 4.4 Settings Immediate Reflection

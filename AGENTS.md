@@ -121,12 +121,11 @@ ClipboardManager/
 ## Image Editing (Preview.app Integration)
 
 - Image editing is handled by `Infrastructure/PreviewImageEditor.swift`, which launches Preview.app as an external process with a pre-prepared working file under `~/Downloads/ClipboardManagerEdit/`.
-- The working file preserves the original UTI/extension so Cmd+S saves in place without a filename dialog.
+- The working file uses a fixed name so safe-save's inode churn stays on a constant path, eliminating the "file not found" race that occasionally lost edits. Because the path is fixed, only one edit session may be active at a time; triggering Edit while another session is active shows an alert and rejects the new edit.
 - Session completion is detected by AX window destruction, AX window-existence polling, `NSWorkspace.didTerminateApplicationNotification`, or a 10-minute idle timeout reset on file change.
 - Accessibility permission is recommended for instant window-close detection but is not required; without it the app falls back to Preview app termination or the idle timeout.
-- Each edit session is independent (UUID-keyed) with its own working file path; concurrent edits of different entities are supported.
-- Re-editing an entity whose session is already active activates the existing Preview session rather than starting a new one.
-- `cleanupOrphanedEditFiles()` runs at startup to delete stale `*_edit.*` files from previous crashed sessions.
+- Only one edit session may be active at a time. Triggering Edit while another session is active shows an alert and rejects the new edit (this prevents clashing on the fixed working file path).
+- `cleanupOrphanedEditFiles()` runs at startup to delete stale `edit.*` files from previous crashed sessions.
 - Do not reintroduce the removed `MarkupIntegrator` / `NSSharingService` approach.
 
 ## Efficiency Rules
