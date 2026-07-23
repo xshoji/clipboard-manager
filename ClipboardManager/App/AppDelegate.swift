@@ -465,7 +465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let contentView = SettingsView()
                 .environment(settings)
                 .modelContext(persistence.container.mainContext)
-            let window = NSWindow(
+            let window = SettingsWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
@@ -631,6 +631,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // Suppress zoom (green button) entirely. The standard zoom button is also hidden in
         // AppDelegate.showMainWindow; this is a defense-in-depth guard if invoked via Cmd+Ctrl+F
         // or accessibility actions.
+    }
+}
+
+@MainActor
+final class SettingsWindow: NSWindow {
+    /// Esc closes the Settings window. The default NSWindow `cancelOperation`
+    /// beeps when no responder handles it; overriding here suppresses the beep
+    /// and routes through `performClose` so `windowShouldClose` (and its
+    /// unsaved-Macro guard) still runs.
+    override func cancelOperation(_ sender: Any?) {
+        performClose(sender)
     }
 }
 
