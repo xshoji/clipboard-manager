@@ -52,8 +52,13 @@ if ! xcrun actool \
 fi
 /usr/libexec/PlistBuddy -c "Merge $ASSET_PARTIAL_PLIST" "$CONTENTS_DIR/Info.plist"
 
-codesign --force --deep --sign - \
-    --identifier com.xshoji.ClipboardManager \
-    "$APP_BUNDLE"
+if [ -n "${CODE_SIGN_IDENTITY:-}" ]; then
+    codesign --force --deep --sign "$CODE_SIGN_IDENTITY" \
+        --identifier com.xshoji.ClipboardManager \
+        --options runtime \
+        "$APP_BUNDLE"
+else
+    echo "CODE_SIGN_IDENTITY is not set; skipping code signing." >&2
+fi
 
 echo "$APP_BUNDLE"

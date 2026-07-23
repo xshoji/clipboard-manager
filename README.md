@@ -129,7 +129,7 @@ SwiftPM executable.
 #### Build and Run in one step
 
 ```bash
-/Scripts/build-app.sh debug "" xxxx; rm -rf /Applications/ClipboardManager.app; mv .build/debug/ClipboardManager.app /Applications/; open /Applications/ClipboardManager.app
+export CODE_SIGN_IDENTITY="Apple Development: xxxx"; ./Scripts/build-app.sh; rm -rf /Applications/ClipboardManager.app; mv .build/debug/ClipboardManager.app /Applications/; open /Applications/ClipboardManager.app
 ```
 
 ---
