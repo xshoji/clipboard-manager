@@ -16,20 +16,66 @@ struct MacroPickerView: View {
     let onCancel: () -> Void
 
     @State private var selectedIndex: Int = 0
-    @FocusState private var focused: Bool
+    @State private var searchText: String = ""
+    @FocusState private var searchFieldFocused: Bool
+
+    private var filteredMacros: [MacroScript] {
+        let q = searchText.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return macros }
+        return macros.filter { $0.name.localizedCaseInsensitiveContains(q) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text("Run Macro").font(.headline)
                 Spacer()
-                Text("\(macros.count) macros").font(.caption).foregroundStyle(.secondary)
+                Text("\(filteredMacros.count) / \(macros.count) macros")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .overlay(alignment: .bottom) { Divider().opacity(0.2) }
+            .padding(.top, 10)
 
-            if macros.isEmpty {
+            TextField("Search macros…", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
+                .focused($searchFieldFocused)
+                .onChange(of: searchText) { _, _ in
+                    if selectedIndex >= filteredMacros.count { selectedIndex = 0 }
+                }
+                .onKeyPress(.upArrow) {
+                    guard !filteredMacros.isEmpty else { return .ignored }
+                    if selectedIndex <= 0 {
+                        selectedIndex = filteredMacros.count - 1
+                    } else {
+                        selectedIndex -= 1
+                    }
+                    return .handled
+                }
+                .onKeyPress(.downArrow) {
+                    guard !filteredMacros.isEmpty else { return .ignored }
+                    if selectedIndex >= filteredMacros.count - 1 {
+                        selectedIndex = 0
+                    } else {
+                        selectedIndex += 1
+                    }
+                    return .handled
+                }
+                .onKeyPress(.return) {
+                    guard !filteredMacros.isEmpty,
+                          filteredMacros.indices.contains(selectedIndex) else { return .ignored }
+                    onSelect(filteredMacros[selectedIndex])
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    onCancel()
+                    return .handled
+                }
+
+            Divider().opacity(0.2).padding(.top, 8)
+
+            if filteredMacros.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "arrow.2.squarepath")
                         .font(.title2)
@@ -43,7 +89,7 @@ struct MacroPickerView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(Array(macros.enumerated()), id: \.element.id) { idx, macro in
+                        ForEach(Array(filteredMacros.enumerated()), id: \.element.id) { idx, macro in
                             row(for: macro, idx: idx)
                         }
                     }
@@ -52,6 +98,7 @@ struct MacroPickerView: View {
             }
 
             HStack(spacing: 16) {
+                Label("Type to search", systemImage: "magnifyingglass")
                 Label("Up/Down navigate", systemImage: "arrow.up.arrow.down")
                 Label("Return run", systemImage: "return")
                 Label("Esc close", systemImage: "escape")
@@ -71,39 +118,9 @@ struct MacroPickerView: View {
                 .strokeBorder(.tertiary.opacity(0.3), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.25), radius: 16, y: 4)
-        .focusable()
-        .focusEffectDisabled()
-        .focused($focused)
         .onAppear {
-            focused = true
-            if selectedIndex >= macros.count { selectedIndex = 0 }
-        }
-        .onKeyPress(.upArrow) {
-            guard !macros.isEmpty else { return .ignored }
-            if selectedIndex <= 0 {
-                selectedIndex = macros.count - 1
-            } else {
-                selectedIndex -= 1
-            }
-            return .handled
-        }
-        .onKeyPress(.downArrow) {
-            guard !macros.isEmpty else { return .ignored }
-            if selectedIndex >= macros.count - 1 {
-                selectedIndex = 0
-            } else {
-                selectedIndex += 1
-            }
-            return .handled
-        }
-        .onKeyPress(.return) {
-            guard !macros.isEmpty, macros.indices.contains(selectedIndex) else { return .ignored }
-            onSelect(macros[selectedIndex])
-            return .handled
-        }
-        .onKeyPress(.escape) {
-            onCancel()
-            return .handled
+            searchFieldFocused = true
+            if selectedIndex >= filteredMacros.count { selectedIndex = 0 }
         }
     }
 
