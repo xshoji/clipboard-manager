@@ -63,20 +63,15 @@ struct HistoryListPane: View {
             debounceWorkItem?.cancel()
             scheduleRecompute()
         }
-        .onChange(of: items.count) { _, _ in
-            scheduleRecompute()
-        }
-        .onChange(of: items.first?.id) { _, _ in
-            // `@Query` reflects SwiftData inserts/deletes, but when the same content is
-            // re-copied `removeDuplicates` deletes the old entity and inserts a new one
-            // with a different `id` while keeping `items.count` unchanged. Without this
-            // observer the list filter (`filteredItems`) was never rebuilt, so the newly
-            // copied item did not appear at the top even though it was persisted.
-            scheduleRecompute()
-        }
-        .onChange(of: items.last?.id) { _, _ in
-            // Tail changes catch inserts that did not become the new top (e.g. when a
-            // future sort key differs) and deletions at the bottom (retention enforce).
+        // `@Query` reflects SwiftData inserts/deletes, but `items.count` alone misses
+        // the case where `removeDuplicates` deletes an old entity and inserts a new
+        // one with a different `id` (count unchanged, contents changed). Observing the
+        // whole `items` array catches both count-only and id-only mutations, so the
+        // list filter (`filteredItems`) is always rebuilt after a re-copy / retention
+        // delete / insert. `@Query` publishes `items` as a `Hashable` array that
+        // re-renders when any element identity changes, so this is the single source
+        // of truth for "did the visible list change?".
+        .onChange(of: items) { _, _ in
             scheduleRecompute()
         }
         .onDisappear {
@@ -104,8 +99,24 @@ struct HistoryListPane: View {
                     // The search field is incremental, so Enter does not need to
                     // commit a query. Instead, mirror the list's Return behavior:
                     // paste the currently selected item (if any).
-                    if let entity = selectedEntity {
+                    //
+                    // Edge case: if the user typed a query whose debounce timer
+                    // (`scheduleRecompute`, 200 ms) has not yet fired, `filteredItems`
+                    // and `selectedEntity` may still reflect the old query. In that
+                    // case `selectedEntity` might no longer be in `filteredItems` (it
+                    // was filtered out) and pasting it would silently paste a row the
+                    // user cannot see. To avoid this, when the current selection is
+                    // not in the (already-filtered) `filteredItems` we cancel the
+                    // pending debounce, kick a synchronous-ish recompute, and skip the
+                    // paste — the user can press Enter again once the list refreshes.
+                    // `recomputeIndex` runs the heavy filter on `Task.detached`, so it
+                    // cannot block here; it will update `filteredItems` and
+                    // `selectedEntity` on the main actor shortly.
+                    if let entity = selectedEntity, indexByID[entity.id] != nil {
                         paste(entity: entity)
+                    } else {
+                        debounceWorkItem?.cancel()
+                        recomputeIndex()
                     }
                 }
         }
