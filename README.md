@@ -110,22 +110,14 @@ strips the macOS quarantine attribute.
 curl -fsSL https://raw.githubusercontent.com/xshoji/clipboard-manager/main/Scripts/install.sh | bash
 ```
 
-Or clone and run locally:
-
-```bash
-git clone https://github.com/xshoji/clipboard-manager.git
-cd clipboard-manager
-./Scripts/install.sh
-```
-
 Options:
 
 ```bash
 # Install a specific version
-./Scripts/install.sh 1.2.0
+curl -fsSL https://raw.githubusercontent.com/xshoji/clipboard-manager/main/Scripts/install.sh | bash -s 1.2.0
 
 # Install to a custom location
-./Scripts/install.sh --app ~/Applications/ClipboardManager.app
+curl -fsSL https://raw.githubusercontent.com/xshoji/clipboard-manager/main/Scripts/install.sh | bash -s -- --app ~/Applications/ClipboardManager.app
 ```
 
 After installation, launch from `/Applications` or run `open /Applications/ClipboardManager.app`.
