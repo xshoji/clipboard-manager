@@ -92,11 +92,23 @@ if [ -z "$EXTRACTED_APP" ]; then
 fi
 
 # --- install ----------------------------------------------------------------
-echo "installing to ${DEST_APP}"
-if [ -e "$DEST_APP" ]; then
-    rm -rf "$DEST_APP"
-fi
 mkdir -p "$(dirname "$DEST_APP")"
+if [ -e "$DEST_APP" ]; then
+    echo "an existing app was found at ${DEST_APP}"
+    printf "overwrite? [y/N] "
+    read -r ANSWER
+    case "$ANSWER" in
+        y|Y|yes|YES)
+            echo "removing existing app..."
+            rm -rf "$DEST_APP"
+            ;;
+        *)
+            echo "installation cancelled."
+            exit 0
+            ;;
+    esac
+fi
+echo "installing to ${DEST_APP}"
 cp -R "$EXTRACTED_APP" "$DEST_APP"
 
 # --- strip quarantine -------------------------------------------------------
