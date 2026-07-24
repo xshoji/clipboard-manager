@@ -172,12 +172,21 @@ final class ClipboardMonitor: @unchecked Sendable {
             // Ensure the actual post-write changeCount is suppressed even if the
             // write produced more bumps than the pre-registered range covered.
             set.insert(post)
-            // Remove pre-registered entries above `post`; they were never produced
-            // by this write and would otherwise orphan-suppress a future user copy.
-            for c in (pre + 1)..<(pre + 3) {
-                if c > post {
-                    set.remove(c)
-                }
+            // Remove any pre-registered entries in `(pre...post]` other than `post`
+            // itself. The write only ever produces `changeCount == post`, so any other
+            // entry in this range was never produced by the write and would otherwise
+            // sit as an orphan and suppress a future user copy. Previously the cleanup
+            // was limited to `(pre+1)..<(pre+3)`, which could leave `pre+1` (when the
+            // write produced two bumps, `post == pre+2`) and similar stragglers that
+            // matched the next user copy.
+            for c in (pre + 1)...post where c != post {
+                set.remove(c)
+            }
+            // Also drop orphans strictly above `post` that were pre-registered for this
+            // write (the conservative `(pre+1)..<(pre+3)` range). They were never
+            // produced and would suppress a future copy otherwise.
+            for c in (post + 1)..<(pre + 3) {
+                set.remove(c)
             }
         }
     }
@@ -237,14 +246,6 @@ final class ClipboardMonitor: @unchecked Sendable {
             return
         }
         let hash = HashUtil.sha256Hex(of: data)
-        // Dedup: only skip when the content is identical to the immediately preceding
-        // copy. A ring buffer of recent hashes used to skip any duplicate within the
-        // last `dedupCacheSize` entries, which prevented re-saving the same content
-        // even after different content was copied in between — the copied text never
-        // re-entered history. Comparing against only `lastSavedContentHash` preserves
-        // the "don't save the same copy twice in a row" behavior while allowing the
-        // same content to be saved again once anything else has been copied.
-        if lastSavedContentHash == hash { return }
         lastSavedContentHash = hash
 
         // Thumbnail generation (lockFocus → tiffRepresentation) is heavy: run it here
@@ -293,8 +294,6 @@ final class ClipboardMonitor: @unchecked Sendable {
             return
         }
         let hash = HashUtil.sha256Hex(of: Data(text.utf8))
-        // See `prepareImageSave` for the rationale behind single-entry dedup.
-        if lastSavedContentHash == hash { return }
         lastSavedContentHash = hash
 
         let sourceBundle = pb.string(forType: NSPasteboard.PasteboardType("org.nspasteboard.sourceApp.bundleID"))

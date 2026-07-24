@@ -65,7 +65,13 @@ final class AppSettings: @unchecked Sendable {
     /// Default is English-only (`["en-US"]`) per the user's decision. The user can
     /// switch the language set in Settings. Vision accepts BCP-47 identifiers; an
     /// empty array falls back to Vision's defaults, so we keep the default non-empty.
-    @ObservationIgnored @Setting("ocrLanguages", default: ["en-US"]) var ocrLanguages: [String]
+    /// Stored + `didSet` (like `previewWrapMode`) so `@Observable` tracks changes and
+    /// the Settings Picker updates. The previous `@Setting` wrapper was annotated
+    /// `@ObservationIgnored`, which prevented SwiftUI from observing array changes,
+    /// so selections in the Picker never reflected back.
+    var ocrLanguages: [String] = (UserDefaults.standard.object(forKey: "ocrLanguages") as? [String]) ?? ["en-US"] {
+        didSet { UserDefaults.standard.set(ocrLanguages, forKey: "ocrLanguages") }
+    }
 
     var isAlwaysOnTop: Bool = false {
         didSet { UserDefaults.standard.set(isAlwaysOnTop, forKey: "isAlwaysOnTop") }

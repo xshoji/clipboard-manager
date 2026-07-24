@@ -66,6 +66,19 @@ struct HistoryListPane: View {
         .onChange(of: items.count) { _, _ in
             scheduleRecompute()
         }
+        .onChange(of: items.first?.id) { _, _ in
+            // `@Query` reflects SwiftData inserts/deletes, but when the same content is
+            // re-copied `removeDuplicates` deletes the old entity and inserts a new one
+            // with a different `id` while keeping `items.count` unchanged. Without this
+            // observer the list filter (`filteredItems`) was never rebuilt, so the newly
+            // copied item did not appear at the top even though it was persisted.
+            scheduleRecompute()
+        }
+        .onChange(of: items.last?.id) { _, _ in
+            // Tail changes catch inserts that did not become the new top (e.g. when a
+            // future sort key differs) and deletions at the bottom (retention enforce).
+            scheduleRecompute()
+        }
         .onDisappear {
             debounceWorkItem?.cancel()
             removeDeleteKeyMonitor()
@@ -88,8 +101,12 @@ struct HistoryListPane: View {
                 .focused($searchFocused)
                 .submitLabel(.search)
                 .onSubmit {
-                    debounceWorkItem?.cancel()
-                    recomputeIndex()
+                    // The search field is incremental, so Enter does not need to
+                    // commit a query. Instead, mirror the list's Return behavior:
+                    // paste the currently selected item (if any).
+                    if let entity = selectedEntity {
+                        paste(entity: entity)
+                    }
                 }
         }
         .padding(8)
