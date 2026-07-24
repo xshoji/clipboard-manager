@@ -156,7 +156,7 @@ struct SettingsView: View {
                     )
                 )
                 Button("Request Accessibility permission") {
-                    InputPermission().requestAccessibility()
+                    InputPermission().openAccessibilitySettingsPane()
                 }
                 Divider()
                 Text("Plain Text on an image runs OCR and pastes the recognized text. Choose the recognition language set.")

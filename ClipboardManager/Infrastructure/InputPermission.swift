@@ -39,22 +39,26 @@ struct InputPermission {
                 }
             }
         }
-        // Always open System Settings → Privacy & Security → Accessibility,
-        // regardless of current permission state. AXIsProcessTrusted() caches
-        // the trusted state and does not reflect revocation immediately, so we
-        // cannot rely on it to decide whether to show the dialog. Opening the
-        // pane unconditionally lets the user grant or re-grant permission.
+        // AXIsProcessTrustedWithOptions with prompt=true shows the system
+        // accessibility dialog. This dialog also auto-registers the app in
+        // the Accessibility list (unchecked) and has an "Open System Settings"
+        // button so the user can grant permission. We must NOT call
+        // openAccessibilitySettingsPane() here because opening System Settings
+        // immediately after dismisses/covers the system dialog, preventing
+        // auto-registration.
         let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
-        openAccessibilitySettingsPane()
-        Self.logger.info("Opened System Settings → Privacy & Security → Accessibility")
+        Self.logger.info("Requested Accessibility permission via system dialog")
     }
 
-    /// Opens System Settings → Privacy & Security → Accessibility.
-    /// Works on macOS 13 (Ventura) and later (System Settings replaced System Preferences).
-    private func openAccessibilitySettingsPane() {
+    /// Opens System Settings → Privacy & Security → Accessibility directly,
+    /// without showing the system permission dialog. Used by the "Request
+    /// Accessibility permission" button when the user wants to re-open the
+    /// pane (e.g. to re-grant a revoked permission).
+    func openAccessibilitySettingsPane() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
+        Self.logger.info("Opened System Settings → Privacy & Security → Accessibility")
     }
 }

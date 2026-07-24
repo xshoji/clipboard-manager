@@ -58,7 +58,12 @@ if [ -n "${CODE_SIGN_IDENTITY:-}" ]; then
         --options runtime \
         "$APP_BUNDLE"
 else
-    echo "CODE_SIGN_IDENTITY is not set; skipping code signing." >&2
+    # Ad-hoc sign so macOS can identify the app for Accessibility, Gatekeeper,
+    # and other privacy frameworks. Without any signature, AXIsProcessTrustedWithOptions
+    # cannot auto-register the app in the Accessibility list.
+    codesign --force --deep --sign - \
+        --identifier com.xshoji.ClipboardManager \
+        "$APP_BUNDLE"
 fi
 
 echo "$APP_BUNDLE"

@@ -54,7 +54,13 @@ final class AppSettings: @unchecked Sendable {
     /// near-instant for typical copy operations. Tunable via Settings in the future.
     @ObservationIgnored @Setting("pollingIntervalMs", default: 250)   var pollingIntervalMs: Int
     @ObservationIgnored @Setting("macroSameDirectoryFingerprint", default: true) var macroSameDirectoryFingerprint: Bool
-    @ObservationIgnored @Setting("needsAccessibilityForSyntheticPaste", default: false) var needsAccessibilityForSyntheticPaste: Bool
+    /// Enable synthetic Cmd+V paste (requires Accessibility permission).
+    /// Stored with `didSet` (not `@ObservationIgnored @Setting`) so `@Observable`
+    /// tracks changes and the Settings toggle updates reliably even after
+    /// `requestAccessibility()` causes window focus changes.
+    var needsAccessibilityForSyntheticPaste: Bool = false {
+        didSet { UserDefaults.standard.set(needsAccessibilityForSyntheticPaste, forKey: "needsAccessibilityForSyntheticPaste") }
+    }
     @ObservationIgnored @Setting("launchAtLogin", default: false) var launchAtLogin: Bool
     /// Behavior when a Macro fails (design-implementation.md §5: timeout / non-zero exit).
     /// - `restoreOriginalAndNotify` (default): restores the original content to the pasteboard, returns to the previous app, and posts a notification.
@@ -123,6 +129,7 @@ final class AppSettings: @unchecked Sendable {
         previewWrapMode   = UserDefaults.standard.object(forKey: "previewWrapMode")   as? String ?? previewWrapMode
         windowPositionMode = UserDefaults.standard.object(forKey: "windowPositionMode") as? String ?? windowPositionMode
         ocrLanguages      = UserDefaults.standard.object(forKey: "ocrLanguages")      as? [String] ?? ocrLanguages
+        needsAccessibilityForSyntheticPaste = UserDefaults.standard.object(forKey: "needsAccessibilityForSyntheticPaste") as? Bool ?? needsAccessibilityForSyntheticPaste
 
         if !macroScriptsData.isEmpty,
            let decoded = try? JSONDecoder().decode([MacroScript].self, from: macroScriptsData) {
