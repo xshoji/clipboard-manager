@@ -96,7 +96,7 @@ mkdir -p "$(dirname "$DEST_APP")"
 if [ -e "$DEST_APP" ]; then
     echo "an existing app was found at ${DEST_APP}"
     printf "overwrite? [y/N] "
-    read -r ANSWER
+    read -r ANSWER < /dev/tty
     case "$ANSWER" in
         y|Y|yes|YES)
             echo "removing existing app..."
