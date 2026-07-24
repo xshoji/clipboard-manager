@@ -65,11 +65,16 @@ final class AppSettings: @unchecked Sendable {
     /// Default is English-only (`["en-US"]`) per the user's decision. The user can
     /// switch the language set in Settings. Vision accepts BCP-47 identifiers; an
     /// empty array falls back to Vision's defaults, so we keep the default non-empty.
-    /// Stored + `didSet` (like `previewWrapMode`) so `@Observable` tracks changes and
-    /// the Settings Picker updates. The previous `@Setting` wrapper was annotated
+    /// Stored as a plain stored property + `didSet` (like `previewWrapMode`,
+    /// `isAlwaysOnTop`, etc.) so `@Observable` tracks changes and the Settings
+    /// Picker updates. The previous `@Setting` wrapper was annotated
     /// `@ObservationIgnored`, which prevented SwiftUI from observing array changes,
-    /// so selections in the Picker never reflected back.
-    var ocrLanguages: [String] = (UserDefaults.standard.object(forKey: "ocrLanguages") as? [String]) ?? ["en-US"] {
+    /// so selections in the Picker never reflected back. The initial value is
+    /// restored in `init` alongside the other `didSet`-backed properties, so the
+    /// restore timing is consistent with the rest of the class (the previous
+    /// inline-initializer form read UserDefaults at first property access, which
+    /// could theoretically drift if another thread wrote before evaluation).
+    var ocrLanguages: [String] = ["en-US"] {
         didSet { UserDefaults.standard.set(ocrLanguages, forKey: "ocrLanguages") }
     }
 
@@ -117,6 +122,7 @@ final class AppSettings: @unchecked Sendable {
         isSplitView       = UserDefaults.standard.object(forKey: "isSplitView")       as? Bool ?? isSplitView
         previewWrapMode   = UserDefaults.standard.object(forKey: "previewWrapMode")   as? String ?? previewWrapMode
         windowPositionMode = UserDefaults.standard.object(forKey: "windowPositionMode") as? String ?? windowPositionMode
+        ocrLanguages      = UserDefaults.standard.object(forKey: "ocrLanguages")      as? [String] ?? ocrLanguages
 
         if !macroScriptsData.isEmpty,
            let decoded = try? JSONDecoder().decode([MacroScript].self, from: macroScriptsData) {
