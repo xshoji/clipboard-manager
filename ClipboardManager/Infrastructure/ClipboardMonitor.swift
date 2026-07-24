@@ -49,10 +49,22 @@ final class ClipboardMonitor: @unchecked Sendable {
     private var lastChangeCount: Int = 0
     /// Only mutated on the timer queue (serial). Holds the SHA256 hash of the most
     /// recently saved entry. Used to skip the immediately-following identical copy so
-    /// `NSPasteboard.general` repeats (e.g. from app-internal pasteboard writes) do not
-    /// pile up as duplicate history entries. A previous ring-buffer (`DedupCache`)
+    /// `NSPasteboard.general` repeats (e.g. from app-internal pasteboard writes or
+    /// re-copying the same selection) do not pile up as duplicate history entries.
+    ///
+    /// Dedup strategy (two layers, see also `removeDuplicates`):
+    ///   1. Skip-on-identical-immediate (this property): when the incoming hash equals
+    ///      `lastSavedContentHash`, save is skipped entirely. Cheap, in-memory, and
+    ///      avoids a needless SwiftData write + SQLite round-trip.
+    ///   2. Remove-by-hash (`removeDuplicates`): runs on the main actor before each
+    ///      insert. Deletes any older entities with the same `contentHash` so the newly
+    ///      copied item bubbles up to the top without stacking duplicates.
+    /// Layer 1 is a pure performance/UX guard; layer 2 is the correctness guard that
+    /// guarantees at most one entry per hash. The previous ring-buffer (`DedupCache`)
     /// skipped any duplicate within the last N entries and prevented the same content
-    /// from ever re-entering history until the ring evicted it.
+    /// from ever re-entering history until the ring evicted it; that behavior was
+    /// replaced by the two-layer approach because users expect the same content to
+    /// re-enter history once anything else has been copied in between.
     private var lastSavedContentHash: String?
     private var isObservingSettings = false
     private var isRunning = false
@@ -246,6 +258,13 @@ final class ClipboardMonitor: @unchecked Sendable {
             return
         }
         let hash = HashUtil.sha256Hex(of: data)
+        // Skip-on-identical-immediate: avoid a needless SwiftData write for a copy that
+        // is byte-identical to the most recently saved entry (e.g. re-copying the same
+        // image, or app-internal pasteboard re-writes that bump `changeCount` without
+        // changing content). `removeDuplicates` would also handle this on insert, but
+        // short-circuiting here keeps the heavy thumbnail path and the main-actor
+        // insert/save off the critical path entirely.
+        if lastSavedContentHash == hash { return }
         lastSavedContentHash = hash
 
         // Thumbnail generation (lockFocus → tiffRepresentation) is heavy: run it here
@@ -294,6 +313,10 @@ final class ClipboardMonitor: @unchecked Sendable {
             return
         }
         let hash = HashUtil.sha256Hex(of: Data(text.utf8))
+        // Skip-on-identical-immediate: see `prepareImageSave` for the rationale. Avoids
+        // a needless SwiftData write + `removeDuplicates` fetch when the copy is
+        // byte-identical to the most recently saved entry.
+        if lastSavedContentHash == hash { return }
         lastSavedContentHash = hash
 
         let sourceBundle = pb.string(forType: NSPasteboard.PasteboardType("org.nspasteboard.sourceApp.bundleID"))
