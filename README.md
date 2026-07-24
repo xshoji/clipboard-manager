@@ -8,6 +8,14 @@ using.
 
 <img width="1046" height="686" alt="app-image" src="https://github.com/user-attachments/assets/52b802eb-8938-4cd2-9d39-0b02171f3b99" />
 
+
+## Demo
+
+[demo.mp4](https://github.com/user-attachments/assets/fd4e1a87-4631-4ba8-8cc3-3faf79ce807c)
+
+
+
+
 ---
 
 ## Why this exists
