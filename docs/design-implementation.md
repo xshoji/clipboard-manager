@@ -46,7 +46,7 @@ ClipboardManager/
 │   ├── ClipboardEntity.swift         # SwiftData @Model
 │   ├── MacroScript.swift             # Macro script settings model
 │   ├── AppSettings.swift            # UserDefaults wrapper
-│   └── DedupCache.swift              # Recent hash cache for dedup
+│   └── DedupCache.swift              # [deprecated] Recent hash cache for dedup (unused; see §4.1)
 ├── Infrastructure/                    # External API integration
 │   ├── ClipboardMonitor.swift        # changeCount monitor, save
 │   ├── HotkeyManager.swift          # Carbon API wrapper
@@ -95,7 +95,7 @@ ClipboardManager/
 | Image thumbnail | `ThumbnailGenerator` | Generates list-display thumbnails from image Entity |
 | Accessibility permission | `InputPermission` | Prompts for permission when enabling synthetic `Cmd+V` or when Preview editing needs faster detection (see §5.2) |
 | Menu bar resident | `MenuBarController` | `NSStatusItem` management, menu construction (per `design-ui.md §11`) |
-| Dedup | `DedupCache` | Holds recent `dedupCacheSize` `contentHash` entries in memory for pre-save dedup |
+| Dedup | `ClipboardMonitor.removeDuplicates` | Two-layer dedup. Layer 1 (in-memory `lastSavedContentHash`) skips a save entirely when the copy is byte-identical to the immediately-preceding save, avoiding a needless SwiftData write. Layer 2 (`removeDuplicates`, main actor) deletes any older entities with the same `contentHash` before inserting the new one, so the newly copied item bubbles up to the top without stacking duplicates. The previous `DedupCache` ring-buffer approach (which skipped any duplicate within the last `dedupCacheSize` entries) was removed because it prevented the same content from re-entering history even after different content was copied in between; the current approach guarantees at most one entry per hash while still allowing the same content to re-enter history once anything else has been copied. |
 
 ## 3. Data Model
 
@@ -141,7 +141,7 @@ final class ClipboardEntity {
 - `maxHistoryCount: Int`
 - `maxItemSizeMB: Int`
 - `pollingIntervalMs: Int` (default 250)
-- `dedupCacheSize: Int` (default 100) — recent hash cache size
+- `dedupCacheSize: Int` (default 100) — [deprecated] recent hash cache size. The `DedupCache` ring buffer is no longer used; the setting is retained only for backward compatibility of the UserDefaults schema and is ignored at runtime. Dedup is now a two-layer approach (see §4.1 and `ClipboardMonitor.removeDuplicates`).
 - `macroScripts: [MacroScript]` (JSON encoded)
 - `macroSameDirectoryFingerprint: Bool` (default true) — verify script fingerprint before run
 - `needsAccessibilityForSyntheticPaste: Bool` (default false) — enable synthetic `Cmd+V`
@@ -174,13 +174,23 @@ final class ClipboardEntity {
 [NSPasteboard.changeCount changes]
   → ClipboardMonitor.poll (0.25s)
   → Type detection (text/image)
-  → Dedup check (recent hash comparison in DedupCache)
+  → Dedup check (two layers; see below)
   → Insert new Entity into SwiftData ModelContext
       ※ If consecutive copies occur within the same changeCount,
         only the last observed content is saved (spec).
   → PersistenceController.enforceLimits() asynchronously
       (does not block the save flow)
 ```
+
+#### Dedup (two layers)
+
+1. **Skip-on-identical-immediate** (`ClipboardMonitor.lastSavedContentHash`, in-memory, poll-queue):
+   When the incoming content hash equals `lastSavedContentHash`, the save is skipped entirely (no SwiftData write, no thumbnail generation). This short-circuits re-copies of the same content and app-internal pasteboard re-writes that bump `changeCount` without changing content. `lastSavedContentHash` is updated on every successful save.
+2. **Remove-by-hash** (`ClipboardMonitor.removeDuplicates`, main actor, pre-insert):
+   Before each insert, deletes any existing entities with the same `contentHash` so the newly copied item bubbles up to the top without stacking duplicates. Guarantees at most one entry per `contentHash` in the database.
+
+> **Note**: The previous ring-buffer approach (`DedupCache`, `dedupCacheSize` default 100) skipped any duplicate within the last `dedupCacheSize` entries and prevented the same content from re-entering history until the ring evicted it. It was removed because users expect the same content to re-enter history once anything else has been copied in between; the two-layer approach above preserves "don't save the same copy twice in a row" (Layer 1) while allowing re-entry after intervening copies (Layer 2 only dedupes within the database, not across an in-memory window).
+
 
 > **`enforceLimits` execution policy**:
 > - On save flow: runs asynchronously via `Task.detached` so it does not affect save latency.
@@ -304,7 +314,7 @@ Key behaviors:
 | Macro file format | Assume `.txt` for text and `.png` for image. Detect output with same extension |
 | Macro failure | 5s timeout, exit != 0 → user notification + paste original content (default, configurable) |
 | Large image rejection | `maxItemSizeMB` in UserDefaults, skip save + notify on exceed. Default 10MB |
-| Dedup | Recent SHA256 hash cache (`dedupCacheSize` default 100) |
+| Dedup | Two layers: (1) in-memory `lastSavedContentHash` skips a save entirely when the copy matches the immediately-preceding save; (2) `ClipboardMonitor.removeDuplicates` deletes older entities with the same `contentHash` before insert, so each hash has at most one entry and the new copy bubbles to the top. The previous `DedupCache` ring buffer (`dedupCacheSize` default 100) is deprecated. |
 | Sanitize | Invalid RTF load via try/catch + Data validation, corrupt Entity deleted |
 
 ### 5.1 Macro Script Safeguards

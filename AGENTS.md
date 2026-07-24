@@ -64,7 +64,7 @@ ClipboardManager/
 │   ├── MacroScriptPathValidator.swift # macro script path validation rule
 │   ├── AppSettings.swift           # UserDefaults wrapper
 │   ├── AppState.swift              # runtime state
-│   └── DedupCache.swift            # dedup cache
+│   └── DedupCache.swift            # [deprecated] dedup cache (unused; see docs/design-implementation.md §4.1)
 ├── Infrastructure/
 │   ├── ClipboardMonitor.swift      # clipboard monitoring (pasteboard polling)
 │   ├── HotkeyManager.swift         # Carbon API hotkey management
