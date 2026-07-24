@@ -97,10 +97,68 @@ your history never leaves the machine it was copied on.
 
 ## Install / Build
 
+### Install from a release (recommended)
+
+Download a pre-built binary from the [Releases page](https://github.com/xshoji/clipboard-manager/releases)
+and install it with the bundled install script. The script automatically
+detects your Mac's architecture (Apple Silicon or Intel), downloads the
+matching archive, extracts the `.app` bundle into `/Applications`, and
+strips the macOS quarantine attribute.
+
+```bash
+# One-liner — installs the latest release
+curl -fsSL https://raw.githubusercontent.com/xshoji/clipboard-manager/main/Scripts/install.sh | bash
+```
+
+Or clone and run locally:
+
+```bash
+git clone https://github.com/xshoji/clipboard-manager.git
+cd clipboard-manager
+./Scripts/install.sh
+```
+
+Options:
+
+```bash
+# Install a specific version
+./Scripts/install.sh 1.2.0
+
+# Install to a custom location
+./Scripts/install.sh --app ~/Applications/ClipboardManager.app
+```
+
+After installation, launch from `/Applications` or run `open /Applications/ClipboardManager.app`.
+
+> **Note**: The one-liner pipes a remote script into `bash`. Review
+> [`Scripts/install.sh`](Scripts/install.sh) first if you prefer to
+> inspect what it does.
+
+#### About code signing & Gatekeeper
+
+This project is **not** enrolled in the Apple Developer Program, so the
+packages distributed via GitHub Releases are **unsigned**. On recent
+macOS versions, the Gatekeeper feature (File Quarantine) will prevent
+the app from launching — this is expected behavior, not a bug.
+
+To run the app manually, remove the quarantine attribute:
+
+```bash
+xattr -d com.apple.quarantine /Applications/ClipboardManager.app
+```
+
+If you used `install.sh`, this step is **performed automatically** —
+the script runs `xattr -dr com.apple.quarantine` on the installed
+`.app` bundle as its final step, so no manual action is required.
+
+---
+
+### Build from source
+
 ### 1. Clone the repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/xshoji/clipboard-manager.git
 cd clipboard-manager
 ```
 
