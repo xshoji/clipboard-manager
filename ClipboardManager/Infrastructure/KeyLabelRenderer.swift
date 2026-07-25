@@ -48,6 +48,21 @@ enum KeyLabelRenderer {
         }
     }
 
+    /// Builds the full hotkey display string (modifiers + key symbol) from raw Cocoa
+    /// modifier flags and a virtual key code. Modifier symbols are emitted in the
+    /// conventional order `⌃⌥⇧⌘` followed by the key symbol (e.g. "⌃⌘X").
+    /// Shared by all hotkey recorders so the modifier-prefix logic stays in one place (DRY).
+    static func displayString(keyCode: UInt32, modifiers: Int) -> String {
+        let mods = NSEvent.ModifierFlags(rawValue: UInt(modifiers))
+        var parts: [String] = []
+        if mods.contains(.control) { parts.append("⌃") }
+        if mods.contains(.option)  { parts.append("⌥") }
+        if mods.contains(.shift)   { parts.append("⇧") }
+        if mods.contains(.command) { parts.append("⌘") }
+        parts.append(symbol(for: keyCode))
+        return parts.joined()
+    }
+
     /// Resolves a printable character for `keyCode` using the current keyboard layout.
     /// Returns `nil` for non-printable keys or when layout resolution fails. The result is
     /// upper-cased to match the conventional hotkey display (e.g. "⌘B" rather than "⌘b").

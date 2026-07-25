@@ -44,16 +44,10 @@ struct HotkeyRecorderView: View {
     }
 
     private func refresh() {
-        let mods = NSEvent.ModifierFlags(rawValue: UInt(settings.hotkeyModifiers))
-        let key = UInt32(settings.hotkeyKeyCode)
-        let symbol = KeyLabelRenderer.symbol(for: key)
-        var parts: [String] = []
-        if mods.contains(.control) { parts.append("⌃") }
-        if mods.contains(.option) { parts.append("⌥") }
-        if mods.contains(.shift) { parts.append("⇧") }
-        if mods.contains(.command) { parts.append("⌘") }
-        parts.append(symbol)
-        display = parts.joined()
+        display = KeyLabelRenderer.displayString(
+            keyCode: UInt32(settings.hotkeyKeyCode),
+            modifiers: settings.hotkeyModifiers
+        )
     }
 }
 
@@ -112,18 +106,12 @@ struct MacroHotkeyRecorderView: View {
 
     private func refresh() {
         let kc = keyCode.wrappedValue
-        let mods = NSEvent.ModifierFlags(rawValue: UInt(modifiers.wrappedValue))
-        if kc == 0 && mods.rawValue == 0 {
+        let mods = modifiers.wrappedValue
+        if kc == 0 && mods == 0 {
             display = "(none)"
             return
         }
-        var parts: [String] = []
-        if mods.contains(.control) { parts.append("⌃") }
-        if mods.contains(.option) { parts.append("⌥") }
-        if mods.contains(.shift) { parts.append("⇧") }
-        if mods.contains(.command) { parts.append("⌘") }
-        parts.append(KeyLabelRenderer.symbol(for: UInt32(kc)))
-        display = parts.joined()
+        display = KeyLabelRenderer.displayString(keyCode: UInt32(kc), modifiers: mods)
     }
 }
 
