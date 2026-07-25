@@ -95,8 +95,8 @@ struct MacroScriptRowView: View {
                 .foregroundStyle(.secondary)
             LabeledContent("Source") {
                 Picker("", selection: $sourceType) {
-                    Text("Script file").tag("file")
                     Text("Inline shell").tag("inline")
+                    Text("Script file").tag("file")
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
