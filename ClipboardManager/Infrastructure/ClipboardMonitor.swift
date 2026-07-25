@@ -1,6 +1,5 @@
 import AppKit
 import CryptoKit
-import SwiftData
 import os
 import os.lock
 
@@ -34,14 +33,13 @@ final class ClipboardMonitor: @unchecked Sendable {
     private static let logger = Logger(subsystem: "com.xshoji.ClipboardManager", category: "ClipboardMonitor")
 
     /// Shared instance set by AppDelegate at launch.
-    /// Used by Infrastructure components such as `MacroPasteService` to register suppression before a Macro paste.
-    /// Same pattern as `PersistenceController.shared`.
+    /// Used by the paste coordinator to register suppression before an app-owned write.
     ///
     /// `nonisolated(unsafe)`: the shared instance is assigned once on the main actor at
     /// launch and then only read. It is safe to read from any context after launch.
     static nonisolated(unsafe) var shared: ClipboardMonitor?
 
-    private let persistence: PersistenceController
+    private let repository: ClipboardRepository
     private let settings: AppSettings
     private var timer: DispatchSourceTimer?
     /// Only mutated on the timer queue (serial). Read/written from the single timer
@@ -81,8 +79,8 @@ final class ClipboardMonitor: @unchecked Sendable {
     /// keeps the main actor responsive (review #6).
     private let pollQueue = DispatchQueue(label: "com.xshoji.ClipboardManager.clipboardPoll", qos: .utility)
 
-    init(persistence: PersistenceController, settings: AppSettings) {
-        self.persistence = persistence
+    init(repository: ClipboardRepository, settings: AppSettings) {
+        self.repository = repository
         self.settings = settings
     }
 
@@ -295,7 +293,6 @@ final class ClipboardMonitor: @unchecked Sendable {
         // short-circuiting here keeps the heavy thumbnail path and the main-actor
         // insert/save off the critical path entirely.
         if lastSavedContentHash == hash { return }
-        lastSavedContentHash = hash
 
         // Thumbnail generation (lockFocus → tiffRepresentation) is heavy: run it here
         // on the utility queue instead of the main actor (review #6).
@@ -334,7 +331,6 @@ final class ClipboardMonitor: @unchecked Sendable {
         // a needless SwiftData write + `removeDuplicates` fetch when the copy is
         // byte-identical to the most recently saved entry.
         if lastSavedContentHash == hash { return }
-        lastSavedContentHash = hash
 
         let sourceBundle = pb.string(forType: NSPasteboard.PasteboardType("org.nspasteboard.sourceApp.bundleID"))
 
@@ -366,11 +362,8 @@ final class ClipboardMonitor: @unchecked Sendable {
     ) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let ctx = self.persistence.container.mainContext
-            // Dedup: remove any older entries with the same content hash so the
-            // newly copied item bubbles up to the top without leaving duplicates.
-            self.removeDuplicates(hash: contentHash, in: ctx)
-            let entity = ClipboardEntity(
+            let saved = self.repository.insert(
+                .init(
                 kind: kind,
                 text: text,
                 richText: richText,
@@ -378,26 +371,15 @@ final class ClipboardMonitor: @unchecked Sendable {
                 thumbnail: thumbnail,
                 sourceBundleID: sourceBundleID,
                 contentHash: contentHash
+                ),
+                removingDuplicates: true,
+                purpose: purpose
             )
-            ctx.insert(entity)
-            self.persistence.saveContext(ctx, purpose: purpose)
-            self.scheduleEnforce()
-        }
-    }
-
-    @MainActor private func scheduleEnforce() {
-        persistence.scheduleEnforceWithDebounce()
-    }
-
-    /// Removes all existing entities with the same `contentHash` so the newly
-    /// inserted copy replaces older duplicates instead of stacking them.
-    @MainActor private func removeDuplicates(hash: String, in ctx: ModelContext) {
-        let descriptor = FetchDescriptor<ClipboardEntity>(
-            predicate: #Predicate { $0.contentHash == hash }
-        )
-        guard let duplicates = try? ctx.fetch(descriptor), !duplicates.isEmpty else { return }
-        for entity in duplicates {
-            ctx.delete(entity)
+            if saved {
+                self.pollQueue.async { [weak self] in
+                    self?.lastSavedContentHash = contentHash
+                }
+            }
         }
     }
 

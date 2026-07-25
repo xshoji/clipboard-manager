@@ -39,16 +39,19 @@ struct InputPermission {
                 }
             }
         }
-        // AXIsProcessTrustedWithOptions with prompt=true shows the system
-        // accessibility dialog. This dialog also auto-registers the app in
-        // the Accessibility list (unchecked) and has an "Open System Settings"
-        // button so the user can grant permission. We must NOT call
-        // openAccessibilitySettingsPane() here because opening System Settings
-        // immediately after dismisses/covers the system dialog, preventing
-        // auto-registration.
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-        Self.logger.info("Requested Accessibility permission via system dialog")
+        // Defer until the Toggle's SwiftUI update transaction has completed. Calling
+        // AXIsProcessTrustedWithOptions synchronously from the binding setter can fail
+        // to present/register the app when Settings is hosted in our coordinator-owned
+        // NSWindow rather than SwiftUI's Settings scene.
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            // Use the documented key value directly. Swift 6 treats the imported
+            // ApplicationServices global as mutable shared state and rejects access
+            // from a @Sendable dispatch closure.
+            let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+            Self.logger.info("Requested Accessibility permission via system dialog")
+        }
     }
 
     /// Opens System Settings → Privacy & Security → Accessibility directly,

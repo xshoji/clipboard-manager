@@ -26,7 +26,7 @@ enum MacroError: Error, CustomStringConvertible {
 }
 
 enum MacroRunner {
-    /// Sendable input for Macro execution. `ClipboardEntity` (@Model, non-Sendable) cannot be passed directly to `Task.detached`,
+    /// Sendable input for Macro execution; persistence models cannot cross into `Task.detached`,
     /// so only the necessary information is extracted before execution (review #4).
     struct MacroInput: Sendable {
         let isImage: Bool
