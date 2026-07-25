@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-import Carbon.HIToolbox
 
 @propertyWrapper
 struct Setting<T> {
@@ -135,19 +134,5 @@ final class AppSettings: @unchecked Sendable {
            let decoded = try? JSONDecoder().decode([MacroScript].self, from: macroScriptsData) {
             macroScripts = decoded
         }
-    }
-
-    var hotkeyModifiersCarbon: UInt32 {
-        UInt32(carbonModifiers(for: hotkeyModifiers))
-    }
-
-    private func carbonModifiers(for cocoaMod: Int) -> UInt32 {
-        var mods: UInt32 = 0
-        let flags = UInt(cocoaMod)
-        if flags & NSEvent.ModifierFlags.shift.rawValue != 0 { mods |= UInt32(shiftKey) }
-        if flags & NSEvent.ModifierFlags.control.rawValue != 0 { mods |= UInt32(controlKey) }
-        if flags & NSEvent.ModifierFlags.option.rawValue != 0 { mods |= UInt32(optionKey) }
-        if flags & NSEvent.ModifierFlags.command.rawValue != 0 { mods |= UInt32(cmdKey) }
-        return mods
     }
 }

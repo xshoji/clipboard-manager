@@ -51,7 +51,7 @@ final class HotkeyManager {
         ensureEventHandlerInstalled()
         let cocoaModifiers = settings.hotkeyModifiers
         let cocoaKeyCode = settings.hotkeyKeyCode
-        let mods = UInt32(settings.hotkeyModifiersCarbon)
+        let mods = carbonModifiers(for: cocoaModifiers)
         let keyCode = UInt32(cocoaKeyCode)
 
         if registeredMainKeyCode == cocoaKeyCode,
