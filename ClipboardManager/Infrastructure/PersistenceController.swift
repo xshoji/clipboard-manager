@@ -11,6 +11,7 @@ final class PersistenceController {
     let container: ModelContainer
     private let settings: AppSettings
     private var enforceDebouncer: DispatchWorkItem?
+    var onLimitsDidDelete: (() -> Void)?
     private static let logger = Logger(
         subsystem: "com.xshoji.ClipboardManager",
         category: "Persistence"
@@ -175,6 +176,7 @@ final class PersistenceController {
 
     func enforceLimits(retentionDays: Int, maxCount: Int) {
         let ctx = container.mainContext
+        var deletedAny = false
         let now = Date()
         if retentionDays > 0 {
             let cutoff = Calendar.current.date(byAdding: .day, value: -retentionDays, to: now) ?? now
@@ -184,6 +186,7 @@ final class PersistenceController {
             if let stale = fetchEntities(fd, context: ctx, purpose: "enforceLimits.retention") {
                 for e in stale {
                     ctx.delete(e)
+                    deletedAny = true
                 }
             }
         }
@@ -194,20 +197,30 @@ final class PersistenceController {
             let surplus = all.count - maxCount
             for e in all.prefix(surplus) {
                 ctx.delete(e)
+                deletedAny = true
             }
         }
-        saveContext(ctx, purpose: "enforceLimits")
+        guard deletedAny else { return }
+        if saveContext(ctx, purpose: "enforceLimits") {
+            onLimitsDidDelete?()
+        } else {
+            ctx.rollback()
+        }
     }
 
-    func clearAll() {
+    @discardableResult
+    func clearAll() -> Bool {
         let ctx = container.mainContext
         let fd = FetchDescriptor<ClipboardEntity>()
         if let all = fetchEntities(fd, context: ctx, purpose: "clearAll") {
+            guard !all.isEmpty else { return true }
             for e in all {
                 ctx.delete(e)
             }
-            saveContext(ctx, purpose: "clearAll")
+            if saveContext(ctx, purpose: "clearAll") { return true }
+            ctx.rollback()
         }
+        return false
     }
 
     // MARK: - Save / fetch helpers (surface SwiftData errors instead of swallowing them)
@@ -215,9 +228,11 @@ final class PersistenceController {
     /// Saves the given ModelContext. On failure, logs via `Logger` and notifies the user via `AppNotifier`
     /// so save failures (disk full, external storage load failure, quota exceeded) are not silently dropped.
     /// Use this instead of bare `try? ctx.save()` everywhere a history change is persisted.
-    func saveContext(_ ctx: ModelContext, purpose: String) {
+    @discardableResult
+    func saveContext(_ ctx: ModelContext, purpose: String) -> Bool {
         do {
             try ctx.save()
+            return true
         } catch {
             Self.logger.error("ModelContext save failed (\(purpose, privacy: .public)): \(String(describing: error), privacy: .public).")
             AppNotifier.notify(
@@ -225,6 +240,7 @@ final class PersistenceController {
                 body: "A clipboard history change could not be saved (disk full or storage error). Recent copies may not persist. (\(purpose))",
                 deduplicationKey: "persistence-save-failed"
             )
+            return false
         }
     }
 

@@ -23,6 +23,11 @@ import UniformTypeIdentifiers
 @MainActor
 final class PreviewImageEditor {
     static let shared = PreviewImageEditor()
+    private var repository: ClipboardRepository?
+
+    func configure(repository: ClipboardRepository) {
+        self.repository = repository
+    }
 
     /// Carrier for the session identifier passed as AX refcon.
     /// `@unchecked Sendable`: holds only an immutable UUID, safe to read from a C callback.
@@ -163,7 +168,7 @@ final class PreviewImageEditor {
 
     // MARK: - Public entry
 
-    func editImage(entity: ClipboardEntity) {
+    func editImage(item: ClipboardItem) {
         // Gate on the internal editing-status flag. Unlike file-existence checks,
         // this flag is reliably reset by the window-close monitoring teardown, so a
         // stale `.ClipboardManagerEdit.<ext>` file left behind by a previous session
@@ -184,7 +189,7 @@ final class PreviewImageEditor {
 
         isEditing = true
 
-        guard let data = entity.imageData, !data.isEmpty else {
+        guard let data = repository?.fetchImageData(id: item.id), !data.isEmpty else {
             isEditing = false
             AppNotifier.notify(
                 title: "Image cannot be edited",
@@ -229,7 +234,7 @@ final class PreviewImageEditor {
         }
 
         let originalHash = HashUtil.sha256Hex(of: data)
-        let entityID = entity.id
+        let entityID = item.id
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
         NSWorkspace.shared.open(
@@ -707,28 +712,20 @@ final class PreviewImageEditor {
     }
 
     private func saveToHistory(data: Data, hash: String) {
-        guard let persistence = PersistenceController.shared else { return }
+        guard let repository else { return }
         // Thumbnail generation (lockFocus → tiffRepresentation) is heavy for large
         // images; run it on a background task so the main actor is not blocked.
         Task.detached(priority: .userInitiated) {
             let thumb = ThumbnailGenerator.thumbnailData(from: data, maxEdge: 64)
             await MainActor.run {
-                let entity = ClipboardEntity(
-                    kind: "image",
-                    imageData: data,
-                    thumbnail: thumb,
-                    contentHash: hash
+                let saved = repository.insert(
+                    .init(kind: "image", imageData: data, thumbnail: thumb, contentHash: hash),
+                    purpose: "PreviewImageEditor.saveToHistory"
                 )
-                let ctx = persistence.container.mainContext
-                ctx.insert(entity)
-                do {
-                    try ctx.save()
-                    persistence.scheduleEnforceWithDebounce()
-                } catch {
-                    ctx.delete(entity)
+                if !saved {
                     AppNotifier.notify(
                         title: "Edited image not saved",
-                        body: "The edited image could not be added to clipboard history.",
+                        body: "The edited image could not be saved to clipboard history.",
                         deduplicationKey: "edited-image-save-failed"
                     )
                 }
