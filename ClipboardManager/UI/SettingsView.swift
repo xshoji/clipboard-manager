@@ -118,9 +118,17 @@ struct SettingsView: View {
                     Text("No Macros registered.").foregroundStyle(.secondary)
                 }
                 Button("Add Macro…") {
-                    // Adds an empty row that the user edits in place; the row's Save
+                    // Adds an inline example that the user edits in place; the row's Save
                     // button presents the registration confirmation dialog (design-implementation.md §5.1-1).
-                    settings.macroScripts.append(MacroScript(name: "New Macro", scriptPath: "~/"))
+                    settings.macroScripts.append(MacroScript(
+                        name: "New Macro",
+                        scriptPath: "",
+                        inlineScript: """
+                        #!/bin/sh
+                        # Example: replace "foo" with "bar" in copied text.
+                        sed 's/foo/bar/g' "$CB_INPUT_FILE" > "$CB_OUTPUT_FILE"
+                        """
+                    ))
                 }
             }
 
