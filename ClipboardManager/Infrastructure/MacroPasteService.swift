@@ -65,49 +65,44 @@ enum MacroPasteService {
     // MARK: - Pasteboard
 
     private static func writePasteboard(data: Data, isImage: Bool) {
-        let pb = NSPasteboard.general
         // Do not add pasteboard writes made by this app itself to the clipboard history.
         // This write changes changeCount; suppress it so ClipboardMonitor does not mistake it for a user copy (design-implementation.md §4.2).
         //
         // Race note (review #6): the poll runs on a background utility queue and could fire
         // between `clearContents()` and `setData()`. To prevent it from saving the app's own
-        // write as a history item, register a suppression range covering the pre-write
-        // changeCount-plus-one up to (pre + 3) BEFORE the write. `clearContents()` bumps +1,
-        // and the subsequent `setData`/`setString` may bump an additional +1, so a width of 2
+        // write as a history item, `performSuppressedPasteboardWrite` registers a
+        // suppression range covering the pre-write changeCount-plus-one up to (pre + 3)
+        // BEFORE the write, then finalizes it after. `clearContents()` bumps +1, and the
+        // subsequent `setData`/`setString` may bump an additional +1, so a width of 2
         // covers both bumps. The range starts at `pre + 1` (not `pre`) so a user copy that
-        // just landed at `pre` is not wrongly suppressed. After the write,
-        // `finalizeSuppressionAfterWrite` removes any pre-registered entries above the actual
-        // post-write changeCount so they cannot orphan-suppress a future user copy.
+        // just landed at `pre` is not wrongly suppressed. After the write, the helper
+        // removes any pre-registered entries above the actual post-write changeCount so
+        // they cannot orphan-suppress a future user copy.
         //
         // The `isImage` flag was determined on the background task inside MacroRunner,
         // so no NSImage decode happens here on the main actor (previously NSImage(data:)
         // was called twice on the main actor — once in run() and once here).
-        let pre = pb.changeCount
-        ClipboardMonitor.shared?.suppressChangeCountRange((pre + 1)..<(pre + 3))
-        pb.clearContents()
-        // Determine the output *content*, not the input entity kind: a macro may
-        // transform an image into text (e.g. OCR) or text into an image. The image
-        // check was already performed on the background task; just use the result.
-        if isImage {
-            pb.setData(data, forType: .png)
-        } else {
-            // review #6: Non-UTF8 output is already rejected in run(), so this is safe.
-            pb.setString(String(data: data, encoding: .utf8) ?? "", forType: .string)
+        ClipboardMonitor.shared?.performSuppressedPasteboardWrite { pb in
+            pb.clearContents()
+            // Determine the output *content*, not the input entity kind: a macro may
+            // transform an image into text (e.g. OCR) or text into an image. The image
+            // check was already performed on the background task; just use the result.
+            if isImage {
+                pb.setData(data, forType: .png)
+            } else {
+                // review #6: Non-UTF8 output is already rejected in run(), so this is safe.
+                pb.setString(String(data: data, encoding: .utf8) ?? "", forType: .string)
+            }
         }
-        // Finalize: ensure the actual post-write changeCount is suppressed and remove
-        // orphaned pre-registered entries that could suppress a future user copy.
-        ClipboardMonitor.shared?.finalizeSuppressionAfterWrite(preChangeCount: pre)
     }
 
     /// Failure fallback: restores the original entity content to the pasteboard.
     /// Because this write is also made by the app itself, exclude it from history
     /// by registering a suppression range before the write (review #6 race note above).
     private static func restoreOriginalToPasteboard(entity: ClipboardEntity) {
-        let pb = NSPasteboard.general
-        let pre = pb.changeCount
-        ClipboardMonitor.shared?.suppressChangeCountRange((pre + 1)..<(pre + 3))
-        entity.writeToPasteboard(.general)
-        ClipboardMonitor.shared?.finalizeSuppressionAfterWrite(preChangeCount: pre)
+        ClipboardMonitor.shared?.performSuppressedPasteboardWrite { pb in
+            entity.writeToPasteboard(pb)
+        }
     }
 
     private static func handleFailure(

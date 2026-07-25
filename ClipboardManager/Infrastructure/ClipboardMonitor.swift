@@ -203,6 +203,36 @@ final class ClipboardMonitor: @unchecked Sendable {
         }
     }
 
+    /// Performs a pasteboard write that is excluded from history recording.
+    ///
+    /// This wraps the suppression transaction that closes the race between the
+    /// main-actor pasteboard write and the utility-queue poll (review #6):
+    /// without it, the poll could fire mid-write (between `clearContents()` and
+    /// `setData()`) and save the app's own write as a history item.
+    ///
+    /// Callers MUST do only pasteboard writes inside `write`. Everything else
+    /// (previous-app activation, notifications, etc.) belongs outside this call
+    /// so the suppression bookkeeping stays tightly scoped to the write itself.
+    ///
+    /// Must be called on the main actor: pasteboard writes are AppKit APIs and
+    /// `finalizeSuppressionAfterWrite` reads the post-write `changeCount`
+    /// immediately after the closure returns.
+    ///
+    /// Example:
+    /// ```
+    /// ClipboardMonitor.shared?.performSuppressedPasteboardWrite { pb in
+    ///     entity.writeToPasteboard(pb, rich: rich)
+    /// }
+    /// ```
+    @discardableResult
+    func performSuppressedPasteboardWrite(_ write: (NSPasteboard) -> Void) -> Int {
+        let pre = NSPasteboard.general.changeCount
+        suppressChangeCountRange((pre + 1)..<(pre + 3))
+        write(.general)
+        finalizeSuppressionAfterWrite(preChangeCount: pre)
+        return pre
+    }
+
     private func poll() {
         let pb = NSPasteboard.general
         let count = pb.changeCount

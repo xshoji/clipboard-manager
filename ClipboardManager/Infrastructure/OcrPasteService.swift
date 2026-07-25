@@ -51,12 +51,10 @@ enum OcrPasteService {
         // Same suppression bookkeeping as `FooterBar.paste(rich:)` /
         // `AppDelegate.runPastePlainAction` so the utility-queue poll cannot
         // capture our own write as a new history item (review #6).
-        let pre = NSPasteboard.general.changeCount
-        ClipboardMonitor.shared?.suppressChangeCountRange((pre + 1)..<(pre + 3))
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text ?? "", forType: .string)
-        ClipboardMonitor.shared?.finalizeSuppressionAfterWrite(preChangeCount: pre)
+        ClipboardMonitor.shared?.performSuppressedPasteboardWrite { pb in
+            pb.clearContents()
+            pb.setString(text ?? "", forType: .string)
+        }
 
         AppActivator.shared.activatePreviousAppAndPasteSynthetically(
             needsSynthetic: settings.needsAccessibilityForSyntheticPaste
