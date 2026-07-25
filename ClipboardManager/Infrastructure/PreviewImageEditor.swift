@@ -328,37 +328,21 @@ final class PreviewImageEditor {
        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: work)
    }
 
-   private func pollWindowExistence(sessionID: UUID) {
-       guard let s = sessions[sessionID], !s.didFinish else { return }
-       let appEl = AXUIElementCreateApplication(s.pid)
-       var windowsRef: CFTypeRef?
-       AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef)
-       let windows = (windowsRef as? [AXUIElement]) ?? []
-       let targetStem = s.workFile.deletingPathExtension().lastPathComponent
-       let targetName = s.workFile.lastPathComponent
-       let exists = windows.contains { window in
-           var titleRef: CFTypeRef?
-           AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
-           let title = titleRef as? String
-           var docRef: CFTypeRef?
-           AXUIElementCopyAttributeValue(window, kAXDocumentAttribute as CFString, &docRef)
-           let doc = docRef as? String
-           return (title == targetStem)
-               || (doc?.hasSuffix(targetName) ?? false)
-               || (doc?.contains(targetName) ?? false)
-       }
-       if !exists {
-           scheduleHashCheck(for: sessionID, delay: 0.3)
-           return
-       }
-       let next = DispatchWorkItem { [weak self] in
-           Task { @MainActor in
-               self?.pollWindowExistence(sessionID: sessionID)
-           }
-       }
-       sessions[sessionID]?.windowPollWork = next
-       DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: next)
-   }
+    private func pollWindowExistence(sessionID: UUID) {
+        guard let s = sessions[sessionID], !s.didFinish else { return }
+        let exists = !matchingPreviewWindows(for: s).isEmpty
+        if !exists {
+            scheduleHashCheck(for: sessionID, delay: 0.3)
+            return
+        }
+        let next = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.pollWindowExistence(sessionID: sessionID)
+            }
+        }
+        sessions[sessionID]?.windowPollWork = next
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: next)
+    }
 
     /// Final safety net: times out after a period of idle time since the last file write,
     /// forcing the session to end. Prevents monitoring from persisting when AX permission is missing and Preview is not quit.
@@ -515,28 +499,31 @@ final class PreviewImageEditor {
         let originalHash = s.originalHash
         let lastSavedHash = s.lastSavedHash
         Task.detached(priority: .userInitiated) { [weak self] in
-            let hash = HashUtil.sha256Hex(of: workData)
-            guard hash != originalHash else { return }
-            guard hash != lastSavedHash else { return }
-            let maxBytes = AppSettings.shared.maxItemSizeMB * 1024 * 1024
-            guard workData.count <= maxBytes else {
-                await MainActor.run {
+            let result = Self.verifyEditedImage(
+                data: workData,
+                originalHash: originalHash,
+                lastSavedHash: lastSavedHash
+            )
+            await MainActor.run {
+                switch result {
+                case .duplicate:
+                    return
+                case .oversize:
                     AppNotifier.notify(
                         title: "Edited image not saved",
                         body: "The edited image exceeds the \(AppSettings.shared.maxItemSizeMB) MB size limit.",
                         deduplicationKey: "edited-image-size-limit"
                     )
+                    return
+                case .save(let data, let hash):
+                    self?.saveToHistory(data: data, hash: hash)
+                    self?.sessions[sessionID]?.lastSavedHash = hash
+                    self?.rescheduleSessionTimeout(for: sessionID)
+                    // After a successful save, close the Preview window automatically
+                    // (the edit's purpose is fulfilled). Only the session's window is
+                    // closed; other Preview windows are left untouched.
+                    self?.closePreviewWindow(for: sessionID)
                 }
-                return
-            }
-            await MainActor.run {
-                self?.saveToHistory(data: workData, hash: hash)
-                self?.sessions[sessionID]?.lastSavedHash = hash
-                self?.rescheduleSessionTimeout(for: sessionID)
-                // After a successful save, close the Preview window automatically
-                // (the edit's purpose is fulfilled). Only the session's window is
-                // closed; other Preview windows are left untouched.
-                self?.closePreviewWindow(for: sessionID)
             }
         }
     }
@@ -568,20 +555,9 @@ final class PreviewImageEditor {
         var windowsRef: CFTypeRef?
         AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef)
         let windows = (windowsRef as? [AXUIElement]) ?? []
-        let targetStem = s.workFile.deletingPathExtension().lastPathComponent
-        let targetName = s.workFile.lastPathComponent
 
         for window in windows {
-            var titleRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
-            let title = titleRef as? String
-            var docRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(window, kAXDocumentAttribute as CFString, &docRef)
-            let doc = docRef as? String
-            let matched = (title == targetStem)
-                || (doc?.hasSuffix(targetName) ?? false)
-                || (doc?.contains(targetName) ?? false)
-            guard matched else { continue }
+            guard isTargetWindow(window, workFile: s.workFile) else { continue }
 
             var observer: AXObserver?
             let callback: AXObserverCallback = previewAXWindowDestroyedCallback
@@ -602,12 +578,12 @@ final class PreviewImageEditor {
                 )
                 s.axObserver = observer
                 s.axObserversInstalled = true
-               s.boxRefcon = refcon
+                s.boxRefcon = refcon
                 sessions[sessionID] = s
-           } else {
-               // If adding the notification fails, the observer is automatically released by Swift ARC when leaving this scope (CFRelease is unavailable from Swift).
-               // Explicitly release only the retain count of the passRetained box.
-               Unmanaged<PreviewImageEditor.SessionBox>.fromOpaque(refcon).release()
+            } else {
+                // If adding the notification fails, the observer is automatically released by Swift ARC when leaving this scope (CFRelease is unavailable from Swift).
+                // Explicitly release only the retain count of the passRetained box.
+                Unmanaged<PreviewImageEditor.SessionBox>.fromOpaque(refcon).release()
             }
             return
         }
@@ -658,33 +634,76 @@ final class PreviewImageEditor {
         guard let s = sessions[sessionID], !s.didFinish else { return }
         sessions[sessionID]?.didFinish = true
 
-       if let workData = try? Data(contentsOf: s.workFile) {
+        if let workData = try? Data(contentsOf: s.workFile) {
             let originalHash = s.originalHash
             let lastSavedHash = s.lastSavedHash
             Task.detached(priority: .userInitiated) { [weak self] in
-                let hash = HashUtil.sha256Hex(of: workData)
-                guard hash != originalHash, hash != lastSavedHash else {
-                    await MainActor.run {
-                        self?.teardown(sessionID: sessionID)
-                    }
-                    return
-                }
-                let maxBytes = AppSettings.shared.maxItemSizeMB * 1024 * 1024
-                guard workData.count <= maxBytes else {
-                    await MainActor.run {
-                        self?.teardown(sessionID: sessionID)
-                    }
-                    return
-                }
+                let result = Self.verifyEditedImage(
+                    data: workData,
+                    originalHash: originalHash,
+                    lastSavedHash: lastSavedHash
+                )
                 await MainActor.run {
-                    self?.saveToHistory(data: workData, hash: hash)
-                    self?.sessions[sessionID]?.lastSavedHash = hash
-                    self?.teardown(sessionID: sessionID)
+                    switch result {
+                    case .duplicate, .oversize:
+                        if case .oversize = result {
+                            AppNotifier.notify(
+                                title: "Edited image not saved",
+                                body: "The edited image exceeds the \(AppSettings.shared.maxItemSizeMB) MB size limit.",
+                                deduplicationKey: "edited-image-size-limit"
+                            )
+                        }
+                        self?.teardown(sessionID: sessionID)
+                    case .save(let data, let hash):
+                        self?.saveToHistory(data: data, hash: hash)
+                        self?.sessions[sessionID]?.lastSavedHash = hash
+                        self?.teardown(sessionID: sessionID)
+                    }
                 }
             }
-       } else {
+        } else {
             teardown(sessionID: sessionID)
-       }
+        }
+    }
+
+    // MARK: - Edit verification (shared between file-change and session-finalize paths)
+
+    /// Result of verifying a candidate edited image against the session's known hashes
+    /// and the configured size limit. Single source of truth so the file-change path
+    /// (`performFileChangeCheck`) and the session-finalize path (`performHashCheck`)
+    /// agree on what gets saved, what gets skipped as a duplicate, and what gets
+    /// rejected as oversize (review #8).
+    private enum EditVerificationResult {
+        /// New content worth saving: the hash differs from both the original and the
+        /// last-saved hash, and the size is within the limit. Carries the data and hash.
+        case save(Data, String)
+        /// Byte-identical to the original or to the most recent save. Nothing to do.
+        case duplicate
+        /// Exceeds `AppSettings.maxItemSizeMB`. The caller is expected to notify the user.
+        case oversize
+    }
+
+    /// Verifies the candidate `data` against the session's `originalHash` / `lastSavedHash`
+    /// and the configured size limit. Returns a `EditVerificationResult` the caller uses
+    /// to decide the next action (save, skip, or reject + notify).
+    ///
+    /// Pure: performs only SHA256 hashing and integer comparison. Safe to call from a
+    /// `Task.detached` so the hash work stays off the main actor (large edited images
+    /// can take tens of ms to hash). Reads `AppSettings.shared.maxItemSizeMB`, which is
+    /// a `@MainActor` `UserDefaults` wrapper; reading it off the main actor is safe here
+    /// because the underlying `UserDefaults` getter is thread-safe and the value is a
+    /// primitive copied into the local `maxMB`.
+    private nonisolated static func verifyEditedImage(
+        data: Data,
+        originalHash: String,
+        lastSavedHash: String?
+    ) -> EditVerificationResult {
+        let hash = HashUtil.sha256Hex(of: data)
+        if hash == originalHash { return .duplicate }
+        if let lastSavedHash, hash == lastSavedHash { return .duplicate }
+        let maxBytes = AppSettings.shared.maxItemSizeMB * 1024 * 1024
+        if data.count > maxBytes { return .oversize }
+        return .save(data, hash)
     }
 
     private func saveToHistory(data: Data, hash: String) {
@@ -735,23 +754,7 @@ final class PreviewImageEditor {
 
         if AXIsProcessTrusted() {
             // AX path: press the close button on the matching window.
-            let appEl = AXUIElementCreateApplication(s.pid)
-            var windowsRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef)
-            let windows = (windowsRef as? [AXUIElement]) ?? []
-            let targetStem = s.workFile.deletingPathExtension().lastPathComponent
-            let targetName = s.workFile.lastPathComponent
-            for window in windows {
-                var titleRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
-                let title = titleRef as? String
-                var docRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(window, kAXDocumentAttribute as CFString, &docRef)
-                let doc = docRef as? String
-                let matched = (title == targetStem)
-                    || (doc?.hasSuffix(targetName) ?? false)
-                    || (doc?.contains(targetName) ?? false)
-                guard matched else { continue }
+            for window in matchingPreviewWindows(for: s) {
                 // Press the close button.
                 var closeButtonRef: CFTypeRef?
                 AXUIElementCopyAttributeValue(window, kAXCloseButtonAttribute as CFString, &closeButtonRef)
@@ -858,6 +861,39 @@ final class PreviewImageEditor {
     }
 
     // MARK: - Helpers
+
+    /// Returns `true` when the given AX window belongs to this session's work file.
+    ///
+    /// Preview's window `title` usually carries the file stem (without extension),
+    /// while the `document` attribute carries a path that ends with the file name.
+    /// We match on either to be tolerant of Preview version differences. This single
+    /// helper is the only place that decides whether an AX window belongs to a
+    /// session, so existence checks, AX observer installation, and window-close all
+    /// agree on the same criteria (review #8).
+    private func isTargetWindow(_ window: AXUIElement, workFile: URL) -> Bool {
+        var titleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
+        let title = titleRef as? String
+        var docRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(window, kAXDocumentAttribute as CFString, &docRef)
+        let doc = docRef as? String
+        let targetStem = workFile.deletingPathExtension().lastPathComponent
+        let targetName = workFile.lastPathComponent
+        return title == targetStem
+            || (doc?.hasSuffix(targetName) ?? false)
+            || (doc?.contains(targetName) ?? false)
+    }
+
+    /// Enumerates the Preview app's AX windows for the given session and returns
+    /// those that match the session's work file. Convenience wrapper around
+    /// `isTargetWindow(_:workFile:)` for callers that need the matching window(s).
+    private func matchingPreviewWindows(for session: Session) -> [AXUIElement] {
+        let appEl = AXUIElementCreateApplication(session.pid)
+        var windowsRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef)
+        let windows = (windowsRef as? [AXUIElement]) ?? []
+        return windows.filter { isTargetWindow($0, workFile: session.workFile) }
+    }
 
     /// Determines the actual UTI from image data and returns the corresponding file extension.
     /// Falls back to PNG (the app's save format) if it cannot be determined.
