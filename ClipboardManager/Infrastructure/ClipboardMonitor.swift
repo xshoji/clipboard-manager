@@ -301,30 +301,17 @@ final class ClipboardMonitor: @unchecked Sendable {
         // on the utility queue instead of the main actor (review #6).
         let thumb = ThumbnailGenerator.thumbnailData(from: data, maxEdge: 64)
         let sourceBundle = pb.string(forType: NSPasteboard.PasteboardType("org.nspasteboard.sourceApp.bundleID"))
-        let kind = "image"
-        let text: String? = nil
-        let richText: Data? = nil
-        let imageData = data
 
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let ctx = self.persistence.container.mainContext
-            // Dedup: remove any older entries with the same content hash so the
-            // newly copied item bubbles up to the top without leaving duplicates.
-            self.removeDuplicates(hash: hash, in: ctx)
-            let entity = ClipboardEntity(
-                kind: kind,
-                text: text,
-                richText: richText,
-                imageData: imageData,
-                thumbnail: thumb,
-                sourceBundleID: sourceBundle,
-                contentHash: hash
-            )
-            ctx.insert(entity)
-            self.persistence.saveContext(ctx, purpose: "saveImage")
-            self.scheduleEnforce()
-        }
+        insertEntity(
+            kind: "image",
+            text: nil,
+            richText: nil,
+            imageData: data,
+            thumbnail: thumb,
+            sourceBundleID: sourceBundle,
+            contentHash: hash,
+            purpose: "saveImage"
+        )
     }
 
     private func prepareTextSave(_ pb: NSPasteboard, plain: String? = nil, rich: Data? = nil) {
@@ -350,28 +337,50 @@ final class ClipboardMonitor: @unchecked Sendable {
         lastSavedContentHash = hash
 
         let sourceBundle = pb.string(forType: NSPasteboard.PasteboardType("org.nspasteboard.sourceApp.bundleID"))
-        let kind = "text"
-        let richText = rich
-        let imageData: Data? = nil
-        let thumbnail: Data? = nil
 
+        insertEntity(
+            kind: "text",
+            text: text,
+            richText: rich,
+            imageData: nil,
+            thumbnail: nil,
+            sourceBundleID: sourceBundle,
+            contentHash: hash,
+            purpose: "saveText"
+        )
+    }
+
+    /// Shared main-actor insert path for both image and text saves. The caller has
+    /// already finished the type-specific heavy work (size check, hashing, thumbnail
+    /// generation) on the poll queue; this helper hops to the main actor only for the
+    /// SwiftData insert + save + dedup enforcement (ModelContext is `@MainActor`).
+    private func insertEntity(
+        kind: String,
+        text: String?,
+        richText: Data?,
+        imageData: Data?,
+        thumbnail: Data?,
+        sourceBundleID: String?,
+        contentHash: String,
+        purpose: String
+    ) {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let ctx = self.persistence.container.mainContext
             // Dedup: remove any older entries with the same content hash so the
             // newly copied item bubbles up to the top without leaving duplicates.
-            self.removeDuplicates(hash: hash, in: ctx)
+            self.removeDuplicates(hash: contentHash, in: ctx)
             let entity = ClipboardEntity(
                 kind: kind,
                 text: text,
                 richText: richText,
                 imageData: imageData,
                 thumbnail: thumbnail,
-                sourceBundleID: sourceBundle,
-                contentHash: hash
+                sourceBundleID: sourceBundleID,
+                contentHash: contentHash
             )
             ctx.insert(entity)
-            self.persistence.saveContext(ctx, purpose: "saveText")
+            self.persistence.saveContext(ctx, purpose: purpose)
             self.scheduleEnforce()
         }
     }
