@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppSettings.self) private var settings
+    @Environment(SettingsViewModel.self) private var viewModel
     @State private var retention: Int
     @State private var maxCount: Int
     @State private var maxItem: Int
@@ -91,9 +92,9 @@ struct SettingsView: View {
                         },
                         onDirtyChange: { id, dirty in
                             if dirty {
-                                AppState.shared.unsavedMacroIDs.insert(id)
+                                viewModel.setDirty(id, true)
                             } else {
-                                AppState.shared.unsavedMacroIDs.remove(id)
+                                viewModel.setDirty(id, false)
                             }
                         }
                     )

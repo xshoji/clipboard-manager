@@ -1,19 +1,17 @@
 import SwiftUI
-import SwiftData
 
 struct HistoryListPane: View {
     @Binding var query: String
-    @Binding var selectedEntity: ClipboardEntity?
+    @Binding var selectedItem: ClipboardItem?
+    @Bindable var viewModel: HistoryViewModel
     /// Pastes the selected history item (rich by default). Fired by double-click or Enter.
     /// design-app.md §2.2.1: after writing to the pasteboard, hide this app and restore the previous app to the foreground.
-    let onPaste: (ClipboardEntity) -> Void
-    @Query(sort: \ClipboardEntity.createdAt, order: .reverse) private var items: [ClipboardEntity]
-    @Environment(\.modelContext) private var modelContext
+    let onPaste: (ClipboardItem) -> Bool
     @FocusState private var searchFocused: Bool
     @FocusState private var listFocused: Bool
 
-    @State private var filteredItems: [ClipboardEntity] = []
-    @State private var indexByID: [ClipboardEntity.ID: Int] = [:]
+    @State private var filteredItems: [ClipboardItem] = []
+    @State private var indexByID: [ClipboardItem.ID: Int] = [:]
     @State private var debounceWorkItem: DispatchWorkItem? = nil
     @State private var showDeleteConfirmation = false
     /// Background filtering task token. Cancelling the previous task when a new query
@@ -37,7 +35,7 @@ struct HistoryListPane: View {
         .onReceive(NotificationCenter.default.publisher(for: .resetSelectionToTop)) { _ in
             // Reset selection to the latest (topmost) item when the window is reshown.
             if !filteredItems.isEmpty {
-                selectedEntity = filteredItems.first
+                selectedItem = filteredItems.first
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .historyWindowDidClose)) { _ in
@@ -63,15 +61,15 @@ struct HistoryListPane: View {
             debounceWorkItem?.cancel()
             scheduleRecompute()
         }
-        // `@Query` reflects SwiftData inserts/deletes, but `items.count` alone misses
+        // Repository notifications reflect inserts/deletes, but item count alone misses
         // the case where `removeDuplicates` deletes an old entity and inserts a new
         // one with a different `id` (count unchanged, contents changed). Observing the
         // whole `items` array catches both count-only and id-only mutations, so the
         // list filter (`filteredItems`) is always rebuilt after a re-copy / retention
-        // delete / insert. `@Query` publishes `items` as a `Hashable` array that
+        // delete / insert. The DTO array is Hashable and
         // re-renders when any element identity changes, so this is the single source
         // of truth for "did the visible list change?".
-        .onChange(of: items) { _, _ in
+        .onChange(of: viewModel.items) { _, _ in
             scheduleRecompute()
         }
         .onDisappear {
@@ -112,7 +110,7 @@ struct HistoryListPane: View {
                     // `recomputeIndex` runs the heavy filter on `Task.detached`, so it
                     // cannot block here; it will update `filteredItems` and
                     // `selectedEntity` on the main actor shortly.
-                    if let entity = selectedEntity, indexByID[entity.id] != nil {
+                    if let entity = selectedItem, indexByID[entity.id] != nil {
                         paste(entity: entity)
                     } else {
                         debounceWorkItem?.cancel()
@@ -165,11 +163,11 @@ struct HistoryListPane: View {
                 moveSelection(direction)
             }
             .onKeyPress(.return) {
-                guard let entity = selectedEntity else { return .ignored }
+                guard let entity = selectedItem else { return .ignored }
                 paste(entity: entity)
                 return .handled
             }
-            .onChange(of: selectedEntity?.id) { _, id in
+            .onChange(of: selectedItem?.id) { _, id in
                 guard listFocused, let id else { return }
                 // When no anchor is specified, scrollTo does not scroll for already-visible rows;
                 // it only scrolls just enough to bring off-screen rows into view.
@@ -179,11 +177,11 @@ struct HistoryListPane: View {
     }
 
     @ViewBuilder
-    private func row(for entity: ClipboardEntity) -> some View {
-        HistoryRowView(entity: entity, selected: selectedEntity?.id == entity.id)
+    private func row(for entity: ClipboardItem) -> some View {
+        HistoryRowView(entity: entity, selected: selectedItem?.id == entity.id)
             .id(entity.id)
             .onTapGesture {
-                selectedEntity = entity
+                selectedItem = entity
                 listFocused = true
             }
             .simultaneousGesture(
@@ -199,7 +197,7 @@ struct HistoryListPane: View {
         // bound to the main actor's ModelContext), then run the O(n) filter on a
         // background task so the main actor is not blocked for 100k rows (review #22).
         let needle = query.lowercased()
-        let index = items.map { entity in
+        let index = viewModel.items.map { entity in
             SearchRow(
                 id: entity.id,
                 textPreviewLower: entity.textPreviewLowercased ?? entity.textPreview?.lowercased() ?? "",
@@ -222,11 +220,11 @@ struct HistoryListPane: View {
             }
             await MainActor.run {
                 let idSet = Set(filteredIDs)
-                let ordered = items.filter { idSet.contains($0.id) }
+                let ordered = viewModel.items.filter { idSet.contains($0.id) }
                 filteredItems = ordered
                 indexByID = Dictionary(uniqueKeysWithValues: ordered.enumerated().map { ($1.id, $0) })
-                if selectedEntity.map({ indexByID[$0.id] == nil }) ?? true {
-                    selectedEntity = ordered.first
+                if selectedItem.map({ indexByID[$0.id] == nil }) ?? true {
+                    selectedItem = ordered.first
                 }
             }
         }
@@ -243,7 +241,7 @@ struct HistoryListPane: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
     }
 
-    /// Sendable search index row extracted from `ClipboardEntity` so the filter can
+    /// Sendable search index row extracted from the DTO so the filter can
     /// run off the main actor without touching the `@Model` (review #22).
     private struct SearchRow: Sendable {
         let id: UUID
@@ -254,12 +252,12 @@ struct HistoryListPane: View {
 
     private func moveSelection(_ direction: MoveCommandDirection) {
         guard !filteredItems.isEmpty else {
-            selectedEntity = nil
+            selectedItem = nil
             return
         }
 
         let currentIndex: Int?
-        if let currentID = selectedEntity?.id {
+        if let currentID = selectedItem?.id {
             currentIndex = indexByID[currentID]
         } else {
             currentIndex = nil
@@ -280,23 +278,24 @@ struct HistoryListPane: View {
         default:
             return
         }
-        selectedEntity = filteredItems[next]
+        selectedItem = filteredItems[next]
     }
 
     /// Pastes the selected history on double-click / Enter.
     /// Same behavior as FooterBar.paste(rich:): writes to pasteboard, hides this app, and restores the previous app.
     /// Closes the main window after pasting (direct paste via click / Enter only).
-    private func paste(entity: ClipboardEntity) {
-        selectedEntity = entity
-        onPaste(entity)
-        NSApp.keyWindow?.close()
+    private func paste(entity: ClipboardItem) {
+        selectedItem = entity
+        if onPaste(entity) {
+            NSApp.keyWindow?.close()
+        }
     }
 
     /// Deletes the currently selected entry after a confirmation dialog.
     /// After deletion, selection moves to the next entry (or the previous one if the
     /// deleted entry was last), so repeated Delete presses keep trimming the list.
     private func deleteSelected() {
-        guard selectedEntity != nil else { return }
+        guard selectedItem != nil else { return }
         showDeleteConfirmation = true
     }
 
@@ -305,11 +304,11 @@ struct HistoryListPane: View {
     /// can see at a glance that the preview is abbreviated.
     private var deleteAlertMessage: String {
         var lines: [String] = ["This action cannot be undone.", "Contents:"]
-        if let entity = selectedEntity {
+        if let entity = selectedItem {
             if entity.isImage {
                 lines.append("(image)")
             } else {
-                let preview = entity.textPreview ?? entity.text ?? ""
+                let preview = entity.textPreview ?? ""
                 let isTruncated = preview.count > 100
                 let head = String(preview.prefix(100))
                 lines.append("\(head)\(isTruncated ? "…" : "")")
@@ -342,7 +341,7 @@ struct HistoryListPane: View {
                 // across the app (main search field, Settings, Macro Edit sheet,
                 // TextEdit, etc.) regardless of which window owns it.
                 if Self.isEditingText() { return false }
-                guard selectedEntity != nil else { return false }
+                guard selectedItem != nil else { return false }
                 deleteSelected()
                 return true
             }
@@ -367,17 +366,16 @@ struct HistoryListPane: View {
     }
 
     private func confirmDelete() {
-        guard let entity = selectedEntity else { return }
-        let nextSelection: ClipboardEntity? = {
+        guard let entity = selectedItem else { return }
+        let nextSelection: ClipboardItem? = {
             guard let idx = indexByID[entity.id] else { return nil }
             if idx + 1 < filteredItems.count {
                 return filteredItems[idx + 1]
             }
             return idx > 0 ? filteredItems[idx - 1] : nil
         }()
-        modelContext.delete(entity)
-        PersistenceController.shared?.saveContext(modelContext, purpose: "HistoryListPane.deleteSelected")
-        selectedEntity = nextSelection
+        viewModel.delete(id: entity.id)
+        selectedItem = nextSelection
     }
 
 }

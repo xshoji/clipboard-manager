@@ -3,8 +3,9 @@ import AppKit
 
 struct FooterBar: View {
     @Environment(AppSettings.self) private var settings
-    let selected: Binding<ClipboardEntity?>
-    let onEdit: (ClipboardEntity) -> Void
+    let selected: Binding<ClipboardItem?>
+    let viewModel: HistoryViewModel
+    let onEdit: (ClipboardItem) -> Void
     let onClearAll: () -> Void
     @State private var showInfo: String?
 
@@ -86,34 +87,27 @@ struct FooterBar: View {
         // behavior: (b)). The standard (rich) path still pastes the image as PNG.
         if !rich && entity.isImage {
             Task { @MainActor in
-                await OcrPasteService.run(entity: entity, settings: settings)
+                await viewModel.runOcr(item: entity)
             }
             return
         }
         // Register a suppression range BEFORE the write so the utility-queue poll cannot
         // race with the pasteboard write and save our own write as a history item (review #6).
-        ClipboardMonitor.shared?.performSuppressedPasteboardWrite { pb in
-            entity.writeToPasteboard(pb, rich: rich)
-        }
-        AppActivator.shared.activatePreviousAppAndPasteSynthetically(
-            needsSynthetic: settings.needsAccessibilityForSyntheticPaste
-        )
+        viewModel.pasteStandard(item: entity, rich: rich)
     }
 
     private func justCopy() {
         guard let entity = selected.wrappedValue else { return }
         // Register a suppression range BEFORE the write (review #6 race note).
-        ClipboardMonitor.shared?.performSuppressedPasteboardWrite { pb in
-            entity.writeToPasteboard(pb)
-        }
+        viewModel.pasteStandard(item: entity, rich: true, activate: false)
     }
 
     private func runMacro(_ macro: MacroScript) {
         guard let entity = selected.wrappedValue else { return }
-        // remaining-features #6: on failure MacroPasteService restores the original content to the pasteboard and returns to the previous app.
+        // On failure PasteCoordinator restores the original content according to settings.
         // MacroRunner runs on a background queue, so the main thread is not blocked (review #4).
         Task { @MainActor in
-            _ = await MacroPasteService.run(macro: macro, entity: entity, settings: settings)
+            _ = await viewModel.runMacro(macro: macro, item: entity)
         }
     }
 
@@ -122,7 +116,7 @@ struct FooterBar: View {
             return
         }
         if entity.isImage {
-            PreviewImageEditor.shared.editImage(entity: entity)
+            PreviewImageEditor.shared.editImage(item: entity)
         } else {
             onEdit(entity)
         }
@@ -135,13 +129,13 @@ struct FooterBar: View {
         NotificationCenter.default.post(name: .deleteSelectedRequested, object: nil)
     }
 
-    private func describe(_ entity: ClipboardEntity) -> String {
+    private func describe(_ entity: ClipboardItem) -> String {
         var s = "Kind: \(entity.kind)\n"
         s += "Created: \(entity.createdAt)\n"
         if let b = entity.sourceBundleID { s += "Source: \(b)\n" }
         if let h = entity.contentHash { s += "Hash: \(h)\n" }
         if let count = entity.textCharacterCount { s += "Length: \(count) chars\n" }
-        if let d = entity.imageData { s += "Image size: \(d.count) bytes\n" }
+        if entity.isImage, let count = viewModel.imageByteCount(id: entity.id) { s += "Image size: \(count) bytes\n" }
         return s
     }
 }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct HistoryRowView: View {
-    let entity: ClipboardEntity
+    let entity: ClipboardItem
     let selected: Bool
     private let title: String
     private let subtitle: String
@@ -9,12 +9,12 @@ struct HistoryRowView: View {
     private static let titleCharLimit = 200
     private static let subtitleCharLimit = 200
 
-    init(entity: ClipboardEntity, selected: Bool) {
+    init(entity: ClipboardItem, selected: Bool) {
         self.entity = entity
         self.selected = selected
         if entity.isImage {
             title = "Image\(entity.sourceBundleID.map { "  via \($0)" } ?? "")"
-            subtitle = Self.formatBytes(entity.imageData?.count ?? 0)
+            subtitle = "Image"
         } else {
             let preview = entity.displayTextPreview
             let lines = preview.split(separator: "\n", omittingEmptySubsequences: false)

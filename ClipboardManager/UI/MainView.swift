@@ -1,25 +1,25 @@
 import SwiftUI
-import SwiftData
 
 struct MainView: View {
     @Environment(AppSettings.self) private var settings
-    @Environment(\.modelContext) private var modelContext
-    @State private var selectedEntity: ClipboardEntity? = nil
+    @Bindable var viewModel: HistoryViewModel
     @State private var query: String = ""
     let focusSearch: Bool
     let onClearHistory: () -> Void
     let onShowSettings: () -> Void
-    @State private var editingEntity: ClipboardEntity?
+    @State private var editingItem: ClipboardItem?
     @State private var sidebarVisible: Bool
    @State private var macroPickerPresented: Bool = false
     @State private var isOcrInProgress: Bool = false
 
     init(
         focusSearch: Bool,
+        viewModel: HistoryViewModel,
         onClearHistory: @escaping () -> Void,
         onShowSettings: @escaping () -> Void
     ) {
         self.focusSearch = focusSearch
+        self.viewModel = viewModel
         self.onClearHistory = onClearHistory
         self.onShowSettings = onShowSettings
         _sidebarVisible = State(initialValue: AppSettings.shared.isSidebarVisible)
@@ -32,8 +32,9 @@ struct MainView: View {
             content
             Divider().opacity(0.2)
             FooterBar(
-                selected: $selectedEntity,
-                onEdit: { entity in editingEntity = entity },
+                selected: $viewModel.selectedItem,
+                viewModel: viewModel,
+                onEdit: { item in editingItem = item },
                 onClearAll: onClearHistory
             )
         }
@@ -67,11 +68,8 @@ struct MainView: View {
             }
         }
         .animation(.easeInOut(duration: 0.15), value: isOcrInProgress)
-        .sheet(item: $editingEntity) { entity in
-            TextEditView(original: entity)
-        }
-        .onChange(of: selectedEntity?.id) { _, id in
-            AppState.shared.selectedEntityID = id
+        .sheet(item: $editingItem) { item in
+            TextEditView(original: item, viewModel: viewModel)
         }
         .onReceive(NotificationCenter.default.publisher(for: .historyWindowDidClose)) { _ in
             // The history window is being closed. Reset the in-window state now so
@@ -82,25 +80,22 @@ struct MainView: View {
             // The selection itself is moved back to the latest entry on reopen
             // via `.resetSelectionToTop` (posted by `AppDelegate.showMainWindow`).
             query = ""
-            selectedEntity = nil
-        }
-        .onAppear {
-            AppState.shared.selectedEntityID = selectedEntity?.id
+            viewModel.select(nil)
         }
         .onReceive(NotificationCenter.default.publisher(for: .editActionTriggered)) { note in
             // Triggered by the Edit action hotkey ( window-scoped ). Mirrors `FooterBar.editSelected` behavior.
-            guard let entity = note.object as? ClipboardEntity else { return }
-            if entity.isImage {
-                PreviewImageEditor.shared.editImage(entity: entity)
+            guard let item = note.object as? ClipboardItem else { return }
+            if item.isImage {
+                PreviewImageEditor.shared.editImage(item: item)
             } else {
-                editingEntity = entity
+                editingItem = item
             }
         }
        .onReceive(NotificationCenter.default.publisher(for: .macroPickerTriggered)) { _ in
            // Cmd+M (default) while the history window is visible. Toggle so Cmd+M both
            // opens and closes the overlay. Beep if no entity is selected (AppDelegate
            // already guards this, but double-check here for safety).
-           guard selectedEntity != nil else {
+           guard viewModel.selectedItem != nil else {
                NSSound.beep()
                return
            }
@@ -113,26 +108,19 @@ struct MainView: View {
        }
     }
 
-    private func pasteStandard(entity: ClipboardEntity, rich: Bool) {
-        // Register a suppression range BEFORE the write so the utility-queue poll cannot
-        // race with the pasteboard write and save our own write as a history item (review #6).
-        ClipboardMonitor.shared?.performSuppressedPasteboardWrite { pb in
-            entity.writeToPasteboard(pb, rich: rich)
-        }
-        AppActivator.shared.activatePreviousAppAndPasteSynthetically(
-            needsSynthetic: settings.needsAccessibilityForSyntheticPaste
-        )
+    private func pasteStandard(item: ClipboardItem, rich: Bool) -> Bool {
+        viewModel.pasteStandard(item: item, rich: rich)
     }
 
    /// Runs the given Macro against the currently selected entity (used by the
    /// Macro Picker overlay's Enter handler). Mirrors `FooterBar.runMacro` and
    /// `AppDelegate.runMacroFromHotkey`: Macro execution is offloaded to a
    /// background Task so the main thread is not blocked (review #4), and
-   /// `MacroPasteService` handles success / failure fallback.
+   /// `PasteCoordinator` handles success / failure fallback.
    private func runMacro(_ macro: MacroScript) {
-       guard let entity = selectedEntity else { return }
+       guard let item = viewModel.selectedItem else { return }
        Task { @MainActor in
-           _ = await MacroPasteService.run(macro: macro, entity: entity, settings: settings)
+           _ = await viewModel.runMacro(macro: macro, item: item)
        }
    }
 
@@ -143,17 +131,18 @@ struct MainView: View {
                 if sidebarVisible {
                     HistoryListPane(
                         query: $query,
-                        selectedEntity: $selectedEntity,
-                        onPaste: { entity in pasteStandard(entity: entity, rich: true) }
+                        selectedItem: $viewModel.selectedItem,
+                        viewModel: viewModel,
+                        onPaste: { item in pasteStandard(item: item, rich: true) }
                     )
                     .frame(maxWidth: .infinity)
                     .background(Color.appBackground.opacity(0.6))
                 }
-                PreviewPane(entity: selectedEntity, wrapMode: settings.previewWrapMode)
+                PreviewPane(item: viewModel.selectedItem, viewModel: viewModel, wrapMode: settings.previewWrapMode)
                 .frame(maxWidth: .infinity)
             }
         } else {
-            PreviewPane(entity: selectedEntity, wrapMode: settings.previewWrapMode)
+            PreviewPane(item: viewModel.selectedItem, viewModel: viewModel, wrapMode: settings.previewWrapMode)
         }
     }
 }

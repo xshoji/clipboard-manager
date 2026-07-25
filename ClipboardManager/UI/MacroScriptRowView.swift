@@ -6,6 +6,7 @@ struct MacroScriptRowView: View {
     let onUpdate: (MacroScript) -> Void
     let onDirtyChange: ((UUID, Bool) -> Void)?
     @Environment(AppSettings.self) private var settings
+    @Environment(SettingsViewModel.self) private var viewModel
     @State private var name: String
     @State private var sourceType: String
     @State private var path: String
@@ -25,7 +26,7 @@ struct MacroScriptRowView: View {
     /// `true` when the in-flight `apply()` was triggered by a
     /// `.saveAllUnsavedMacros` broadcast (window-close "Save all"). Set before
     /// `apply()` runs and consumed by every settle path (saved, user-cancelled,
-    /// validation error) to report completion back to AppState exactly once.
+    /// validation error) to report completion back to the settings view model exactly once.
     @State private var saveBroadcastInFlight: Bool = false
 
     // Shell interpreter presets offered in inline mode. Inline scripts are written to a
@@ -174,7 +175,7 @@ struct MacroScriptRowView: View {
                     if hasContentChanges {
                         // Mark this broadcast as the originator so that any
                         // settle path (saved, user-cancelled, validation-error)
-                        // reports back to AppState exactly once.
+                        // reports back to the settings view model exactly once.
                         saveBroadcastInFlight = true
                         apply()
                     }
@@ -336,13 +337,13 @@ struct MacroScriptRowView: View {
         reportSaveSettlementIfNeeded()
     }
 
-    /// Reports one settle to `AppState` when a `.saveAllUnsavedMacros`
+    /// Reports one settle to the settings view model when a `.saveAllUnsavedMacros`
     /// broadcast is in flight, then clears the flag so a subsequent manual
     /// Save does not double-count.
     private func reportSaveSettlementIfNeeded() {
         guard saveBroadcastInFlight else { return }
         saveBroadcastInFlight = false
-        AppState.shared.recordMacroSaveSettlement()
+        viewModel.recordSaveSettlement()
     }
 
     private func saveShortcut(keyCode: Int, modifiers: Int) {

@@ -1,16 +1,16 @@
 import SwiftUI
-import SwiftData
 import AppKit
 
 struct TextEditView: View {
-    let original: ClipboardEntity
+    let original: ClipboardItem
+    let viewModel: HistoryViewModel
     @State private var draft: String
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var ctx
 
-    init(original: ClipboardEntity) {
+    init(original: ClipboardItem, viewModel: HistoryViewModel) {
         self.original = original
-        _draft = State(initialValue: original.text ?? "")
+        self.viewModel = viewModel
+        _draft = State(initialValue: "")
     }
 
     var body: some View {
@@ -29,21 +29,13 @@ struct TextEditView: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Save as new") {
-                    let newEntity = ClipboardEntity(
-                        kind: "text",
-                        text: draft,
-                        richText: nil,
-                        contentHash: HashUtil.sha256Hex(of: Data(draft.utf8))
-                    )
-                    ctx.insert(newEntity)
-                    PersistenceController.shared?.saveContext(ctx, purpose: "TextEditView.saveAsNew")
-                    PersistenceController.shared?.scheduleEnforceWithDebounce()
-                    dismiss()
+                    if viewModel.saveText(draft) { dismiss() }
                 }
                 .keyboardShortcut(.defaultAction)
             }
             .padding()
         }
         .frame(minWidth: 480, minHeight: 360)
+        .onAppear { draft = viewModel.fullText(id: original.id) ?? "" }
     }
 }

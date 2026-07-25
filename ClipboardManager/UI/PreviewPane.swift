@@ -1,12 +1,14 @@
+import AppKit
 import SwiftUI
 
 struct PreviewPane: View {
-    @Environment(\.modelContext) private var ctx
-    let entity: ClipboardEntity?
+    let item: ClipboardItem?
+    let viewModel: HistoryViewModel
     let wrapMode: String
 
     @State private var isExpanded: Bool = false
     @State private var fullText: String? = nil
+    @State private var previewImage: NSImage? = nil
 
     private static let previewCharLimit = 2_000
 
@@ -19,7 +21,7 @@ struct PreviewPane: View {
 
     var body: some View {
         Group {
-            if let entity {
+            if let entity = item {
                 VStack(alignment: .leading, spacing: 4) {
                     content(entity)
                     Divider().opacity(0.2)
@@ -38,19 +40,35 @@ struct PreviewPane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.appBackground)
-        .onChange(of: entity?.id) { _, _ in
+        .onChange(of: item?.id) { _, _ in
             isExpanded = false
             fullText = nil
+        }
+        .task(id: item?.id) {
+            previewImage = nil
+            guard let item, item.isImage,
+                  let data = viewModel.imageData(id: item.id) else { return }
+            previewImage = ThumbnailImageCache.image(
+                forData: data,
+                representation: .full,
+                contentHash: item.contentHash
+            )
         }
     }
 
     @ViewBuilder
-    private func content(_ entity: ClipboardEntity) -> some View {
-        if entity.isImage, let data = entity.imageData, let img = ThumbnailImageCache.image(forData: data, representation: .full, contentHash: entity.contentHash) {
-            Image(nsImage: img)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private func content(_ entity: ClipboardItem) -> some View {
+        if entity.isImage {
+            if let previewImage {
+                Image(nsImage: previewImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Text("Image preview unavailable.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         } else {
             ScrollView(scrollAxes) {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -87,7 +105,7 @@ struct PreviewPane: View {
         }
     }
 
-    private func displayedText(_ entity: ClipboardEntity) -> String {
+    private func displayedText(_ entity: ClipboardItem) -> String {
         if isExpanded, let full = fullText { return full }
         return Self.clampPreview(entity.displayTextPreview)
     }
@@ -97,9 +115,9 @@ struct PreviewPane: View {
         return String(s.prefix(previewCharLimit)) + "…"
     }
 
-    private func expandFullText(_ entity: ClipboardEntity) {
+    private func expandFullText(_ entity: ClipboardItem) {
         guard !isExpanded else { return }
-        fullText = entity.text
+        fullText = viewModel.fullText(id: entity.id)
         isExpanded = true
     }
 
@@ -108,7 +126,7 @@ struct PreviewPane: View {
         fullText = nil
     }
 
-    private func footer(_ entity: ClipboardEntity) -> some View {
+    private func footer(_ entity: ClipboardItem) -> some View {
         HStack {
             Text(entity.kind.uppercased())
                 .font(.caption)
