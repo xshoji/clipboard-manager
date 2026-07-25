@@ -10,7 +10,7 @@
 | Minimum OS | **macOS 14 (Sonoma) or later** | `@Observable` / SwiftData require macOS 14+ APIs. macOS 13 (Ventura) is dropped |
 | UI | SwiftUI | Declarative, maintainable, standard for macOS |
 | State management | `@Observable` + `@Environment` | Lightweight approach without Combine (macOS 14+ macro API) |
-| Persistence | **SwiftData** (`@Model`, `ModelContainer`, `ModelContext`) | Declarative with strong SwiftUI integration. `@Query` for virtual scrolling + paging. Roughly half the code of Core Data |
+| Persistence | **SwiftData** (`@Model`, `ModelContainer`, `ModelContext`) | Declarative persistence hidden behind `ClipboardRepository` |
 | Settings storage | `UserDefaults` | KVS is enough, lightweight |
 | Global hotkey | Carbon `RegisterEventHotKey` | Bridged from Swift. Works even when app is not running |
 | Clipboard monitoring | `NSPasteboard.changeCount` polling | Reliable, 0.25s interval |
@@ -21,15 +21,27 @@
 > **Background on technology choices**:
 > - Initially considered macOS 13 compatibility + Core Data, but `@Observable` and SwiftData are both macOS 14+ APIs, so they could not be combined.
 > - The development environment is macOS 26 (Tahoe)-based, so requiring macOS 14+ does not hinder real-machine verification, so we raised the floor to macOS 14+.
-> - SwiftData requires paging via `@Query` + `FetchDescriptor.fetchLimit` for use cases with 100,000+ history items (see §4.1).
+> - Large history collections are mapped to lightweight DTOs without loading full text, rich text, or image payloads. Paging remains a future optimization for the 100,000-item upper range (see §4.1).
 
 ## 2. Module Structure
+
+The implementation uses six dependency layers (top to bottom): composition root
+(`ClipboardApp`, `AppDelegate`, `AppContainer`), window coordinators, Presentation
+view models, Application Services, Domain values, and Infrastructure adapters.
+`ClipboardRepository` is the only boundary that exposes SwiftData history to the
+rest of the app, mapping records to image-payload-free `ClipboardItem` values.
+`PasteCoordinator` owns standard, Macro, and OCR pasteboard writes. Views observe
+`HistoryViewModel` repository refreshes rather than SwiftData `@Query`.
 
 ```
 ClipboardManager/
 ├── App/
 │   ├── ClipboardApp.swift            # @main, AppDelegate
+│   ├── AppContainer.swift            # Manual dependency composition
+│   ├── Coordinators/                  # App/main/settings window coordination
 │   └── Info.plist                     # LSUIElement=YES
+├── Presentation/                      # HistoryViewModel, SettingsViewModel
+├── ApplicationServices/               # ClipboardRepository, PasteCoordinator
 ├── UI/                                # SwiftUI views
 │   ├── MainView.swift                # 2-pane layout
 │   ├── HeaderBar.swift                # Header controls
@@ -44,6 +56,7 @@ ClipboardManager/
 │   └── MenuBarView.swift              # Menu bar resident UI (NSStatusItem)
 ├── Domain/                            # Models
 │   ├── ClipboardEntity.swift         # SwiftData @Model
+│   ├── ClipboardItem.swift           # UI DTO (no full image payload)
 │   ├── MacroScript.swift             # Macro script settings model
 │   ├── AppSettings.swift            # UserDefaults wrapper
 │   └── DedupCache.swift              # [deprecated] Recent hash cache for dedup (unused; see §4.1)
@@ -64,8 +77,9 @@ ClipboardManager/
 
 ### Layer Responsibilities
 
-- **App**: Entry point, `AppDelegate`, `Info.plist`.
-- **UI**: SwiftUI views. Reference Domain and cause side effects via Infrastructure interfaces. Layout follows `docs/design-ui.md`.
+- **App / Coordinators**: Composition, lifecycle, and window ownership.
+- **Presentation / UI**: Observable screen state and SwiftUI rendering. UI actions use application services.
+- **Application Services**: Persistence boundary and all paste workflows.
 - **Domain**: Data models and pure rules. Does not know persistence details.
 - **Infrastructure**: Integration with external APIs such as SwiftData, `NSPasteboard`, Carbon, `Process`, `NSWorkspace`, ApplicationServices (Accessibility API).
 

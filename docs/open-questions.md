@@ -2,6 +2,14 @@
 
 > This document lists deferred or undecided items. Do **not** silently implement any of these as settled behavior. Items here require an explicit product decision before being moved to the design docs and implemented.
 
+## Refactoring compatibility defaults (product decisions remain open)
+
+- The refactoring uses a lightweight `ClipboardItem` and lazily fetches full payloads through `ClipboardRepository`.
+- `AppSettingsStore` remains a typealias of the existing store until a concrete split is approved.
+- OCR progress timing, silent standard-paste failures, synthetic-paste opt-in, and the existing Macro failure fallbacks are preserved.
+- Presentation state formerly held by `AppState` is currently owned by `HistoryViewModel` and `SettingsViewModel`.
+- **Status**: Open. These are compatibility-preserving implementation defaults, not settled product or architecture decisions.
+
 ## 1. Paste Behavior
 
 ### 1.1 Synthetic `Cmd+V` option
@@ -104,4 +112,3 @@
 - **Question**: `design-implementation.md §5.1-1` mandates "after confirmation, save fingerprint" for file-path macros. For inline macros the fingerprint is the SHA256 of the script body itself, so capturing the fingerprint before the confirmation dialog would make any subsequent body change a fingerprint mismatch — defeating tamper detection (a body pasted in is always "clean" at the registration moment). Should the confirmation step be treated as the trust anchor (fingerprint captured only after the user confirms), or should inline scripts follow a separate model (e.g., no fingerprint, gated only by confirmation)?
 - **Default (current)**: Inline macros capture the fingerprint after the user confirms the registration/change dialog, matching the file-path flow.
 - **Status**: Open. Needs an explicit design-doc update recording whether inline fingerprints follow the file-path semantics or are handled differently. The current implementation (#2 review fix) treats the confirmation as the trust anchor; revisit before v1 if a stricter model is desired.
-
