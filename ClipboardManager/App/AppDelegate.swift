@@ -1,19 +1,17 @@
 import AppKit
 import SwiftUI
-import SwiftData
 import os
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let logger = Logger(subsystem: "com.xshoji.ClipboardManager", category: "AppDelegate")
 
-    let settings: AppSettings
-    let persistence: PersistenceController
-    let monitor: ClipboardMonitor
-    let hotkeyManager: HotkeyManager
-    let menuBarController: MenuBarController
-    private var mainWindowController: MainWindowController?
-    private var settingsWindowController: NSWindowController?
+    let container: AppContainer
+    var settings: AppSettings { container.settings }
+    var monitor: ClipboardMonitor { container.monitor }
+    var hotkeyManager: HotkeyManager { container.hotkeyManager }
+    var menuBarController: MenuBarController { container.menuBarController }
+    private var mainWindowController: MainWindowController? { container.coordinator.mainWindow.windowController }
 
     /// Window-scoped action hotkey IDs ( design: edit / paste plain / etc., effective only while the history window is visible ).
     /// Stable UInt32 ids passed straight to `RegisterEventHotKey`. Must not collide with `mainRegistryID` ( 0xABCD_0001 ) or macro eventIDs ( 0xABCD_1000+ ).
@@ -24,24 +22,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     override init() {
-        self.settings = AppSettings.shared
-        self.persistence = PersistenceController(settings: settings)
-        self.monitor = ClipboardMonitor(
-            persistence: persistence,
-            settings: settings
-        )
-        self.hotkeyManager = HotkeyManager(settings: settings)
-        self.menuBarController = MenuBarController(settings: settings)
+        self.container = AppContainer()
         super.init()
+        container.coordinator.mainWindow.onInstallHotkeys = { [weak self] in self?.installWindowScopedHotkeys() }
+        container.coordinator.mainWindow.onUninstallHotkeys = { [weak self] in self?.uninstallWindowScopedHotkeys() }
+        container.coordinator.mainWindow.onClearHistory = { [weak self] in self?.confirmClearHistory() }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
         AppActivator.shared.startObservingActivatedApplications()
-        PersistenceController.shared = persistence
         ClipboardMonitor.shared = monitor
-        persistence.startObservingSettings()
+        PreviewImageEditor.shared.configure(repository: container.repository)
+        container.repository.start()
         monitor.start()
         NotificationCenter.default.addObserver(
             self,
@@ -50,15 +44,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
         hotkeyManager.register { [weak self] in
-            self?.showMainWindow(focusSearch: true)
+            self?.container.coordinator.showMainWindow(focusSearch: true)
         }
         // Per-Macro and per-action hotkeys are window-scoped: registered when the history window is shown,
         // and unregistered when it is hidden ( design: only effective while ClipboardManager's history UI is visible ).
         startObservingMacroScriptsChanges()
         startObservingActionHotkeysChanges()
-        menuBarController.onShow = { [weak self] in self?.showMainWindow() }
-        menuBarController.onSearch = { [weak self] in self?.showMainWindow(focusSearch: true) }
-        menuBarController.onSettings = { [weak self] in self?.showSettings() }
+        menuBarController.onShow = { [weak self] in self?.container.coordinator.showMainWindow(focusSearch: false) }
+        menuBarController.onSearch = { [weak self] in self?.container.coordinator.showMainWindow(focusSearch: true) }
+        menuBarController.onSettings = { [weak self] in self?.container.coordinator.showSettings() }
         menuBarController.onClearHistory = { [weak self] in self?.confirmClearHistory() }
         menuBarController.onQuit = { NSApp.terminate(nil) }
         menuBarController.install()
@@ -106,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PreviewImageEditor.shared.teardownAllSessions()
         hotkeyManager.unregister()
         AppActivator.shared.stopObservingActivatedApplications()
-        persistence.flushOnTerminate()
+        container.repository.flushOnTerminate()
     }
 
     @objc private func mainHotkeyChanged() {
@@ -227,30 +221,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// If no ClipboardEntity is selected, only beeps and does nothing (requirement: behavior when nothing is selected).
+    /// If no history item is selected, only beeps and does nothing.
     private func runMacroFromHotkey(macroID: UInt32, original: MacroScript) {
         // Refetch the latest Macro after settings changes (the captured `original` may be a stale snapshot).
         guard let macro = settings.macroScripts.first(where: { Self.stableMacroID(for: $0.id) == macroID }) else { return }
-        guard let entityID = AppState.shared.selectedEntityID,
-              let entity = fetchEntity(id: entityID) else {
+        guard let item = container.historyViewModel.selectedItem else {
             NSSound.beep()
             return
         }
-        // remaining-features #6: MacroPasteService handles both success (pasteboard write / return to previous app) and failure fallback.
+        // PasteCoordinator handles both success and failure fallback.
         // MacroRunner runs on a background queue, so wrap it in a Task (review #4).
         let macroRef = macro
-        let entityRef = entity
+        let itemRef = item
         Task { @MainActor in
-            _ = await MacroPasteService.run(macro: macroRef, entity: entityRef, settings: self.settings)
+            _ = await self.container.historyViewModel.runMacro(macro: macroRef, item: itemRef)
         }
-    }
-
-    private func fetchEntity(id: UUID) -> ClipboardEntity? {
-        let ctx = persistence.container.mainContext
-        let fd = FetchDescriptor<ClipboardEntity>(
-            predicate: #Predicate<ClipboardEntity> { $0.id == id }
-        )
-        return persistence.fetchEntities(fd, context: ctx, purpose: "fetchEntity")?.first
     }
 
     /// Fires the Edit action on the currently selected entity ( image → Preview.app, text → TextEditView sheet ).
@@ -259,12 +244,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// window is not the key window so they only fire while ClipboardManager is focused.
     private func runEditAction() {
         guard mainWindowController?.window?.isKeyWindow == true else { return }
-        guard let entityID = AppState.shared.selectedEntityID,
-              let entity = fetchEntity(id: entityID) else {
+        guard let item = container.historyViewModel.selectedItem else {
             NSSound.beep()
             return
         }
-        NotificationCenter.default.post(name: .editActionTriggered, object: entity)
+        NotificationCenter.default.post(name: .editActionTriggered, object: item)
     }
 
     /// Fires the Paste Plain action on the currently selected entity ( writes plain-text only to pasteboard and returns to previous app ).
@@ -273,28 +257,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// window is not the key window so they only fire while ClipboardManager is focused.
     private func runPastePlainAction() {
         guard mainWindowController?.window?.isKeyWindow == true else { return }
-        guard let entityID = AppState.shared.selectedEntityID,
-              let entity = fetchEntity(id: entityID) else {
+        guard let item = container.historyViewModel.selectedItem else {
             NSSound.beep()
             return
         }
         // Image entries go through the OCR → paste flow so the user gets the
         // recognized text instead of an image on the pasteboard. Mirrors
         // `FooterBar.paste(rich: false)` for the image case.
-        if entity.isImage {
+        if item.isImage {
             Task { @MainActor in
-                await OcrPasteService.run(entity: entity, settings: self.settings)
+                await self.container.historyViewModel.runOcr(item: item)
             }
             return
         }
         // Register a suppression range BEFORE the write so the utility-queue poll cannot
         // race with the pasteboard write and save our own write as a history item (review #6).
-        ClipboardMonitor.shared?.performSuppressedPasteboardWrite { pb in
-            entity.writeToPasteboard(pb, rich: false)
-        }
-        AppActivator.shared.activatePreviousAppAndPasteSynthetically(
-            needsSynthetic: settings.needsAccessibilityForSyntheticPaste
-        )
+        container.historyViewModel.pasteStandard(item: item, rich: false)
     }
 
     /// Fires the Macro Picker overlay on the currently selected entity.
@@ -305,7 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// window is not the key window so they only fire while ClipboardManager is focused.
     private func runMacroPickerAction() {
         guard mainWindowController?.window?.isKeyWindow == true else { return }
-        guard AppState.shared.selectedEntityID != nil else {
+        guard container.historyViewModel.selectedItem != nil else {
             NSSound.beep()
             return
         }
@@ -348,142 +326,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return (UInt32(bytes.0) << 24) | (UInt32(bytes.1) << 16) | (UInt32(bytes.2) << 8) | UInt32(bytes.3)
     }
 
-    func showMainWindow(focusSearch: Bool = false) {
-        // Including first launch, record the app that was frontmost right before ClipboardManager becomes active,
-        // so it can later be used as the paste target.
-        AppActivator.shared.recordBeforeShowingMainWindow()
-        if mainWindowController == nil {
-            let ctx = persistence.container.mainContext
-            // Utility-style panel (design-ui.md §1): non-fullscreen, non-zoomable, borderless-ish title bar,
-            // closes on blur. Using NSPanel (without .nonactivatingPanel) keeps key-window behavior and
-            // still receives windowDidResignKey when the user clicks elsewhere.
-            let panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 1000, height: 640),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable, .utilityWindow, .fullSizeContentView],
-                backing: .buffered,
-                defer: false
-            )
-            panel.titlebarAppearsTransparent = true
-            panel.titleVisibility = .hidden
-            panel.isMovableByWindowBackground = true
-            panel.isFloatingPanel = true
-            panel.hidesOnDeactivate = false
-            // Non-zoomable: hide the zoom (green) button and disable the zoom action (design-ui.md §1).
-            panel.standardWindowButton(.zoomButton)?.isHidden = true
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            panel.level = settings.isAlwaysOnTop ? .floating : .normal
-            // Place the window according to the user's `windowPositionMode` setting
-            // (design-ui.md §1: near the cursor or at a fixed location by setting).
-            positionWindow(panel)
-            let contentView = MainView(
-                focusSearch: focusSearch,
-                onClearHistory: { [weak self] in self?.confirmClearHistory() },
-                onShowSettings: { [weak self] in self?.showSettings() }
-            )
-                .environment(settings)
-                .modelContext(ctx)
-            panel.contentView = NSHostingView(rootView: contentView)
-            let controller = MainWindowController(window: panel, settings: settings)
-            controller.persistence = persistence
-            controller.appDelegate = self
-            mainWindowController = controller
-        } else {
-            // When re-showing, reposition the window only if the user has not moved it
-            // manually since the last hide. We detect manual move by comparing the
-            // current frame against the last notified frame captured in windowDidMove.
-            // Applies to both `center` and `nearCursor` modes (design-ui.md §1).
-            if let panel = mainWindowController?.window as? NSPanel {
-                let staysAtLastUserOrigin = (mainWindowController?.lastUserFrame?.origin == panel.frame.origin)
-                if staysAtLastUserOrigin || mainWindowController?.lastUserFrame == nil {
-                    positionWindow(panel)
-                }
-            }
-        }
-        mainWindowController?.applyLevel()
-        NSApp.activate(ignoringOtherApps: true)
-        mainWindowController?.showWindow(nil)
-        mainWindowController?.window?.makeKeyAndOrderFront(nil)
-        // Window-scoped hotkeys ( per-Macro + per-action ) are active only while the history window is visible ( design ).
-        installWindowScopedHotkeys()
-        if focusSearch {
-            NotificationCenter.default.post(name: .focusSearchField, object: nil)
-        }
-        NotificationCenter.default.post(name: .resetSelectionToTop, object: nil)
-    }
-
-    /// Positions the given window according to `settings.windowPositionMode`.
-    /// - `"center"`: center of the screen containing the cursor.
-    /// - `"nearCursor"`: near the current mouse location (design-ui.md §1).
-    /// Falls back to centering when the mode is unknown.
-    private func positionWindow(_ window: NSWindow) {
-        if settings.windowPositionMode == "nearCursor" {
-            positionWindowNearCursor(window)
-        } else {
-            positionWindowAtCenter(window)
-        }
-    }
-
-    private func positionWindowAtCenter(_ window: NSWindow) {
-        let cursor = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(cursor) }) ?? NSScreen.main
-        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1000, height: 640)
-        let size = window.frame.size
-        let origin = CGPoint(
-            x: visible.midX - size.width / 2,
-            y: visible.midY - size.height / 2
-        )
-        window.setFrameOrigin(origin)
-    }
-
-    /// Positions the given window near the current mouse location, keeping it fully on the nearest screen.
-    /// Used by `showMainWindow` to satisfy design-ui.md §1 ("Window appears near the cursor").
-    private func positionWindowNearCursor(_ window: NSWindow) {
-        let cursor = NSEvent.mouseLocation
-        let size = window.frame.size
-        let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(cursor) }) ?? NSScreen.main
-        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1000, height: 640)
-
-        var origin = CGPoint(
-            x: cursor.x - size.width / 2,
-            y: cursor.y - size.height / 2
-        )
-        origin.x = max(visible.minX, min(origin.x, visible.maxX - size.width))
-        origin.y = max(visible.minY, min(origin.y, visible.maxY - size.height))
-        window.setFrameOrigin(origin)
-    }
-
-    func showSettings() {
-        // Stay `.accessory` so the Dock icon does not appear while the Settings
-        // (or Macro Edit) window is open. The Settings window is raised to
-        // `.floating+1` below so it stays above the always-on-top history panel.
-        NSApp.activate(ignoringOtherApps: true)
-
-        if settingsWindowController == nil {
-            let contentView = SettingsView()
-                .environment(settings)
-                .modelContext(persistence.container.mainContext)
-            let window = SettingsWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "ClipboardManager Settings"
-            window.isReleasedWhenClosed = false
-            window.center()
-            window.contentViewController = NSHostingController(rootView: contentView)
-            window.level = .floating+1
-            let controller = SettingsWindowController(window: window)
-            controller.onWindowWillClose = { [weak self] in
-                self?.settingsWindowController = nil
-            }
-            settingsWindowController = controller
-        }
-
-        settingsWindowController?.showWindow(nil)
-        settingsWindowController?.window?.makeKeyAndOrderFront(nil)
-    }
-
     func confirmClearHistory() {
         let alert = NSAlert()
         alert.messageText = "Clear all clipboard history?"
@@ -492,7 +334,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
         if alert.runModal() == .alertFirstButtonReturn {
-            persistence.clearAll()
+            container.repository.clearAll()
         }
     }
 }
@@ -500,9 +342,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     var settings: AppSettings
-    var persistence: PersistenceController?
-    /// Weak reference to AppDelegate so NSApp.delegate ( which SwiftUI replaces ) is not needed.
-    weak var appDelegate: AppDelegate?
+    weak var lifecycle: MainWindowLifecycle?
     /// Last window frame the user explicitly positioned (via drag). `nil` until the user moves the window.
     /// Used by `AppDelegate.showMainWindow` to decide whether to reposition near the cursor on re-show.
     private(set) var lastUserFrame: NSRect?
@@ -576,7 +416,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
-        appDelegate?.uninstallWindowScopedHotkeys()
+        lifecycle?.mainWindowUninstallHotkeys()
         if settings.isAlwaysOnTop {
             return
         }
@@ -604,7 +444,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         // If another normal visible window (e.g., settings) is still open, keep the Dock icon (.regular) (review #5).
-        appDelegate?.uninstallWindowScopedHotkeys()
+        lifecycle?.mainWindowUninstallHotkeys()
+        lifecycle?.mainWindowDidClose()
         let closingWindow = notification.object as? NSWindow
         let hasOtherVisible = NSApp.windows.contains { other in
             other !== closingWindow
@@ -644,6 +485,7 @@ final class SettingsWindow: NSWindow {
 
 @MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+    private let viewModel: SettingsViewModel
     /// Observer for `.macroSaveSettleComplete` while a "Save all unsaved Macros"
     /// flow is in progress. Registered on Save and removed either when the
     /// settle completes or in `windowWillClose`. Stored on the main actor (no
@@ -651,7 +493,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var saveSettleObserver: NSObjectProtocol?
     var onWindowWillClose: (() -> Void)?
 
-    override init(window: NSWindow?) {
+    init(window: NSWindow?, viewModel: SettingsViewModel) {
+        self.viewModel = viewModel
         super.init(window: window)
         window?.delegate = self
     }
@@ -664,8 +507,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard !AppState.shared.unsavedMacroIDs.isEmpty else {
-            AppState.shared.settingsWindowShouldCloseAfterSave = false
+        guard !viewModel.unsavedMacroIDs.isEmpty else {
+            viewModel.shouldCloseAfterSave = false
             return true
         }
 
@@ -680,9 +523,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let response = alert.runModal()
         switch response {
         case .alertFirstButtonReturn:
-            AppState.shared.settingsWindowShouldCloseAfterSave = true
-            let pending = AppState.shared.unsavedMacroIDs.count
-            AppState.shared.startMacroSaveCycle(expected: pending)
+            viewModel.shouldCloseAfterSave = true
+            viewModel.startSaveCycle()
             // Observe a single settle-complete event to close the window once
             // every row has either saved or cancelled. Re-registering each
             // time the user picks "Save" avoids a long-lived observer.
@@ -693,19 +535,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 queue: .main
             ) { [weak self] _ in
                 Task { @MainActor in
-                    guard AppState.shared.settingsWindowShouldCloseAfterSave else { return }
+                    guard let self, self.viewModel.shouldCloseAfterSave else { return }
                     // Final convenience close: every row has settled by this
                     // point, so no 50 ms polling is needed.
-                    AppState.shared.settingsWindowShouldCloseAfterSave = false
-                    self?.removeSaveSettleObserver()
-                    self?.close()
+                    self.viewModel.shouldCloseAfterSave = false
+                    self.removeSaveSettleObserver()
+                    self.close()
                 }
             }
             NotificationCenter.default.post(name: .saveAllUnsavedMacros, object: nil)
             return false
         case .alertSecondButtonReturn:
-            AppState.shared.unsavedMacroIDs.removeAll()
-            AppState.shared.settingsWindowShouldCloseAfterSave = false
+            viewModel.unsavedMacroIDs.removeAll()
+            viewModel.shouldCloseAfterSave = false
             return true
         default:
             return false
@@ -738,7 +580,7 @@ extension Notification.Name {
     /// previous search results on screen. Closing (not reopening) is the right
     /// timing because the state is gone by the time the window reappears.
     static let historyWindowDidClose = Notification.Name("historyWindowDidClose")
-    /// Posted by AppDelegate when the Edit action hotkey fires. Object is the selected `ClipboardEntity`.
+    /// Posted when the Edit action hotkey fires. Object is the selected history item.
     /// `MainView` observes this and opens the TextEditView sheet ( so preview-image editing also works via the existing `FooterBar.editSelected` path ).
     static let editActionTriggered = Notification.Name("editActionTriggered")
     /// Posted when the user requests deletion of the selected entry (e.g., FooterBar's More > Delete).
@@ -752,12 +594,12 @@ extension Notification.Name {
     /// Posted by `SettingsWindowController` when the user chooses "Save" on an
     /// unsaved-changes alert so each `MacroScriptRowView` can persist its edits.
     static let saveAllUnsavedMacros = Notification.Name("saveAllUnsavedMacros")
-    /// Posted by `AppState` once every expected Macro row has settled its save
+    /// Posted once every expected Macro row has settled its save
     /// flow (saved or cancelled) after a `.saveAllUnsavedMacros` broadcast.
     /// Observed by `SettingsWindowController` to close the window only after
     /// every row has reported its outcome, instead of polling on a timer.
     static let macroSaveSettleComplete = Notification.Name("macroSaveSettleComplete")
-    /// Posted by `OcrPasteService` when an OCR-driven Paste Plain starts/ends so
+    /// Posted by `PasteCoordinator` when an OCR-driven Paste Plain starts/ends so
     /// `FooterBar` can show/hide its progress indicator. `userInfo["inProgress"]` is Bool.
     static let ocrProgressDidChange = Notification.Name("ocrProgressDidChange")
 }

@@ -7,9 +7,15 @@ struct ClipboardApp: App {
 
     var body: some Scene {
         Settings {
-            SettingsView()
-                .environment(appDelegate.settings)
-                .modelContext(appDelegate.persistence.container.mainContext)
+            EmptyView()
+        }
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    appDelegate.container.coordinator.showSettings()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 }
