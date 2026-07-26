@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct SettingsView: View {
     @Environment(AppSettings.self) private var settings
@@ -67,6 +68,10 @@ struct SettingsView: View {
                             ),
                             onShortcutChange: { keyCode, mods in
                                 saveActionHotkey(kind, keyCode: keyCode, modifiers: mods)
+                            },
+                            resetAction: {
+                                kind.set((kind.defaultKeyCode, kind.defaultModifiers), in: settings)
+                                NotificationCenter.default.post(name: .actionHotkeysChanged, object: nil)
                             }
                         )
                     }
@@ -260,6 +265,20 @@ struct SettingsView: View {
             case .pastePlain:  return \.pastePlainHotkeyModifiers
             case .macroPicker: return \.macroPickerHotkeyModifiers
             }
+        }
+
+        /// デフォルトのキーコード（AppSettings の @Setting default と一致）。
+        var defaultKeyCode: Int {
+            switch self {
+            case .edit:        return 14   // E
+            case .pastePlain:  return 35   // P
+            case .macroPicker: return 46   // M
+            }
+        }
+
+        /// デフォルトの修飾キー（すべて Cmd 単体）。
+        var defaultModifiers: Int {
+            Int(NSEvent.ModifierFlags.command.rawValue)
         }
 
         func get(in settings: AppSettings) -> (Int, Int) {

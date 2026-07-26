@@ -56,17 +56,22 @@ struct MacroHotkeyRecorderView: View {
     let keyCode: Binding<Int>
     let modifiers: Binding<Int>
     let onShortcutChange: (Int, Int) -> Void
+    /// Optional reset handler. When non-nil, a "Reset" button is shown.
+    /// Clicking it invokes this closure; the view then refreshes its display.
+    let resetAction: (() -> Void)?
     @State private var recording = false
     @State private var display: String = ""
 
     init(
         keyCode: Binding<Int>,
         modifiers: Binding<Int>,
-        onShortcutChange: @escaping (Int, Int) -> Void = { _, _ in }
+        onShortcutChange: @escaping (Int, Int) -> Void = { _, _ in },
+        resetAction: (() -> Void)? = nil
     ) {
         self.keyCode = keyCode
         self.modifiers = modifiers
         self.onShortcutChange = onShortcutChange
+        self.resetAction = resetAction
     }
 
     var body: some View {
@@ -83,6 +88,12 @@ struct MacroHotkeyRecorderView: View {
                     modifiers.wrappedValue = 0
                     refresh()
                     onShortcutChange(0, 0)
+                }
+            }
+            if let resetAction = resetAction {
+                Button("Reset") {
+                    resetAction()
+                    refresh()
                 }
             }
         }
@@ -133,5 +144,17 @@ private final class CaptureKeyView: NSView {
     override func keyDown(with event: NSEvent) {
         let mods = event.modifierFlags.intersection([.command, .control, .option, .shift]).rawValue
         onCapture?(Int(event.keyCode), Int(mods))
+    }
+
+    /// `performKeyEquivalent` は `keyDown` より先に呼ばれ、Cmd+M（最小化）等の
+    /// メニューショートカットはここでシステムに消費されてしまう。
+    /// 録画中はすべてのキー equivalent をここで捕まえて消費することで、
+    /// Cmd+M 等がシステムショートカットとして発動するのを防ぐ。
+    /// `CaptureKeyView` は録画中のみ view hierarchy に存在する（overlay 内）ので、
+    /// 常に `true` を返して安全に消費できる。
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let mods = event.modifierFlags.intersection([.command, .control, .option, .shift]).rawValue
+        onCapture?(Int(event.keyCode), Int(mods))
+        return true
     }
 }
