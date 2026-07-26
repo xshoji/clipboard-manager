@@ -146,12 +146,12 @@ private final class CaptureKeyView: NSView {
         onCapture?(Int(event.keyCode), Int(mods))
     }
 
-    /// `performKeyEquivalent` は `keyDown` より先に呼ばれ、Cmd+M（最小化）等の
-    /// メニューショートカットはここでシステムに消費されてしまう。
-    /// 録画中はすべてのキー equivalent をここで捕まえて消費することで、
-    /// Cmd+M 等がシステムショートカットとして発動するのを防ぐ。
-    /// `CaptureKeyView` は録画中のみ view hierarchy に存在する（overlay 内）ので、
-    /// 常に `true` を返して安全に消費できる。
+    /// `performKeyEquivalent` is called before `keyDown`, and menu shortcuts
+    /// such as Cmd+M (minimize) are consumed by the system here.
+    /// While recording, we intercept all key equivalents here and consume
+    /// them so that Cmd+M etc. do not fire as system shortcuts.
+    /// `CaptureKeyView` only exists in the view hierarchy while recording
+    /// (inside the overlay), so returning `true` is always safe.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let mods = event.modifierFlags.intersection([.command, .control, .option, .shift]).rawValue
         onCapture?(Int(event.keyCode), Int(mods))

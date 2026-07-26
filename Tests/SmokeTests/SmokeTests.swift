@@ -1,41 +1,47 @@
 import XCTest
 import AppKit
 
-/// 薄い起動スモークテスト（実アプリの設定を汚さないフロー付き）。
+/// Lightweight launch smoke test with settings backup/restore.
 ///
-/// テスト実行フロー:
-/// 1. 稼働中の本番アプリを終了（ホットキー二重登録・ペーストボード二重監視を防ぐ）
-/// 2. `defaults export` で UserDefaults を退避
-///    - `com.xshoji.ClipboardManager`（.app バンドル = 本番アプリのドメイン）
-///    - `ClipboardManager`（SPM bare 実行ファイル = テストバイナリのドメイン）
-/// 3. `defaults write` でテストバイナリのホットキー修飾キーを cmd+ctrl+opt+shift に上書き
-///    — 本番デフォルトの cmd+ctrl と絶対衝突しない
-/// 4. `swift build` でビルドした実行ファイルを起動し、数秒間クラッシュせず生存することを確認
-/// 5. テスト用プロセスを SIGTERM → タイムアウトで SIGKILL で確実に終了
-/// 6. `defaults import` で退避した設定を復元
+/// Test flow:
+/// 1. Terminate any running production app (prevents hotkey double-registration
+///    and pasteboard double-monitoring).
+/// 2. Export UserDefaults to temporary plists via `defaults export`:
+///    - `com.xshoji.ClipboardManager` (.app bundle = production app domain)
+///    - `ClipboardManager` (SPM bare executable = test binary domain)
+/// 3. Overwrite the test binary's hotkey modifiers to cmd+ctrl+opt+shift
+///    via `defaults write` — guaranteed not to collide with the production
+///    default of cmd+ctrl.
+/// 4. Launch the `swift build` binary and verify it survives for several
+///    seconds without crashing.
+/// 5. Terminate the test process via SIGTERM, falling back to SIGKILL on
+///    timeout.
+/// 6. Restore the backed-up settings via `defaults import`.
 ///
-/// 注意:
-/// - SPM bare 実行ファイルは Bundle Identifier を持たないため、UserDefaults ドメインとして
-///   実行ファイル名 `ClipboardManager` を使う（本番 .app の `com.xshoji.ClipboardManager` とは別）。
-/// - アプリは実際の `~/Library/Application Support` 配下の SwiftData ストアを開く。
-///   起動中のクリップボード監視で実際の pasteboard 内容が履歴に保存される副作用がある
-///   （クリップボード履歴の汚染は許容する）。
-/// - 設定（UserDefaults）はテスト前後で確実に復元される。
-/// - 本番アプリが起動中の場合はテスト開始時に強制終了する。
+/// Notes:
+/// - SPM bare executables have no Bundle Identifier, so UserDefaults uses
+///   the executable name `ClipboardManager` as its domain (distinct from the
+///   production .app's `com.xshoji.ClipboardManager`).
+/// - The app opens the real SwiftData store under
+///   `~/Library/Application Support`. Clipboard monitoring during the test
+///   will save real pasteboard contents into history (clipboard history
+///   pollution is accepted).
+/// - Settings (UserDefaults) are reliably restored before and after the test.
+/// - If the production app is running, it is force-terminated at test start.
 @MainActor
 final class SmokeTests: XCTestCase {
-    /// 本番アプリ（.app バンドル）の Bundle Identifier。
+    /// Bundle Identifier of the production app (.app bundle).
     private static let bundleID = "com.xshoji.ClipboardManager"
 
-    /// SPM bare 実行ファイルの UserDefaults ドメイン（実行ファイル名）。
+    /// UserDefaults domain for the SPM bare executable (executable name).
     private static let spmDefaultsDomain = "ClipboardManager"
 
-    /// UserDefaults 退避先の一時 plist パス。
+    /// Temporary plist paths for UserDefaults backup.
     private static let backupPathBundle = NSTemporaryDirectory() + "cm-e2e-settings-bundle.plist"
     private static let backupPathSPM = NSTemporaryDirectory() + "cm-e2e-settings-spm.plist"
 
-    /// テスト用ホットキー修飾キー: cmd+ctrl+opt+shift（4修飾キー）。
-    /// 本番デフォルトの cmd+ctrl と絶対衝突しない組み合わせ。
+    /// Test hotkey modifiers: cmd+ctrl+opt+shift (4 modifiers).
+    /// Guaranteed not to collide with the production default of cmd+ctrl.
     private static let testHotkeyModifiers = Int(
         NSEvent.ModifierFlags.command.rawValue
         | NSEvent.ModifierFlags.control.rawValue
@@ -43,32 +49,32 @@ final class SmokeTests: XCTestCase {
         | NSEvent.ModifierFlags.shift.rawValue
     )
 
-    /// 設定退避が成功したか（restore を1回だけ行うためのフラグ）。
+    /// Whether settings backup succeeded (ensures restore runs only once).
     private static var backupTaken = false
 
-    /// 起動後、この秒数クラッシュせず生存すれば成功とみなす。
+    /// Seconds the app must survive after launch without crashing to pass.
     private let survivalSeconds: TimeInterval = 5
 
-    /// SIGTERM 送信後、この秒数以内に終了しなければ SIGKILL を送る。
+    /// Seconds to wait after SIGTERM before sending SIGKILL.
     private let terminateTimeoutSeconds: TimeInterval = 3
 
     // MARK: - Setup / Teardown
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        // 1. 本番アプリが起動中なら終了させる。
+        // 1. Terminate the production app if it is running.
         Self.terminateRunningApp()
-        // 2. 設定を1回だけ退避する（複数テストケースでも2回目以降は上書きしない）。
+        // 2. Back up settings only once (subsequent test cases do not overwrite).
         if !Self.backupTaken {
             try Self.exportSettings()
             Self.backupTaken = true
         }
-        // 3. テスト用ホットキーを上書き（テストバイナリが読む SPM ドメイン側）。
+        // 3. Overwrite test hotkeys (on the SPM domain the test binary reads).
         try Self.setTestHotkeys()
     }
 
     override class func tearDown() {
-        // 6. 退避した設定を復元（export が成功した場合のみ）。
+        // 6. Restore backed-up settings (only if export succeeded).
         if Self.backupTaken {
             try? Self.restoreSettings()
         }
@@ -86,8 +92,8 @@ final class SmokeTests: XCTestCase {
 
         let app = Process()
         app.executableURL = URL(fileURLWithPath: binaryPath)
-        // 子プロセスの stdout/stderr を /dev/null に逃がし、
-        // パイプの EOF 待ちやログノイズを避ける。
+        // Redirect child process stdout/stderr to /dev/null to avoid
+        // pipe EOF waits and log noise.
         let devnull = FileHandle(forWritingAtPath: "/dev/null")!
         app.standardOutput = devnull
         app.standardError = devnull
@@ -96,24 +102,24 @@ final class SmokeTests: XCTestCase {
         try app.run()
         log("Process.run: done pid=\(app.processIdentifier)")
 
-        // 確実に終了させるため、成功・失敗問わず terminate する。
+        // Always terminate, regardless of success or failure.
         defer {
             Self.forceTerminate(app, timeout: terminateTimeoutSeconds)
         }
 
-        // 起動後しばらく待ち、プロセスが生存していることを確認。
+        // Wait for the survival period and check the process is still alive.
         log("sleep \(survivalSeconds)s start")
         Thread.sleep(forTimeInterval: survivalSeconds)
         log("sleep done, isRunning=\(app.isRunning)")
 
         XCTAssertTrue(
             app.isRunning,
-            "アプリが起動から \(survivalSeconds) 秒以内に終了（クラッシュの可能性）しました。exitCode=\(app.terminationStatus)"
+            "App exited within \(survivalSeconds) seconds (possible crash). exitCode=\(app.terminationStatus)"
         )
         log("testAppLaunchesWithoutCrash: assertion passed ✓")
     }
 
-    /// stderr に無バッファでログを出力する（XCTest は stdout をバッファするため）。
+    /// Writes unbuffered log output to stderr (XCTest buffers stdout).
     private static func log(_ msg: String) {
         let line = "[SmokeTests] \(msg)\n"
         FileHandle.standardError.write(line.data(using: .utf8)!)
@@ -124,7 +130,7 @@ final class SmokeTests: XCTestCase {
 
     // MARK: - Helpers
 
-    /// 稼働中の本番アプリを終了させる。既に終了していれば何もしない。
+    /// Terminates any running production app. No-op if none is running.
     private static func terminateRunningApp() {
         let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
         guard !apps.isEmpty else { return }
@@ -132,28 +138,28 @@ final class SmokeTests: XCTestCase {
         for app in apps {
             app.terminate()
         }
-        // terminate は非同期なので、確実に終了するまで待つ。
+        // terminate() is asynchronous; wait briefly to ensure exit.
         Thread.sleep(forTimeInterval: 1.0)
     }
 
-    /// `defaults export` で現在の UserDefaults を一時 plist に退避する。
-    /// 本番ドメイン（.app）と SPM ドメイン（bare 実行ファイル）の両方を退避する。
+    /// Exports current UserDefaults to temporary plists via `defaults export`.
+    /// Backs up both the production domain (.app) and the SPM domain (bare executable).
     private static func exportSettings() throws {
         try runShell("defaults export \(bundleID) '\(backupPathBundle)'")
-        // SPM ドメインは plist が存在しない可能性がある（export は空 plist で成功する）。
+        // The SPM domain plist may not exist yet (export succeeds with an empty plist).
         try runShell("defaults export \(spmDefaultsDomain) '\(backupPathSPM)'")
         Self.log("Settings exported to temporary plists")
     }
 
-    /// `defaults import` で退避した設定を復元する。
+    /// Restores backed-up settings via `defaults import`.
     private static func restoreSettings() throws {
         try runShell("defaults import \(bundleID) '\(backupPathBundle)'")
         try runShell("defaults import \(spmDefaultsDomain) '\(backupPathSPM)'")
         Self.log("Settings restored from temporary plists")
     }
 
-    /// テストバイナリが読む SPM ドメインの全ホットキー修飾キーを
-    /// テスト用（cmd+ctrl+opt+shift）に上書きする。
+    /// Overwrites all hotkey modifier keys in the SPM domain (read by the test
+    /// binary) to the test value (cmd+ctrl+opt+shift).
     private static func setTestHotkeys() throws {
         let mods = testHotkeyModifiers
         let modifierKeys = [
@@ -168,8 +174,9 @@ final class SmokeTests: XCTestCase {
         Self.log("Test hotkeys written to SPM domain (\(spmDefaultsDomain))")
     }
 
-    /// プロセスを SIGTERM で終了させ、タイムアウト後に SIGKILL でフォールバックする。
-    /// `waitUntilExit()` のみだと NSApplication の terminate 処理が完了しない場合にハングする。
+    /// Terminates the process via SIGTERM, falling back to SIGKILL on timeout.
+    /// Using only `waitUntilExit()` can hang if NSApplication's terminate
+    /// handler does not complete.
     private static func forceTerminate(_ proc: Process, timeout: TimeInterval) {
         guard proc.isRunning else {
             proc.waitUntilExit()
@@ -178,10 +185,10 @@ final class SmokeTests: XCTestCase {
         let pid = proc.processIdentifier
         Self.log("Terminating pid=\(pid) (SIGTERM)")
 
-        // SIGTERM を送る（Process.terminate と同等）。
+        // Send SIGTERM (equivalent to Process.terminate).
         kill(pid, SIGTERM)
 
-        // タイムアウトまで100ms単位でポーリング。
+        // Poll every 100ms until the timeout.
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if !proc.isRunning {
@@ -192,14 +199,14 @@ final class SmokeTests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.1)
         }
 
-        // SIGTERM で終了しない場合は SIGKILL で強制終了。
+        // If SIGTERM did not work, force-kill with SIGKILL.
         Self.log("pid=\(pid) did not exit after \(timeout)s, sending SIGKILL")
         kill(pid, SIGKILL)
         proc.waitUntilExit()
         Self.log("pid=\(pid) killed (code=\(proc.terminationStatus))")
     }
 
-    /// シェルコマンドを実行し、非0終了時はエラーを投げる。
+    /// Runs a shell command; throws on non-zero exit.
     @discardableResult
     private static func runShell(_ command: String) throws -> String {
         let proc = Process()
@@ -222,10 +229,11 @@ final class SmokeTests: XCTestCase {
         return output
     }
 
-    /// `swift build --show-bin-path` でビルド出力ディレクトリを取得し、
-    /// そこにある `ClipboardManager` 実行ファイルの絶対パスを返す。
-    /// `swift test` が既にバイナリをビルド済みなので、ここではビルドしない
-    /// （`swift build` を呼ぶと `.build` ロック待ちでデッドロックする）。
+    /// Returns the absolute path of the `ClipboardManager` executable by
+    /// querying `swift build --show-bin-path`.
+    /// Does NOT run `swift build` here because `swift test` has already
+    /// built the binary (calling `swift build` would deadlock on the
+    /// `.build` directory lock).
     private func buildAndLocateBinary() throws -> String {
         let pathProc = Process()
         pathProc.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
@@ -238,12 +246,12 @@ final class SmokeTests: XCTestCase {
 
         let binDir = String(data: pathData, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        XCTAssertFalse(binDir.isEmpty, "swift build --show-bin-path の出力が空です")
+        XCTAssertFalse(binDir.isEmpty, "swift build --show-bin-path output is empty")
 
         let binaryPath = "\(binDir)/ClipboardManager"
         XCTAssertTrue(
             FileManager.default.isReadableFile(atPath: binaryPath),
-            "実行ファイルが見つかりません: \(binaryPath)"
+            "Executable not found: \(binaryPath)"
         )
         return binaryPath
     }

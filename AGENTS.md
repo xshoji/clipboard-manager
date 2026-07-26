@@ -134,6 +134,11 @@ ClipboardManager/
 - Use existing models, services, colors, and settings before adding equivalents.
 - Keep large image/data work off the UI path.
 
+## Code Comment Language
+
+- All code comments (inline, doc comments, and error messages) must be written in English.
+- This ensures consistency across the codebase and accessibility to all contributors.
+
 ## Output Format
 
 Report: summary; files changed; validation; unresolved decisions.

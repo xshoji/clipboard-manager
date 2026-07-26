@@ -267,7 +267,7 @@ struct SettingsView: View {
             }
         }
 
-        /// デフォルトのキーコード（AppSettings の @Setting default と一致）。
+        /// Default key code (matches @Setting default in AppSettings).
         var defaultKeyCode: Int {
             switch self {
             case .edit:        return 14   // E
@@ -276,7 +276,7 @@ struct SettingsView: View {
             }
         }
 
-        /// デフォルトの修飾キー（すべて Cmd 単体）。
+        /// Default modifier (Cmd only for all actions).
         var defaultModifiers: Int {
             Int(NSEvent.ModifierFlags.command.rawValue)
         }
