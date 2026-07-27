@@ -4,10 +4,6 @@ import os
 
 @MainActor
 final class PersistenceController {
-    /// Shared instance set by AppDelegate at launch.
-    /// Used to centralize limit enforcement triggered by UI edits (TextEditView, PreviewImageEditor).
-    static var shared: PersistenceController?
-
     let container: ModelContainer
     private let settings: AppSettings
     private var enforceDebouncer: DispatchWorkItem?

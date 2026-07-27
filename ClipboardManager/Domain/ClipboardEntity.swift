@@ -1,6 +1,5 @@
 import Foundation
 import SwiftData
-import AppKit
 
 private enum TextPreviewBuilder {
     static let lineLimit = 100
@@ -87,37 +86,5 @@ final class ClipboardEntity {
             return textPreview
         }
         return isText ? "Preview is unavailable for this existing item. Choose Edit to load the full text." : ""
-    }
-
-    /// Writes the entity content to the pasteboard.
-    /// Restores only formats decodable by AppKit as RTF / RTFD, including legacy data.
-    func writeToPasteboard(_ pasteboard: NSPasteboard, rich: Bool = true) {
-        pasteboard.clearContents()
-        if isImage, let imageData {
-            pasteboard.setData(imageData, forType: .png)
-        } else if rich, let richText, let type = richTextPasteboardType(for: richText) {
-            pasteboard.setData(richText, forType: type)
-            pasteboard.setString(text ?? "", forType: .string)
-        } else {
-            pasteboard.setString(text ?? "", forType: .string)
-        }
-    }
-
-    private func richTextPasteboardType(for data: Data) -> NSPasteboard.PasteboardType? {
-        if (try? NSAttributedString(
-            data: data,
-            options: [.documentType: NSAttributedString.DocumentType.rtf],
-            documentAttributes: nil
-        )) != nil {
-            return .rtf
-        }
-        if (try? NSAttributedString(
-            data: data,
-            options: [.documentType: NSAttributedString.DocumentType.rtfd],
-            documentAttributes: nil
-        )) != nil {
-            return .rtfd
-        }
-        return nil
     }
 }
