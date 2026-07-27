@@ -33,10 +33,14 @@ Before starting implementation, check `docs/open-questions.md` for undecided ite
 ## Architecture
 
 - `App/`: lifecycle, windows, composition.
+- `App/Coordinators/`: window ownership and lifecycle coordination.
 - `UI/`: SwiftUI presentation and user interaction.
+- `Presentation/`: observable view models (`HistoryViewModel`, `SettingsViewModel`).
+- `ApplicationServices/`: persistence boundary (`ClipboardRepository`) and paste orchestration (`PasteCoordinator`). Defines port protocols that Infrastructure adapters conform to, so dependencies point inward.
 - `Domain/`: models and pure rules; no platform or persistence details.
-- `Infrastructure/`: AppKit, SwiftData, Carbon, pasteboard, processes, filesystem.
+- `Infrastructure/`: AppKit, SwiftData, Carbon, pasteboard, processes, filesystem. Conforms to ApplicationServices port protocols.
 - Keep dependencies inward. Put side effects in `Infrastructure`.
+- ApplicationServices defines port protocols; Infrastructure provides concrete adapters. Infrastructure never imports ApplicationServices concrete types — it only conforms to the protocols.
 
 ### Project Layout
 
@@ -45,8 +49,18 @@ ClipboardManager/
 ├── App/
 │   ├── ClipboardApp.swift          # @main entry point
 │   ├── AppDelegate.swift           # app lifecycle, window management
+│   ├── AppContainer.swift          # manual dependency composition
+│   ├── Coordinators/               # window coordinators (main/settings)
 │   └── Info.plist
 │   └── Info.E2E.plist             # XCUITest-host variant (bundle id …E2E)
+├── Presentation/
+│   ├── HistoryViewModel.swift      # observable history list state
+│   └── SettingsViewModel.swift     # observable settings state
+├── ApplicationServices/            # persistence boundary + paste orchestration
+│   ├── ClipboardRepository.swift   # SwiftData history fetch/insert/delete
+│   ├── PasteCoordinator.swift      # standard / Macro / OCR pasteboard writes
+│   ├── ClipboardRepositoryPort.swift   # port protocols (ClipboardRepositoryPort, ClipboardHistoryWriting)
+│   └── PasteCoordinatorPorts.swift     # port protocols (PasteboardSuppressing, OcrRecognizing, MacroRunning, AppActivating, AppNotifying)
 ├── UI/
 │   ├── MainView.swift              # main UI
 │   ├── HeaderBar.swift             # header controls
@@ -61,21 +75,25 @@ ClipboardManager/
 │   └── Colors.swift                # color definitions
 ├── Domain/
 │   ├── ClipboardEntity.swift       # SwiftData @Model
+│   ├── ClipboardItem.swift         # UI DTO (no full image payload)
 │   ├── MacroScript.swift            # transform script setting
 │   ├── MacroScriptPathValidator.swift # macro script path validation rule
 │   ├── AppSettings.swift           # UserDefaults wrapper
-│   ├── AppState.swift              # runtime state
 │   └── DedupCache.swift            # [deprecated] dedup cache (unused; see docs/design-implementation.md §4.1)
 ├── Infrastructure/
 │   ├── ClipboardMonitor.swift      # clipboard monitoring (pasteboard polling)
 │   ├── HotkeyManager.swift         # Carbon API hotkey management
 │   ├── MacroRunner.swift            # script execution
-│   ├── MacroPasteService.swift      # macro + paste flow
+│   ├── MacroRunnerAdapter.swift     # MacroRunning port adapter
 │   ├── PreviewImageEditor.swift    # Preview.app image editing integration
 │   ├── PersistenceController.swift # SwiftData container management
 │   ├── PersistenceSchema.swift    # SwiftData VersionedSchema + MigrationPlan
 │   ├── AppIconResolver.swift       # source app icon lookup
-│   ├── AppActivator.swift          # bring previous app to front
+│   ├── AppActivator.swift          # bring previous app to front (AppActivating)
+│   ├── AppNotifier.swift           # user notifications
+│   ├── AppNotifierAdapter.swift    # AppNotifying port adapter
+│   ├── OcrRecognizer.swift         # Vision OCR
+│   ├── OcrRecognizerAdapter.swift  # OcrRecognizing port adapter
 │   ├── ThumbnailGenerator.swift    # image thumbnail generation
 │   ├── ThumbnailImageCache.swift   # in-memory thumbnail cache
 │   ├── KeyLabelRenderer.swift      # key label rendering for UI
@@ -91,10 +109,12 @@ ClipboardManager/
 
 | Layer | Responsibility |
 |---|---|
-| `App` | Entry point, AppDelegate, window control |
-| `UI` | SwiftUI views. References Domain and triggers side effects via Infrastructure interfaces |
+| `App` | Entry point, AppDelegate, AppContainer composition root, window coordinators |
+| `Presentation` | Observable view models (`HistoryViewModel`, `SettingsViewModel`) |
+| `UI` | SwiftUI views. References Presentation and Domain |
+| `ApplicationServices` | Persistence boundary (`ClipboardRepository`) and paste orchestration (`PasteCoordinator`). Defines port protocols |
 | `Domain` | Data models and pure rules. Knows nothing about persistence details |
-| `Infrastructure` | Integration with external APIs: SwiftData, NSPasteboard, Carbon API, Process, etc. |
+| `Infrastructure` | Integration with external APIs: SwiftData, NSPasteboard, Carbon API, Process, etc. Conforms to ApplicationServices port protocols |
 
 ## Execution Loop
 
