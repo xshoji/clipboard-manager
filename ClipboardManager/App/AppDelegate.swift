@@ -330,7 +330,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Register a suppression range BEFORE the write so the utility-queue poll cannot
         // race with the pasteboard write and save our own write as a history item (review #6).
-        container.historyViewModel.pasteStandard(item: item, rich: false)
+        Task { @MainActor in
+            await self.container.historyViewModel.pasteStandard(item: item, rich: false)
+        }
     }
 
     /// Fires the Macro Picker overlay on the currently selected entity.

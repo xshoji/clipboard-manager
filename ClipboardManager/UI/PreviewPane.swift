@@ -47,7 +47,7 @@ struct PreviewPane: View {
         .task(id: item?.id) {
             previewImage = nil
             guard let item, item.isImage,
-                  let data = viewModel.imageData(id: item.id) else { return }
+                  let data = await viewModel.imageData(id: item.id) else { return }
             previewImage = ThumbnailImageCache.image(
                 forData: data,
                 representation: .full,
@@ -117,8 +117,10 @@ struct PreviewPane: View {
 
     private func expandFullText(_ entity: ClipboardItem) {
         guard !isExpanded else { return }
-        fullText = viewModel.fullText(id: entity.id)
-        isExpanded = true
+        Task {
+            fullText = await viewModel.fullText(id: entity.id)
+            isExpanded = true
+        }
     }
 
     private func collapse() {

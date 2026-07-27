@@ -29,7 +29,7 @@ import os.lock
 /// queue. All mutable state is only touched on the serial `pollQueue`
 /// (`lastChangeCount`, `lastSavedContentHash`, `suppressedChangeCounts`, `isRunning`,
 /// `isObservingSettings`, `timer`).
-final class ClipboardMonitor: @unchecked Sendable {
+final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
     private static let logger = Logger(subsystem: "com.xshoji.ClipboardManager", category: "ClipboardMonitor")
 
     /// Shared instance set by AppDelegate at launch.
@@ -39,7 +39,7 @@ final class ClipboardMonitor: @unchecked Sendable {
     /// launch and then only read. It is safe to read from any context after launch.
     static nonisolated(unsafe) var shared: ClipboardMonitor?
 
-    private let repository: ClipboardRepository
+    private let repository: ClipboardHistoryWriting
     private let settings: AppSettings
     private var timer: DispatchSourceTimer?
     /// Only mutated on the timer queue (serial). Read/written from the single timer
@@ -79,7 +79,7 @@ final class ClipboardMonitor: @unchecked Sendable {
     /// keeps the main actor responsive (review #6).
     private let pollQueue = DispatchQueue(label: "com.xshoji.ClipboardManager.clipboardPoll", qos: .utility)
 
-    init(repository: ClipboardRepository, settings: AppSettings) {
+    init(repository: ClipboardHistoryWriting, settings: AppSettings) {
         self.repository = repository
         self.settings = settings
     }

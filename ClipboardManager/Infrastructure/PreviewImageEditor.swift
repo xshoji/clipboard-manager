@@ -23,9 +23,9 @@ import UniformTypeIdentifiers
 @MainActor
 final class PreviewImageEditor {
     static let shared = PreviewImageEditor()
-    private var repository: ClipboardRepository?
+    private var repository: ClipboardRepositoryPort?
 
-    func configure(repository: ClipboardRepository) {
+    func configure(repository: ClipboardRepositoryPort) {
         self.repository = repository
     }
 
@@ -189,7 +189,8 @@ final class PreviewImageEditor {
 
         isEditing = true
 
-        guard let data = repository?.fetchImageData(id: item.id), !data.isEmpty else {
+        Task {
+        guard let data = await repository?.fetchImageData(id: item.id), !data.isEmpty else {
             isEditing = false
             AppNotifier.notify(
                 title: "Image cannot be edited",
@@ -251,6 +252,7 @@ final class PreviewImageEditor {
                     originalHash: originalHash
                 )
             }
+        }
         }
     }
 
@@ -715,20 +717,21 @@ final class PreviewImageEditor {
         guard let repository else { return }
         // Thumbnail generation (lockFocus → tiffRepresentation) is heavy for large
         // images; run it on a background task so the main actor is not blocked.
-        Task.detached(priority: .userInitiated) {
-            let thumb = ThumbnailGenerator.thumbnailData(from: data, maxEdge: 64)
-            await MainActor.run {
-                let saved = repository.insert(
-                    .init(kind: "image", imageData: data, thumbnail: thumb, contentHash: hash),
-                    purpose: "PreviewImageEditor.saveToHistory"
+        Task { @MainActor in
+            let thumb = await Task.detached(priority: .userInitiated) {
+                ThumbnailGenerator.thumbnailData(from: data, maxEdge: 64)
+            }.value
+            let saved = repository.insert(
+                .init(kind: "image", imageData: data, thumbnail: thumb, contentHash: hash),
+                removingDuplicates: false,
+                purpose: "PreviewImageEditor.saveToHistory"
+            )
+            if !saved {
+                AppNotifier.notify(
+                    title: "Edited image not saved",
+                    body: "The edited image could not be saved to clipboard history.",
+                    deduplicationKey: "edited-image-save-failed"
                 )
-                if !saved {
-                    AppNotifier.notify(
-                        title: "Edited image not saved",
-                        body: "The edited image could not be saved to clipboard history.",
-                        deduplicationKey: "edited-image-save-failed"
-                    )
-                }
             }
         }
     }

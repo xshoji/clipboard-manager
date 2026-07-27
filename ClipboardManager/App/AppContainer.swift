@@ -15,7 +15,15 @@ final class AppContainer {
     init() {
         repository = ClipboardRepository(settings: settings)
         monitor = ClipboardMonitor(repository: repository, settings: settings)
-        pasteCoordinator = PasteCoordinator(repository: repository, settings: settings, monitor: monitor)
+        pasteCoordinator = PasteCoordinator(
+            repository: repository,
+            settings: settings,
+            pasteboard: monitor,
+            ocr: OcrRecognizerAdapter(),
+            macroRunner: MacroRunnerAdapter(),
+            activator: AppActivator.shared,
+            notifier: AppNotifierAdapter()
+        )
         historyViewModel = HistoryViewModel(repository: repository, pasteCoordinator: pasteCoordinator)
         settingsViewModel = SettingsViewModel(settings: settings)
         hotkeyManager = HotkeyManager(settings: settings)

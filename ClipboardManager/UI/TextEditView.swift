@@ -36,6 +36,6 @@ struct TextEditView: View {
             .padding()
         }
         .frame(minWidth: 480, minHeight: 360)
-        .onAppear { draft = viewModel.fullText(id: original.id) ?? "" }
+        .task { draft = await viewModel.fullText(id: original.id) ?? "" }
     }
 }

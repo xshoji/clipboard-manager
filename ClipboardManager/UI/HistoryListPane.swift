@@ -6,7 +6,7 @@ struct HistoryListPane: View {
     @Bindable var viewModel: HistoryViewModel
     /// Pastes the selected history item (rich by default). Fired by double-click or Enter.
     /// design-app.md §2.2.1: after writing to the pasteboard, hide this app and restore the previous app to the foreground.
-    let onPaste: (ClipboardItem) -> Bool
+    let onPaste: (ClipboardItem) async -> Bool
     @FocusState private var searchFocused: Bool
     @FocusState private var listFocused: Bool
 
@@ -286,8 +286,10 @@ struct HistoryListPane: View {
     /// Closes the main window after pasting (direct paste via click / Enter only).
     private func paste(entity: ClipboardItem) {
         selectedItem = entity
-        if onPaste(entity) {
-            NSApp.keyWindow?.close()
+        Task {
+            if await onPaste(entity) {
+                NSApp.keyWindow?.close()
+            }
         }
     }
 

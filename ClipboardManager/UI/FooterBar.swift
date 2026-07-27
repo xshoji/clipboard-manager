@@ -68,7 +68,10 @@ struct FooterBar: View {
             Divider()
             Button("Clear All History") { onClearAll() }
             Divider()
-            Button("Item Info") { showInfo = selected.wrappedValue.map { describe($0) } }
+            Button("Item Info") {
+                guard let entity = selected.wrappedValue else { return }
+                Task { showInfo = await describe(entity) }
+            }
         } label: {
             Image(systemName: "ellipsis")
         }
@@ -93,13 +96,13 @@ struct FooterBar: View {
         }
         // Register a suppression range BEFORE the write so the utility-queue poll cannot
         // race with the pasteboard write and save our own write as a history item (review #6).
-        viewModel.pasteStandard(item: entity, rich: rich)
+        Task { await viewModel.pasteStandard(item: entity, rich: rich) }
     }
 
     private func justCopy() {
         guard let entity = selected.wrappedValue else { return }
         // Register a suppression range BEFORE the write (review #6 race note).
-        viewModel.pasteStandard(item: entity, rich: true, activate: false)
+        Task { await viewModel.pasteStandard(item: entity, rich: true, activate: false) }
     }
 
     private func runMacro(_ macro: MacroScript) {
@@ -129,13 +132,13 @@ struct FooterBar: View {
         NotificationCenter.default.post(name: .deleteSelectedRequested, object: nil)
     }
 
-    private func describe(_ entity: ClipboardItem) -> String {
+    private func describe(_ entity: ClipboardItem) async -> String {
         var s = "Kind: \(entity.kind)\n"
         s += "Created: \(entity.createdAt)\n"
         if let b = entity.sourceBundleID { s += "Source: \(b)\n" }
         if let h = entity.contentHash { s += "Hash: \(h)\n" }
         if let count = entity.textCharacterCount { s += "Length: \(count) chars\n" }
-        if entity.isImage, let count = viewModel.imageByteCount(id: entity.id) { s += "Image size: \(count) bytes\n" }
+        if entity.isImage, let count = await viewModel.imageByteCount(id: entity.id) { s += "Image size: \(count) bytes\n" }
         return s
     }
 }

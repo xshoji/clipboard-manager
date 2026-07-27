@@ -3,28 +3,44 @@ import Foundation
 
 @MainActor
 final class PasteCoordinator {
-    private let repository: ClipboardRepository
+    private let repository: ClipboardRepositoryPort
     private let settings: AppSettingsStore
-    private let monitor: ClipboardMonitor
+    private let pasteboard: PasteboardSuppressing
+    private let ocr: OcrRecognizing
+    private let macroRunner: MacroRunning
+    private let activator: AppActivating
+    private let notifier: AppNotifying
 
-    init(repository: ClipboardRepository, settings: AppSettingsStore, monitor: ClipboardMonitor) {
+    init(
+        repository: ClipboardRepositoryPort,
+        settings: AppSettingsStore,
+        pasteboard: PasteboardSuppressing,
+        ocr: OcrRecognizing,
+        macroRunner: MacroRunning,
+        activator: AppActivating,
+        notifier: AppNotifying
+    ) {
         self.repository = repository
         self.settings = settings
-        self.monitor = monitor
+        self.pasteboard = pasteboard
+        self.ocr = ocr
+        self.macroRunner = macroRunner
+        self.activator = activator
+        self.notifier = notifier
     }
 
     @discardableResult
-    func pasteStandard(item: ClipboardItem, rich: Bool, activate: Bool = true) -> Bool {
+    func pasteStandard(item: ClipboardItem, rich: Bool, activate: Bool = true) async -> Bool {
         let wrote: Bool
         if item.isImage {
-            guard let data = repository.fetchImageData(id: item.id) else { return false }
+            guard let data = await repository.fetchImageData(id: item.id) else { return false }
             suppressedWrite { pasteboard in
                 pasteboard.clearContents()
                 pasteboard.setData(data, forType: .png)
             }
             wrote = true
         } else {
-            guard let content = repository.fetchTextContent(id: item.id, includeRichText: rich) else { return false }
+            guard let content = await repository.fetchTextContent(id: item.id, includeRichText: rich) else { return false }
             writeText(content, rich: rich)
             wrote = true
         }
@@ -33,14 +49,14 @@ final class PasteCoordinator {
     }
 
     func runOcr(item: ClipboardItem) async {
-        guard let data = repository.fetchImageData(id: item.id), !data.isEmpty else {
-            AppNotifier.notify(title: "OCR", body: "No image data is available for this history item."); return
+        guard let data = await repository.fetchImageData(id: item.id), !data.isEmpty else {
+            notifier.notify(title: "OCR", body: "No image data is available for this history item.", deduplicationKey: nil); return
         }
         NotificationCenter.default.post(name: .ocrProgressDidChange, object: nil, userInfo: ["inProgress": true])
         defer { NotificationCenter.default.post(name: .ocrProgressDidChange, object: nil, userInfo: ["inProgress": false]) }
-        let text = await OcrRecognizer.recognizeText(in: data, languages: settings.ocrLanguages)
+        let text = await ocr.recognizeText(in: data, languages: settings.ocrLanguages)
         guard !(text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty else {
-            AppNotifier.notify(title: "OCR", body: "No text was recognized in the image."); return
+            notifier.notify(title: "OCR", body: "No text was recognized in the image.", deduplicationKey: nil); return
         }
         suppressedWrite { pb in pb.clearContents(); pb.setString(text ?? "", forType: .string) }
         activatePreviousApp()
@@ -50,14 +66,14 @@ final class PasteCoordinator {
     func runMacro(macro: MacroScript, item: ClipboardItem) async -> Bool {
         let input: MacroRunner.MacroInput
         if item.isImage {
-            guard let imageData = repository.fetchImageData(id: item.id) else { return false }
+            guard let imageData = await repository.fetchImageData(id: item.id) else { return false }
             input = .init(isImage: true, imageData: imageData, text: nil, sourceBundleID: item.sourceBundleID)
         } else {
-            guard let text = repository.fetchFullText(id: item.id) else { return false }
+            guard let text = await repository.fetchFullText(id: item.id) else { return false }
             input = .init(isImage: false, imageData: nil, text: text, sourceBundleID: item.sourceBundleID)
         }
         do {
-            let output = try await MacroRunner.runAsync(script: macro, input: input,
+            let output = try await macroRunner.runAsync(script: macro, input: input,
                 verifyFingerprint: settings.macroSameDirectoryFingerprint)
             if !output.isImage, String(data: output.data, encoding: .utf8) == nil, !output.data.isEmpty {
                 throw MacroError.invalidOutputEncoding
@@ -72,11 +88,11 @@ final class PasteCoordinator {
             let message = (error as? MacroError)?.description ?? error.localizedDescription
             switch settings.macroFailureBehavior {
             case "restoreOriginalAndNotify":
-                if pasteOriginal(item) { activatePreviousApp() }
-                AppNotifier.notify(title: "Macro failed", body: message)
-            case "notifyOnly": AppNotifier.notify(title: "Macro failed", body: message)
+                if await pasteOriginal(item) { activatePreviousApp() }
+                notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil)
+            case "notifyOnly": notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil)
             case "silentlySkip": break
-            default: AppNotifier.notify(title: "Macro failed", body: message)
+            default: notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil)
             }
             return false
         }
@@ -91,26 +107,26 @@ final class PasteCoordinator {
         }
     }
 
-    private func pasteOriginal(_ item: ClipboardItem) -> Bool {
+    private func pasteOriginal(_ item: ClipboardItem) async -> Bool {
         if item.isImage {
-            guard let data = repository.fetchImageData(id: item.id) else { return false }
+            guard let data = await repository.fetchImageData(id: item.id) else { return false }
             suppressedWrite { pasteboard in
                 pasteboard.clearContents()
                 pasteboard.setData(data, forType: .png)
             }
         } else {
-            guard let content = repository.fetchTextContent(id: item.id, includeRichText: true) else { return false }
+            guard let content = await repository.fetchTextContent(id: item.id, includeRichText: true) else { return false }
             writeText(content, rich: true)
         }
         return true
     }
 
     private func suppressedWrite(_ body: (NSPasteboard) -> Void) {
-        monitor.performSuppressedPasteboardWrite(body)
+        pasteboard.performSuppressedPasteboardWrite(body)
     }
 
     private func activatePreviousApp() {
-        AppActivator.shared.activatePreviousAppAndPasteSynthetically(needsSynthetic: settings.needsAccessibilityForSyntheticPaste)
+        activator.activatePreviousAppAndPasteSynthetically(needsSynthetic: settings.needsAccessibilityForSyntheticPaste)
     }
 
     private static func richTextType(_ data: Data) -> NSPasteboard.PasteboardType? {

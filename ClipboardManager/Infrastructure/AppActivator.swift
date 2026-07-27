@@ -3,7 +3,7 @@ import AppKit
 /// Records the frontmost application right before showing the UI, then restores it after pasting.
 /// Design: design-app.md §2.2.1 / design-implementation.md §4.2
 @MainActor
-final class AppActivator: NSObject {
+final class AppActivator: NSObject, AppActivating {
     static let shared = AppActivator()
 
     /// Stack of recently-activated external apps (newest last), with timestamps.

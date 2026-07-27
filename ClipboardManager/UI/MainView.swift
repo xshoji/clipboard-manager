@@ -108,8 +108,8 @@ struct MainView: View {
        }
     }
 
-    private func pasteStandard(item: ClipboardItem, rich: Bool) -> Bool {
-        viewModel.pasteStandard(item: item, rich: rich)
+    private func pasteStandard(item: ClipboardItem, rich: Bool) async -> Bool {
+        await viewModel.pasteStandard(item: item, rich: rich)
     }
 
    /// Runs the given Macro against the currently selected entity (used by the
@@ -133,7 +133,7 @@ struct MainView: View {
                         query: $query,
                         selectedItem: $viewModel.selectedItem,
                         viewModel: viewModel,
-                        onPaste: { item in pasteStandard(item: item, rich: true) }
+                        onPaste: { item in await pasteStandard(item: item, rich: true) }
                     )
                     .frame(maxWidth: .infinity)
                     .background(Color.appBackground.opacity(0.6))

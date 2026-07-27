@@ -38,12 +38,29 @@ final class SmokeUITests: XCTestCase {
 
     private let startupSeconds: TimeInterval = 3
 
+    /// The app launched by the current test case. Held as an instance property
+    /// so `tearDownWithError` can terminate it even when a test fails mid-assertion
+    /// (review #6: "launched app as test case property, tearDownWithError to always
+    /// terminate, wait for PID death with timeout, force terminate fallback").
+    private var launchedApp: XCUIApplication?
+
     // MARK: - Setup / Teardown
 
     override func setUpWithError() throws {
         try super.setUpWithError()
         continueAfterFailure = false
         Self.terminateRunningApps()
+    }
+
+    override func tearDownWithError() throws {
+        // Always terminate the launched app, even when a test failed mid-assertion
+        // and never reached the end-of-test `app.terminate()` call.
+        if let app = launchedApp, app.state != .notRunning {
+            app.terminate()
+            Self.waitForProcessDeath(app: app, timeout: 5)
+        }
+        launchedApp = nil
+        try super.tearDownWithError()
     }
 
     // MARK: - Tests
@@ -54,7 +71,6 @@ final class SmokeUITests: XCTestCase {
         Thread.sleep(forTimeInterval: startupSeconds)
         XCTAssertTrue(app.state == .runningForeground || app.state == .runningBackground,
                       "App crashed within \(startupSeconds)s (state=\(app.state.rawValue))")
-        app.terminate()
     }
 
     /// Verifies the Settings form reflects the history limit defaults baked in
@@ -111,7 +127,6 @@ final class SmokeUITests: XCTestCase {
             maxItemContent.contains("10"),
             "Max item size did not show '10 MB', got '\(maxItemContent)'"
         )
-        app.terminate()
     }
 
     /// Verifies that clicking "Clear" on the Edit Action Hotkey makes its
@@ -137,7 +152,6 @@ final class SmokeUITests: XCTestCase {
         let displayValue = display.value as? String ?? ""
         XCTAssertEqual(displayValue, "(none)",
                        "Edit hotkey display should be '(none)' after Clear, got '\(displayValue)'")
-        app.terminate()
     }
 
     /// Verifies that clicking "Reset" on the Edit Action Hotkey restores
@@ -170,7 +184,6 @@ final class SmokeUITests: XCTestCase {
         let displayValue = display.value as? String ?? ""
         XCTAssertEqual(displayValue, "⌘E",
                        "Edit hotkey display should be '⌘E' after Reset, got '\(displayValue)'")
-        app.terminate()
     }
 
     /// Verifies that clicking "Record" on the EditAction Hotkey and then
@@ -199,7 +212,6 @@ final class SmokeUITests: XCTestCase {
         let displayValue = display.value as? String ?? ""
         XCTAssertEqual(displayValue, "⇧⌘A",
                        "Edit hotkey display should be '⇧⌘A' after Record, got '\(displayValue)'")
-        app.terminate()
     }
 
     // MARK: - Macro Script CRUD
@@ -265,7 +277,6 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(badge.waitForExistence(timeout: 5), "Fingerprint-captured badge not shown after Save")
         XCTAssertFalse(app.staticTexts["macro.empty"].exists,
                        "Empty-state label should disappear once a macro is registered")
-        app.terminate()
     }
 
     /// Verifies that an existing macro's name can be edited and the change
@@ -323,7 +334,6 @@ final class SmokeUITests: XCTestCase {
         let finalName = try XCTUnwrap(nameField.value as? String)
         XCTAssertEqual(finalName, "Edited Macro",
                        "Macro name should be 'Edited Macro' after editing, got '\(finalName)'")
-        app.terminate()
     }
 
     /// Verifies that closing the Settings window while a macro row is dirty
@@ -399,7 +409,6 @@ final class SmokeUITests: XCTestCase {
         let nameRefocused = try XCTUnwrap(nameField.value as? String)
         XCTAssertTrue(nameRefocused.hasSuffix("UnsavedEdit"),
                       "Unsaved edit should still be in the name field after re-focusing, got '\(nameRefocused)'")
-        app.terminate()
     }
 
     /// Verifies that switching the inline-script interpreter preset from
@@ -470,7 +479,6 @@ final class SmokeUITests: XCTestCase {
         let finalPreset = try XCTUnwrap(app.popUpButtons["macro.0.interpreterPreset"].value as? String)
         XCTAssertEqual(finalPreset, "/bin/bash",
                        "Interpreter preset should be '/bin/bash' after preset change, got '\(finalPreset)'")
-        app.terminate()
     }
 
     /// Verifies that switching the source type to "Script file" and entering
@@ -574,7 +582,6 @@ final class SmokeUITests: XCTestCase {
                        "Fingerprint-captured badge should NOT appear for file-mode macros")
         XCTAssertFalse(app.staticTexts["macro.0.validationError"].exists,
                        "Validation error label should NOT appear after successful file-mode save")
-        app.terminate()
     }
 
     // MARK: - App Launcher
@@ -586,6 +593,7 @@ final class SmokeUITests: XCTestCase {
     private func makeApp() -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: Self.e2eBundleID)
         app.launchEnvironment["CM_E2E_OPEN_WINDOW"] = "1"
+        launchedApp = app
         return app
     }
 
@@ -596,9 +604,43 @@ final class SmokeUITests: XCTestCase {
             let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bid)
             guard !apps.isEmpty else { continue }
             Self.log("Terminating \(apps.count) running app instance(s) for \(bid)")
-            for app in apps { app.terminate() }
-            Thread.sleep(forTimeInterval: 1.0)
+            for app in apps {
+                app.terminate()
+                waitForProcessDeath(runningApp: app, timeout: 5)
+            }
         }
+    }
+
+    /// Waits for the launched XCUIApplication to reach `.notRunning` state, with
+    /// a timeout. If the app does not exit gracefully within the timeout, forces
+    /// termination via `NSRunningApplication.forceTerminate()` (SIGKILL equivalent).
+    private static func waitForProcessDeath(app: XCUIApplication, timeout: TimeInterval) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if app.state == .notRunning { return }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        // Graceful terminate did not work; force-kill all running instances of
+        // the E2E bundle id. XCUIApplication does not expose processID, so we
+        // match via NSRunningApplication instead.
+        Self.log("App did not exit within \(timeout)s, force-terminating E2E instances")
+        for runningApp in NSRunningApplication.runningApplications(withBundleIdentifier: e2eBundleID) {
+            runningApp.forceTerminate()
+        }
+    }
+
+    /// Waits for an NSRunningApplication to terminate, with timeout and SIGKILL
+    /// fallback. Used by `terminateRunningApps()` in `setUpWithError` to ensure
+    /// stale instances from a previous failed test run are dead before launching
+    /// a new instance.
+    private static func waitForProcessDeath(runningApp: NSRunningApplication, timeout: TimeInterval) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if runningApp.isTerminated { return }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        Self.log("Running app did not terminate within \(timeout)s, force-terminating (pid=\(runningApp.processIdentifier))")
+        runningApp.forceTerminate()
     }
 
     // MARK: - Logging

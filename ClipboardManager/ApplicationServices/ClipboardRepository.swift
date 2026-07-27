@@ -7,8 +7,8 @@ extension Notification.Name {
 }
 
 @MainActor
-final class ClipboardRepository {
-    struct TextContent {
+final class ClipboardRepository: ClipboardRepositoryPort, ClipboardHistoryWriting {
+    struct TextContent: Sendable {
         let text: String?
         let richText: Data?
     }
@@ -24,9 +24,11 @@ final class ClipboardRepository {
     }
 
     private let persistence: PersistenceController
+    private let dataActor: ClipboardDataActor
 
     init(persistence: PersistenceController) {
         self.persistence = persistence
+        self.dataActor = ClipboardDataActor(modelContainer: persistence.container)
         persistence.onLimitsDidDelete = { [weak self] in self?.notifyChange() }
     }
     convenience init(settings: AppSettingsStore) {
@@ -36,22 +38,18 @@ final class ClipboardRepository {
     func start() { persistence.startObservingSettings() }
     func flushOnTerminate() { persistence.flushOnTerminate() }
 
-    func fetchAll() -> [ClipboardItem] {
-        let descriptor = FetchDescriptor<ClipboardEntity>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
-        return (persistence.fetchEntities(descriptor, context: persistence.container.mainContext, purpose: "repository.fetchAll") ?? []).map(Self.item)
-    }
+    func fetchAll() async -> [ClipboardItem] { await dataActor.fetchAll(limit: 500) }
 
     func fetch(id: UUID) -> ClipboardItem? {
         entity(id: id).map(Self.item)
     }
 
-    func fetchTextContent(id: UUID, includeRichText: Bool) -> TextContent? {
-        guard let entity = entity(id: id) else { return nil }
-        return TextContent(text: entity.text, richText: includeRichText ? entity.richText : nil)
+    func fetchTextContent(id: UUID, includeRichText: Bool) async -> TextContent? {
+        await dataActor.fetchTextContent(id: id, includeRichText: includeRichText)
     }
 
-    func fetchImageData(id: UUID) -> Data? { entity(id: id)?.imageData }
-    func fetchFullText(id: UUID) -> String? { entity(id: id)?.text }
+    func fetchImageData(id: UUID) async -> Data? { await dataActor.fetchImageData(id: id) }
+    func fetchFullText(id: UUID) async -> String? { await dataActor.fetchFullText(id: id) }
 
     @discardableResult
     func insert(_ item: NewItem, removingDuplicates: Bool = false, purpose: String) -> Bool {
