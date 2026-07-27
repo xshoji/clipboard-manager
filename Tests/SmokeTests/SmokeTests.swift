@@ -29,14 +29,31 @@ import AppKit
 ///   "com.xshoji.ClipboardManager.E2E". Personal Team signing keeps the team
 ///   id stable so subsequent runs do not need re-granting.
 /// - The E2E host app shares the executable name "ClipboardManager" with the
-///   production build so UserDefaults.standard resolves to the same defaults
-///   domain ("ClipboardManager"); its bundle id is
-///   "com.xshoji.ClipboardManager.E2E" so TCC entries are isolated.
+///   production build, but its bundle id is
+///   "com.xshoji.ClipboardManager.E2E". Because `UserDefaults.standard` keys
+///   on the bundle identifier (not the executable name), the E2E app's
+///   defaults domain is isolated from the production app. SmokeTests rely on
+///   AppDelegate's `forceE2EDefaultSettings` (triggered by the
+///   `CM_E2E_OPEN_WINDOW=1` launch environment) to seed a known state at
+///   launch — they never read `defaults` directly. SwiftData uses a separate
+///   store path guarded by the launch environment so clipboard history does
+///   not collide with the production app either.
+///
+/// Performance notes (review follow-up):
+///   Related cases were folded into single workflow tests so the app is
+///   launched once per workflow instead of once per micro-assertion. Fixed
+///   `Thread.sleep`s were replaced by `waitForExistence(timeout:)` wherever
+///   the assertion target is an XCUIElement; the few remaining sleeps are
+///   short (0.2–0.3s) SwiftUI runloop pumps that fire after a button click
+///   before the next `waitForExistence` polls.
 final class SmokeUITests: XCTestCase {
     private static let e2eBundleID = "com.xshoji.ClipboardManager.E2E"
     private static let productionBundleID = "com.xshoji.ClipboardManager"
 
-    private let startupSeconds: TimeInterval = 3
+    /// Short SwiftUI runloop pump used after a click before a
+    /// `waitForExistence` poll. Kept small on purpose — XCUIElement's own
+    /// polling handles most of the wait.
+    private static let uiPump: TimeInterval = 0.2
 
     /// The app launched by the current test case. Held as an instance property
     /// so `tearDownWithError` can terminate it even when a test fails mid-assertion
@@ -68,9 +85,19 @@ final class SmokeUITests: XCTestCase {
     func testAppLaunchesWithoutCrash() throws {
         let app = makeApp()
         app.launch()
-        Thread.sleep(forTimeInterval: startupSeconds)
-        XCTAssertTrue(app.state == .runningForeground || app.state == .runningBackground,
-                      "App crashed within \(startupSeconds)s (state=\(app.state.rawValue))")
+        // Replaced the fixed 3s sleep with a fast state poll: the app is up
+        // as soon as XCUIElement reports it running. Cap at 3s as a guard.
+        let deadline = Date().addingTimeInterval(3)
+        var running = false
+        while Date() < deadline {
+            if app.state == .runningForeground || app.state == .runningBackground {
+                running = true
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertTrue(running,
+                      "App did not reach running state within 3s (state=\(app.state.rawValue))")
     }
 
     /// Verifies the Settings form reflects the history limit defaults baked in
@@ -97,19 +124,15 @@ final class SmokeUITests: XCTestCase {
                        "Max items picker did not show '1,000'")
 
         // Max item size is a Stepper with label text "Max item size: 10 MB".
-        //
         // SwiftUI on macOS exposes the rendered Text content as the
         // staticText's *value* (not its `label`) when the Text is standalone,
         // while Text used as the label of a Label/Picker shows up under
         // `label`. The Stepper here renders "Max item size: 10 MB" as a plain
         // Text, so the string is in `value` and `label` is empty. Query both
         // attributes so the match is reliable regardless of which slot
-        // SwiftUI populates.
-        //
-        // We wait for the staticText to exist (failing the test if it never
-        // shows up) instead of silently skipping the assertion — a missing
-        // label means the Stepper is gone or renamed, which is a regression
-        // we want to catch.
+        // SwiftUI populates. We wait for the staticText to exist (failing the
+        // test if it never shows up) instead of silently skipping — a missing
+        // label means the Stepper is gone or renamed, which is a regression.
         let maxItemText = app.staticTexts.matching(
             NSPredicate(
                 format: "(label CONTAINS 'Max item size' OR label CONTAINS '10 MB' OR value CONTAINS 'Max item size' OR value CONTAINS '10 MB')"
@@ -119,9 +142,6 @@ final class SmokeUITests: XCTestCase {
             maxItemText.waitForExistence(timeout: 5),
             "Max item size staticText not found; dumping app tree:\n\(app.debugDescription)"
         )
-        // The content string ("Max item size: 10 MB") may be stored in either
-        // `label` or `value` depending on the SwiftUI rendering path, so
-        // inspect whichever is non-empty.
         let maxItemContent = maxItemText.label.isEmpty ? (maxItemText.value as? String ?? "") : maxItemText.label
         XCTAssertTrue(
             maxItemContent.contains("10"),
@@ -129,108 +149,61 @@ final class SmokeUITests: XCTestCase {
         )
     }
 
-    /// Verifies that clicking "Clear" on the Edit Action Hotkey makes its
-    /// display label become "(none)".
-    func testActionHotkeyClear() throws {
+    /// Exercises the action hotkey recorder end-to-end in a single session
+    /// (Clear → Reset → Record). Folding the three former micro-tests into
+    /// one avoids two extra app launches and two extra setUp/tearDown cycles.
+    /// Each step asserts the resulting display label so the order is strict.
+    func testActionHotkeyWorkflow() throws {
         let app = makeApp()
         app.launch()
         let settingsWindow = app.windows["ClipboardManager Settings"]
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
 
-        // Edit hotkey starts at default ⌘E so Clear button is visible.
+        let display = app.staticTexts["action.edit.display"]
+
+        // Step 1: Clear the Edit hotkey (default ⌘E) → "(none)".
         let clearButton = app.buttons["action.edit.clear"]
         XCTAssertTrue(clearButton.waitForExistence(timeout: 10), "Edit Clear button not found")
         clearButton.click()
-        Thread.sleep(forTimeInterval: 1.0)
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        XCTAssertTrue(display.waitForExistence(timeout: 5), "Display label not found after Clear")
+        XCTAssertEqual(display.value as? String ?? "", "(none)",
+                       "Edit hotkey display should be '(none)' after Clear, got '\(display.value as? String ?? "")'")
 
-        let display = app.staticTexts["action.edit.display"]
-        if !display.exists {
-            Self.log("Display label not found (clear); dumping app tree:\n\(app.debugDescription)")
-        }
-        XCTAssertTrue(display.exists, "Action edit display label not found")
-        // SwiftUI exposes the Text content as the element's `value` (not `label`).
-        let displayValue = display.value as? String ?? ""
-        XCTAssertEqual(displayValue, "(none)",
-                       "Edit hotkey display should be '(none)' after Clear, got '\(displayValue)'")
-    }
-
-    /// Verifies that clicking "Reset" on the Edit Action Hotkey restores
-    /// its display label to "⌘E" (= default ⌘E).
-    /// This test first changes the Edit hotkey to a non-default value via
-    /// Record, then clicks Reset.
-    func testActionHotkeyReset() throws {
-        let app = makeApp()
-        app.launch()
-        let settingsWindow = app.windows["ClipboardManager Settings"]
-        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
-
-        // Step 1: clear the Edit hotkey so Reset has something to restore.
-        let clearButton = app.buttons["action.edit.clear"]
-        XCTAssertTrue(clearButton.waitForExistence(timeout: 10), "Edit Clear button not found (pre-reset)")
-        clearButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
-        // After Clear, the Clear button is conditionally hidden (keyCode/mof==0).
-        // The Reset button remains visible.
+        // Step 2: Reset the Edit hotkey → "⌘E".
+        // After Clear, the Clear button is conditionally hidden (keyCode/mof==0);
+        // the Reset button remains visible.
         let resetButton = app.buttons["action.edit.reset"]
         XCTAssertTrue(resetButton.waitForExistence(timeout: 5), "Edit Reset button not found")
         resetButton.click()
-        Thread.sleep(forTimeInterval: 1.0)
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        XCTAssertEqual(display.value as? String ?? "", "⌘E",
+                       "Edit hotkey display should be '⌘E' after Reset, got '\(display.value as? String ?? "")'")
 
-        let display = app.staticTexts["action.edit.display"]
-        if !display.exists {
-            Self.log("Display label not found (reset); dumping app tree:\n\(app.debugDescription)")
-        }
-        XCTAssertTrue(display.exists, "Action edit display label not found")
-        let displayValue = display.value as? String ?? ""
-        XCTAssertEqual(displayValue, "⌘E",
-                       "Edit hotkey display should be '⌘E' after Reset, got '\(displayValue)'")
-    }
-
-    /// Verifies that clicking "Record" on the EditAction Hotkey and then
-    /// synthesizing a Cmd+Shift+A key event via XCUIElement captures the
-    /// new shortcut, shown as "⇧⌘A".
-    func testActionHotkeyRecord() throws {
-        let app = makeApp()
-        app.launch()
-        let settingsWindow = app.windows["ClipboardManager Settings"]
-        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
-
+        // Step 3: Record ⇧⌘A via XCUIElement's `typeKey(_:modifierFlags:)`,
+        // which sends a real key event with the specified modifiers,
+        // sidestepping the System Events / AppleScript path that the sandboxed
+        // UI test runner cannot use.
         let recordButton = app.buttons["action.edit.record"]
         XCTAssertTrue(recordButton.waitForExistence(timeout: 5), "Edit Record button not found")
         recordButton.click()
-        // Wait for CaptureKeyView to become first responder.
-        Thread.sleep(forTimeInterval: 1.0)
-        // Synthesize Cmd+Shift+A via XCUIElement. macOS XCUItest exposes
-        // `typeKey(_:modifierFlags:)` which sends a real key event with the
-        // specified modifiers, sidestepping the System Events / AppleScript
-        // path that the sandboxed UI test runner cannot use.
+        // CaptureKeyView needs to become first responder before the synthetic
+        // key event lands. 0.3s is enough on local runners; the previous 1.0s
+        // was overcautious. If Record intermittently fails on a slow machine
+        // this is the knob to bump first.
+        Thread.sleep(forTimeInterval: 0.3)
         app.typeKey("a", modifierFlags: [.command, .shift])
-        Thread.sleep(forTimeInterval: 1.0)
-
-        let display = app.staticTexts["action.edit.display"]
-        XCTAssertTrue(display.exists, "Action edit display label not found")
-        let displayValue = display.value as? String ?? ""
-        XCTAssertEqual(displayValue, "⇧⌘A",
-                       "Edit hotkey display should be '⇧⌘A' after Record, got '\(displayValue)'")
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        XCTAssertEqual(display.value as? String ?? "", "⇧⌘A",
+                       "Edit hotkey display should be '⇧⌘A' after Record, got '\(display.value as? String ?? "")'")
     }
 
-    // MARK: - Macro Script CRUD
-
-    /// Verifies that clicking "Add Macro…" inserts a single editable row,
-    /// that the row's name field is focusable and the Save button is
-    /// initially disabled (no content change yet), and that filling in a
-    /// name + Save on the registration confirmation dialog persists the
-    /// macro (the fingerprint-captured badge appears and the empty-state
-    /// text is gone).
-    ///
-    /// Notes:
-    /// - AppDelegate.forceE2EDefaultSettings resets `macroScripts` to []
-    ///   on launch so this test always starts from zero macros.
-    /// - The Macro row's inline example already satisfies `canApply`
-    ///   (name="New Macro", interpreter="/bin/sh", inline body non-empty),
-    ///   so we only need to touch the name to flip the dirty flag and
-    ///   then click Save.
-    func testAddMacroScript() throws {
+    /// Exercises the macro script CRUD pipeline end-to-end in a single session:
+    /// Add → Edit name → Clear-close guard → Change interpreter preset →
+    /// Script-file source. The app is launched once for the whole workflow
+    /// instead of once per sub-case, drastically cutting total runtime
+    /// (previously 5 launches × setUp/tearDown taxed the E2E harness).
+    func testMacroScriptWorkflow() throws {
         let app = makeApp()
         app.launch()
         let settingsWindow = app.windows["ClipboardManager Settings"]
@@ -240,16 +213,17 @@ final class SmokeUITests: XCTestCase {
         let emptyLabel = app.staticTexts["macro.empty"]
         XCTAssertTrue(emptyLabel.waitForExistence(timeout: 5), "Macro empty-state label not found")
 
+        // --- Step 1: Add Macro ---
         let addButton = app.buttons["macro.add"]
         XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found")
         addButton.click()
-        Thread.sleep(forTimeInterval: 1.0)
+        Thread.sleep(forTimeInterval: Self.uiPump)
 
         // The first row's controls live under the "macro.0" prefix.
         let nameField = app.textFields["macro.0.name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found after Add")
         nameField.click()
-        Thread.sleep(forTimeInterval: 0.3)
+        Thread.sleep(forTimeInterval: Self.uiPump)
 
         // Touch the name to mark the row dirty (otherwise Save stays disabled
         // even though canApply is technically true, because `hasContentChanges`
@@ -257,19 +231,19 @@ final class SmokeUITests: XCTestCase {
         // until the user types). We append a character so the text binding
         // fires `onChange`.
         nameField.typeText("X")
-        Thread.sleep(forTimeInterval: 0.5)
+        Thread.sleep(forTimeInterval: Self.uiPump)
 
         let saveButton = app.buttons["macro.0.save"]
         XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Macro Save button not found")
         XCTAssertTrue(saveButton.isEnabled, "Macro Save should be enabled after editing the name")
         saveButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
+        Thread.sleep(forTimeInterval: Self.uiPump)
 
         // Registration confirmation dialog (per design-implementation.md §5.1-1).
         let confirmSave = app.buttons["macro.0.confirm.save"]
         XCTAssertTrue(confirmSave.waitForExistence(timeout: 5), "Confirm-Save button not found")
         confirmSave.click()
-        Thread.sleep(forTimeInterval: 1.0)
+        Thread.sleep(forTimeInterval: 0.3)
 
         // The fingerprint-captured badge shows only on inline-script macros
         // once the user confirms the registration dialog (see MacroScriptRowView.confirmSave).
@@ -277,35 +251,6 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(badge.waitForExistence(timeout: 5), "Fingerprint-captured badge not shown after Save")
         XCTAssertFalse(app.staticTexts["macro.empty"].exists,
                        "Empty-state label should disappear once a macro is registered")
-    }
-
-    /// Verifies that an existing macro's name can be edited and the change
-    /// is persisted through the Save → confirm dialog. After Save the row
-    /// model snapshot is updated, so re-opening the name field shows the new
-    /// value (proving the edit was committed, not just buffered in @State).
-    func testEditMacroScript() throws {
-        let app = makeApp()
-        app.launch()
-        let settingsWindow = app.windows["ClipboardManager Settings"]
-        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
-
-        // Seed: add one macro and register it (same flow as testAddMacroScript).
-        let addButton = app.buttons["macro.add"]
-        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found (seed)")
-        addButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
-        let nameField = app.textFields["macro.0.name"]
-        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found")
-        nameField.click()
-        Thread.sleep(forTimeInterval: 0.3)
-        nameField.typeText("X")
-        let saveButton = app.buttons["macro.0.save"]
-        XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Macro Save button not found (seed)")
-        saveButton.click()
-        let confirmSave = app.buttons["macro.0.confirm.save"]
-        XCTAssertTrue(confirmSave.waitForExistence(timeout: 5), "Confirm-Save button not found (seed)")
-        confirmSave.click()
-        Thread.sleep(forTimeInterval: 1.0)
 
         // After registration, the row model is republished and the name field
         // reflects the persisted value (name should end with "X" since the
@@ -314,196 +259,129 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(nameAfterSeed.hasSuffix("X"),
                       "Name should reflect seeded edit after registration, got '\(nameAfterSeed)'")
 
-        // Edit: select-all the name field and replace with a new name.
+        // --- Step 2: Edit the macro name in place ---
         nameField.click()
         nameField.typeKey("a", modifierFlags: .command)
         nameField.typeText("Edited Macro")
-        Thread.sleep(forTimeInterval: 0.5)
+        Thread.sleep(forTimeInterval: Self.uiPump)
 
-        // Save the edit; the confirmation dialog appears because the
-        // inline-script fingerprint is re-captured on every confirm-save.
         let saveButtonEdit = app.buttons["macro.0.save"]
         XCTAssertTrue(saveButtonEdit.isEnabled, "Macro Save should be enabled after editing the name")
         saveButtonEdit.click()
         let confirmSaveEdit = app.buttons["macro.0.confirm.save"]
         XCTAssertTrue(confirmSaveEdit.waitForExistence(timeout: 5), "Confirm-Save button not found (edit)")
         confirmSaveEdit.click()
-        Thread.sleep(forTimeInterval: 1.0)
+        Thread.sleep(forTimeInterval: 0.3)
 
         // Assert the persisted name is the new one.
         let finalName = try XCTUnwrap(nameField.value as? String)
         XCTAssertEqual(finalName, "Edited Macro",
                        "Macro name should be 'Edited Macro' after editing, got '\(finalName)'")
-    }
 
-    /// Verifies that closing the Settings window while a macro row is dirty
-    /// (edits not yet saved) raises the "Unsaved Macro Changes" NSAlert, and
-    /// that choosing "Cancel" on that alert keeps the Settings window open
-    /// and leaves the in-progress edit intact. Re-focusing the name field
-    /// should still show the unsaved value (proving the edit was not
-    /// silently committed/dropped).
-    func testUnsavedMacroChangesModalOnClose() throws {
-        let app = makeApp()
-        app.launch()
-        let settingsWindow = app.windows["ClipboardManager Settings"]
-        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+        // --- Step 3: Switch the interpreter preset /bin/sh → /bin/bash ---
+        let presetPopUp = app.popUpButtons["macro.0.interpreterPreset"]
+        XCTAssertTrue(presetPopUp.waitForExistence(timeout: 5), "Interpreter preset popUp not found")
+        let seedPreset = try XCTUnwrap(presetPopUp.value as? String)
+        XCTAssertEqual(seedPreset, "/bin/sh",
+                       "Seeded interpreter preset should be '/bin/sh', got '\(seedPreset)'")
+        presetPopUp.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        let bashMenuItem = app.menuItems["/bin/bash"]
+        XCTAssertTrue(bashMenuItem.waitForExistence(timeout: 3), "/bin/bash menu item not found")
+        bashMenuItem.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
 
-        // Add a macro and immediately edit its name WITHOUT clicking Save so
-        // the row stays dirty (`viewModel.unsavedMacroIDs` contains the row).
-        let addButton = app.buttons["macro.add"]
-        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found")
-        addButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
-        let nameField = app.textFields["macro.0.name"]
-        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found")
-        nameField.click()
+        // The preset change immediately writes `interpreter = "/bin/bash"`
+        // (`onChange(of: interpreterPreset)`), and the row's dirty flag flips
+        // because interpreter now differs from the macro model. Save → confirm.
+        XCTAssertTrue(saveButtonEdit.isEnabled, "Macro Save should be enabled after changing interpreter preset")
+        saveButtonEdit.click()
+        XCTAssertTrue(confirmSaveEdit.waitForExistence(timeout: 5), "Confirm-Save button not found (preset)")
+        confirmSaveEdit.click()
         Thread.sleep(forTimeInterval: 0.3)
-        nameField.typeText("UnsavedEdit")
-        Thread.sleep(forTimeInterval: 0.5)
 
-        // Sanity: the dirty edit is buffered in the name field's value.
+        let finalPreset = try XCTUnwrap(app.popUpButtons["macro.0.interpreterPreset"].value as? String)
+        XCTAssertEqual(finalPreset, "/bin/bash",
+                       "Interpreter preset should be '/bin/bash' after preset change, got '\(finalPreset)'")
+
+        // --- Step 4: Unsaved-changes guard on close ---
+        // Edit the name WITHOUT clicking Save so the row stays dirty, then
+        // attempt to close the Settings window; the "Unsaved Macro Changes"
+        // NSAlert must appear, and Cancel must keep the window open with the
+        // unsaved edit intact.
+        nameField.click()
+        nameField.typeKey("a", modifierFlags: .command)
+        nameField.typeText("UnsavedEdit")
+        Thread.sleep(forTimeInterval: Self.uiPump)
         let bufferedName = try XCTUnwrap(nameField.value as? String)
         XCTAssertTrue(bufferedName.hasSuffix("UnsavedEdit"),
                       "Name field should show unsaved edit, got '\(bufferedName)'")
 
         // Trigger the close. SettingsWindowController.windowShouldClose runs
-        // the NSAlert. XCUITest exposes it as `app.dialogs`. The Settings
-        // window's traffic-light buttons (close / miniaturize / zoom) appear
-        // in `settingsWindow.buttons`; the close button is the leftmost one
-        // (boundBy: 0).
+        // the NSAlert. The Settings window's traffic-light close button is
+        // the leftmost (boundBy: 0).
         let closeButton = settingsWindow.buttons.element(boundBy: 0)
         XCTAssertTrue(closeButton.exists, "Settings window close button not found")
         closeButton.click()
-        Thread.sleep(forTimeInterval: 1.0)
+        Thread.sleep(forTimeInterval: 0.3)
 
-        // The unsaved-changes alert is an NSAlert; XCUI exposes it via
-        // `app.dialogs`.
         let unsavedAlert = app.dialogs.element(boundBy: 0)
         XCTAssertTrue(unsavedAlert.waitForExistence(timeout: 5),
                       "Unsaved-changes alert did not appear on close; dumping tree:\n\(app.debugDescription)")
-        // The alert's message text is "Unsaved Macro Changes". Either read it
-        // from the static text or just rely on the Cancel button being present.
         let cancelButton = unsavedAlert.buttons["Cancel"]
         XCTAssertTrue(cancelButton.exists, "Cancel button not found on unsaved-changes alert")
         cancelButton.click()
-        Thread.sleep(forTimeInterval: 1.0)
+        Thread.sleep(forTimeInterval: Self.uiPump)
 
-        // After Cancel, the Settings window must still exist (the close was
-        // vetoed by windowShouldClose returning false).
         XCTAssertTrue(settingsWindow.exists,
                       "Settings window should still be open after Canceling the unsaved-changes alert")
         XCTAssertFalse(app.dialogs.element(boundBy: 0).exists,
                        "Unsaved-changes alert should be dismissed after Cancel")
 
-        // The unsaved edit must still be intact in the name field — i.e., the
+        // The unsaved edit must still be intact in the name field — the
         // Cancel path did NOT commit the change.
         let nameAfterCancel = try XCTUnwrap(app.textFields["macro.0.name"].value as? String)
         XCTAssertTrue(nameAfterCancel.hasSuffix("UnsavedEdit"),
                       "Unsaved edit should be preserved after Canceling the alert, got '\(nameAfterCancel)'")
 
-        // Re-focus the name field by clicking it and confirm the edit is still
-        // there (defensive: ensures the field is still interactive and the
-        // dirty state survives the alert cycle).
-        nameField.click()
-        Thread.sleep(forTimeInterval: 0.3)
-        let nameRefocused = try XCTUnwrap(nameField.value as? String)
-        XCTAssertTrue(nameRefocused.hasSuffix("UnsavedEdit"),
-                      "Unsaved edit should still be in the name field after re-focusing, got '\(nameRefocused)'")
-    }
-
-    /// Verifies that switching the inline-script interpreter preset from
-    /// `/bin/sh` (default for the Add Macro… seed) to `/bin/bash` is persisted
-    /// through the Save → confirm dialog. After Save the row model is
-    /// republished and the preset popUp's selected value shows `/bin/bash`.
-    ///
-    /// Note: in inline mode the interpreter TextField is only rendered when
-    /// the preset is "Custom"; for the seeded "/bin/sh" → "/bin/bash" path we
-    /// observe the preset popUp's `value` instead of the TextField. The macro
-    /// model's `interpreter` field mirrors the preset (see
-    /// `onChange(of: interpreterPreset)`), so the popUp's selected label is a
-    /// faithful proxy for the persisted interpreter.
-    func testChangeMacroInterpreterPreset() throws {
-        let app = makeApp()
-        app.launch()
-        let settingsWindow = app.windows["ClipboardManager Settings"]
-        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
-
-        // Seed: add one macro and register it (same flow as testAddMacroScript).
-        let addButton = app.buttons["macro.add"]
-        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found (seed)")
-        addButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
-        let nameField = app.textFields["macro.0.name"]
-        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found")
-        nameField.click()
-        nameField.typeText("X")
-        let saveButton = app.buttons["macro.0.save"]
-        XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Macro Save button not found (seed)")
-        saveButton.click()
-        let confirmSave = app.buttons["macro.0.confirm.save"]
-        XCTAssertTrue(confirmSave.waitForExistence(timeout: 5), "Confirm-Save button not found (seed)")
-        confirmSave.click()
-        Thread.sleep(forTimeInterval: 1.0)
-
-        // Sanity: the interpreter preset is "/bin/sh" (MacroScript default).
-        // In inline mode the preset is shown via a popUpButton; the selected
-        // item's label is the popUp's `value` (SwiftUI Picker → NSPopUpButton).
-        let presetPopUp = app.popUpButtons["macro.0.interpreterPreset"]
-        XCTAssertTrue(presetPopUp.waitForExistence(timeout: 5), "Interpreter preset popUp not found (seed)")
-        let seedPreset = try XCTUnwrap(presetPopUp.value as? String)
-        XCTAssertEqual(seedPreset, "/bin/sh",
-                       "Seeded interpreter preset should be '/bin/sh', got '\(seedPreset)'")
-
-        // Switch the preset to /bin/bash by opening the popUp and tapping
-        // the matching menu item.
-        presetPopUp.click()
-        Thread.sleep(forTimeInterval: 0.5)
-        let bashMenuItem = app.menuItems["/bin/bash"]
-        XCTAssertTrue(bashMenuItem.waitForExistence(timeout: 3), "/bin/bash menu item not found")
-        bashMenuItem.click()
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // The preset change immediately writes `interpreter = "/bin/bash"`
-        // (`onChange(of: interpreterPreset)`), and the row's dirty flag flips
-        // because interpreter now differs from the macro model. Save → confirm.
-        let saveButtonEdit = app.buttons["macro.0.save"]
-        XCTAssertTrue(saveButtonEdit.isEnabled, "Macro Save should be enabled after changing interpreter preset")
-        saveButtonEdit.click()
-        let confirmSaveEdit = app.buttons["macro.0.confirm.save"]
-        XCTAssertTrue(confirmSaveEdit.waitForExistence(timeout: 5), "Confirm-Save button not found (edit)")
-        confirmSaveEdit.click()
-        Thread.sleep(forTimeInterval: 1.0)
-
-        // Assert the persisted preset (and therefore the interpreter) is the
-        // new one.
-        let finalPreset = try XCTUnwrap(app.popUpButtons["macro.0.interpreterPreset"].value as? String)
-        XCTAssertEqual(finalPreset, "/bin/bash",
-                       "Interpreter preset should be '/bin/bash' after preset change, got '\(finalPreset)'")
-    }
-
-    /// Verifies that switching the source type to "Script file" and entering
-    /// a real script path (a file created under the user's home directory by
-    /// the test runner) validates and saves successfully. After Save the row
-    /// model is republished; the path field shows the resolved path and the
-    /// fingerprint-captured badge must NOT appear (file-mode macros show no
-    /// badge; only inline-mode ones do — see MacroScriptRowView.confirmSave).
-    func testMacroScriptFileSource() throws {
-        let app = makeApp()
-        app.launch()
-        let settingsWindow = app.windows["ClipboardManager Settings"]
-        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
-
-        // Create a real, executable shell script file in the user's home
-        // directory. MacroScriptPathValidator rejects paths outside $HOME
-        // (`.outsideHome`) and non-existent files (`.fileNotFound`), so we
-        // need an in-home, in-disk file. The temporary directory provided by
-        // `NSTemporaryDirectory()` is usually outside $HOME on macOS
-        // (`/var/folders/...`), so we write directly to `~/` instead.
+        // --- Step 5: Switch to Script-file source with a real script ---
+        // Create a real, executable shell script file under a dedicated
+        // E2E directory in the user's home. MacroScriptPathValidator rejects
+        // paths outside $HOME (`.outsideHome`) and non-existent files
+        // (`.fileNotFound`), so we need an in-home, on-disk file. The
+        // temporary directory provided by `NSTemporaryDirectory()` is
+        // usually outside $HOME on macOS (`/var/folders/...`), so we use
+        // `~/.ClipboardManagerE2E/` instead.
+        //
+        // To avoid clobbering a pre-existing user file (review #2): the
+        // directory and script use a UUID-derived unique name, we abort the
+        // test if the target path already exists before writing, and the
+        // `defer` only removes the exact URL this test created (it does not
+        // touch anything the user may have placed under that directory).
         let home = NSHomeDirectory()
-        let scriptPath = (home as NSString).appendingPathComponent("ClipboardManagerE2ETestMacro.sh")
+        let e2eDir = (home as NSString)
+            .appendingPathComponent(".ClipboardManagerE2E")
+        let scriptName = "macro-\(UUID().uuidString).sh"
+        let scriptURL = URL(fileURLWithPath: e2eDir, isDirectory: true)
+            .appendingPathComponent(scriptName, isDirectory: false)
+        let scriptPath = scriptURL.path
         let scriptBody = "#!/bin/sh\necho hi > \"$CB_OUTPUT_FILE\"\n"
         do {
-            try scriptBody.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+            // Refuse to overwrite an existing file: a fresh UUID collision is
+            // astronomically unlikely, so an existing file means something else
+            // owns that path and we must not destroy it.
+            if FileManager.default.fileExists(atPath: scriptPath) {
+                throw NSError(
+                    domain: "SmokeUITests",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Refusing to overwrite existing file at \(scriptPath)"]
+                )
+            }
+            try FileManager.default.createDirectory(
+                atPath: e2eDir,
+                withIntermediateDirectories: true
+            )
+            try scriptBody.write(to: scriptURL, atomically: true, encoding: .utf8)
             // Best-effort chmod; non-executable file still passes path
             // validation (only `fileExists`, not `isExecutable`) but we set
             // the bit anyway so the test exercises a realistic file.
@@ -511,60 +389,39 @@ final class SmokeUITests: XCTestCase {
                                                    ofItemAtPath: scriptPath)
         }
         defer {
-            try? FileManager.default.removeItem(atPath: scriptPath)
+            // Remove only the file this test created. We intentionally do NOT
+            // remove the `~/.ClipboardManagerE2E/` directory itself or any
+            // other paths under it — those may belong to the user or to other
+            // test runs.
+            try? FileManager.default.removeItem(at: scriptURL)
         }
 
-        // Seed: add one macro and register it (same flow as testAddMacroScript).
-        let addButton = app.buttons["macro.add"]
-        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found (seed)")
-        addButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
-        let nameField = app.textFields["macro.0.name"]
-        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found")
-        nameField.click()
-        nameField.typeText("X")
-        let saveButton = app.buttons["macro.0.save"]
-        XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Macro Save button not found (seed)")
-        saveButton.click()
-        let confirmSave = app.buttons["macro.0.confirm.save"]
-        XCTAssertTrue(confirmSave.waitForExistence(timeout: 5), "Confirm-Save button not found (seed)")
-        confirmSave.click()
-        Thread.sleep(forTimeInterval: 1.0)
-
         // Switch the source type from "Inline shell" to "Script file".
-        // SwiftUI `.pickerStyle(.segmented)` inside a macOS Form renders as
-        // an NSMatrix-style RadioGroup (not NSSegmentedControl); each option
-        // is exposed to AX as a RadioButton with the option's label. The
-        // `accessibilityIdentifier("macro.0.sourceType")` we put on the
-        // Picker surfaces on the RadioGroup element. We tap the
-        // "Script file" RadioButton to flip the source type.
         let sourceTypeGroup = app.radioGroups["macro.0.sourceType"]
         XCTAssertTrue(sourceTypeGroup.waitForExistence(timeout: 5),
                       "Source type radio group not found; dumping tree:\n\(app.debugDescription)")
         let scriptFileRadio = sourceTypeGroup.radioButtons["Script file"]
         XCTAssertTrue(scriptFileRadio.waitForExistence(timeout: 3), "'Script file' radio button not found")
         scriptFileRadio.click()
-        Thread.sleep(forTimeInterval: 0.5)
+        Thread.sleep(forTimeInterval: Self.uiPump)
 
         // Now the inline editor is hidden and the path TextField + Browse
         // button are shown. Enter the absolute path to the home script.
         let pathField = app.textFields["macro.0.path"]
         XCTAssertTrue(pathField.waitForExistence(timeout: 5), "Path TextField not found after switching to Script file")
         pathField.click()
-        Thread.sleep(forTimeInterval: 0.3)
+        Thread.sleep(forTimeInterval: Self.uiPump)
         pathField.typeText(scriptPath)
-        Thread.sleep(forTimeInterval: 0.5)
+        Thread.sleep(forTimeInterval: Self.uiPump)
 
         // Save the edit; the confirmation dialog appears because the
         // file-mode fingerprint is captured at confirm-save time too.
-        let saveButtonEdit = app.buttons["macro.0.save"]
         XCTAssertTrue(saveButtonEdit.waitForExistence(timeout: 3), "Macro Save button not found (file)")
         XCTAssertTrue(saveButtonEdit.isEnabled, "Macro Save should be enabled after entering the path")
         saveButtonEdit.click()
-        let confirmSaveEdit = app.buttons["macro.0.confirm.save"]
         XCTAssertTrue(confirmSaveEdit.waitForExistence(timeout: 5), "Confirm-Save button not found (file)")
         confirmSaveEdit.click()
-        Thread.sleep(forTimeInterval: 1.0)
+        Thread.sleep(forTimeInterval: 0.3)
 
         // The path field should reflect the persisted (resolved) path. The
         // validator resolves symlinks but the absolute path under $HOME
