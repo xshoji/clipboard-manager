@@ -21,7 +21,11 @@
 #                        certificates, so we keep CODE_SIGN_IDENTITY="-" (ad-hoc)
 #                        and only stamp the Team ID. TCC keys on
 #                        (Team ID, bundle id) so ad-hoc + Team ID is sufficient.
-#   XCODE_CONFIG        - "Debug" (default) or "Release".
+#   XCODE_CONFIG        - "Debug" (default) or "Release". The E2E launch path
+#                         in AppDelegate is guarded by the E2E bundle id AND
+#                         the `CM_E2E_OPEN_WINDOW=1` launch environment (not
+#                         by `#if DEBUG`), so Release builds of the E2E host
+#                         also drive the Settings + main windows on launch.
 #   XCODE_DESTINATION   - defaults to "platform=macOS".
 
 set -euo pipefail

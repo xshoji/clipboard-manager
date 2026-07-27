@@ -93,13 +93,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Settings windows immediately so the test can drive them via
         // XCUIElement.
         //
-        // Guarded by `#if DEBUG` so the E2E launch path and the
-        // `AXIsProcessTrustedWithOptions` prompt cannot fire from a Release
-        // build of the production app even if the environment variable is
-        // ever set by mistake. The E2E host app is built in the `Debug`
-        // configuration (see project.yml / Scripts/run-e2e-tests.sh).
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["CM_E2E_OPEN_WINDOW"] == "1" {
+        // Guarded by BOTH the E2E bundle identifier AND the launch environment
+        // variable (review #4). The previous `#if DEBUG` guard made Release
+        // builds of the E2E host unusable even though `Scripts/run-e2e-tests.sh`
+        // advertises `XCODE_CONFIG=Release`; gating on the bundle id keeps the
+        // production app (which has a different bundle id) safe even if the
+        // environment variable is ever set by mistake, while letting the E2E
+        // host exercise the test launch path in any configuration.
+        if ProcessInfo.processInfo.environment["CM_E2E_OPEN_WINDOW"] == "1",
+           Bundle.main.bundleIdentifier == "com.xshoji.ClipboardManager.E2E" {
             forceE2EDefaultSettings()
             // Ask the system to prompt for Accessibility permission so the
             // XCUITest harness can introspect the app; no-op when the
@@ -110,7 +112,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             container.coordinator.showMainWindow(focusSearch: false)
             container.coordinator.showSettings()
         }
-        #endif
     }
 
     /// Resets all action hotkeys and the history limit settings to their
