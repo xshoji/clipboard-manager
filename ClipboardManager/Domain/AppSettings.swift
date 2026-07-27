@@ -30,19 +30,53 @@ struct Setting<T> {
 final class AppSettings: @unchecked Sendable {
     static let shared = AppSettings()
 
-    @ObservationIgnored @Setting("hotkeyKeyCode", default: 7)        var hotkeyKeyCode: Int        // 7 = X
-    @ObservationIgnored @Setting("hotkeyModifiers", default: 196608) var hotkeyModifiers: Int       // cmd+ctrl
+    // MARK: - Default hotkey values
+    //
+    // Single source of truth for all hotkey default values. Both the
+    // production UI (Reset buttons in HotkeyRecorderView / SettingsView)
+    // and the E2E smoke-test harness (AppDelegate.forceE2EDefaultSettings)
+    // MUST reference these constants so the two paths cannot drift.
+    //
+    // Key codes are Carbon virtual-key codes (exposed via NSEvent.keyCode).
+
+    /// Global hotkey default: Cmd+Ctrl+X (keycode 7 = X).
+    static let defaultHotkeyKeyCode = 7   // X
+    static let defaultHotkeyModifiers = Int(
+        NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.control.rawValue
+    )
+
+    /// Edit action hotkey default: Cmd+E (keycode 14 = E).
+    static let defaultEditHotkeyCode = 14
+    /// Paste Plain action hotkey default: Cmd+P (keycode 35 = P).
+    static let defaultPastePlainHotkeyCode = 35
+    /// Macro Picker overlay hotkey default: Cmd+M (keycode 46 = M).
+    static let defaultMacroPickerHotkeyCode = 46
+    /// All three action hotkeys default to Cmd-only modifiers.
+    static let defaultActionHotkeyModifiers = Int(NSEvent.ModifierFlags.command.rawValue)
+
+    /// Test-only hotkey modifiers: Cmd+Ctrl+Opt+Shift (4 modifiers).
+    /// Guaranteed not to collide with the production default of Cmd+Ctrl.
+    /// Used by the E2E smoke test harness via `AppDelegate.forceE2EDefaultSettings`.
+    static let testHotkeyModifiers = Int(
+        NSEvent.ModifierFlags.command.rawValue
+        | NSEvent.ModifierFlags.control.rawValue
+        | NSEvent.ModifierFlags.option.rawValue
+        | NSEvent.ModifierFlags.shift.rawValue
+    )
+
+    @ObservationIgnored @Setting("hotkeyKeyCode", default: AppSettings.defaultHotkeyKeyCode)        var hotkeyKeyCode: Int
+    @ObservationIgnored @Setting("hotkeyModifiers", default: AppSettings.defaultHotkeyModifiers)    var hotkeyModifiers: Int
 
     /// Per-action hotkeys. Effective only while the history window is visible ( AppDelegate.installActionHotkeys / uninstallActionHotkeys ).
     /// Defaults: Edit = Cmd+E ( keycode 14 ), Paste Plain = Cmd+P ( keycode 35 ).
-    @ObservationIgnored @Setting("editHotkeyCode", default: 14)        var editHotkeyCode: Int
-    @ObservationIgnored @Setting("editHotkeyModifiers", default: Int(NSEvent.ModifierFlags.command.rawValue)) var editHotkeyModifiers: Int
-    @ObservationIgnored @Setting("pastePlainHotkeyCode", default: 35)  var pastePlainHotkeyCode: Int
-    @ObservationIgnored @Setting("pastePlainHotkeyModifiers", default: Int(NSEvent.ModifierFlags.command.rawValue)) var pastePlainHotkeyModifiers: Int
+    @ObservationIgnored @Setting("editHotkeyCode", default: AppSettings.defaultEditHotkeyCode)        var editHotkeyCode: Int
+    @ObservationIgnored @Setting("editHotkeyModifiers", default: AppSettings.defaultActionHotkeyModifiers) var editHotkeyModifiers: Int
+    @ObservationIgnored @Setting("pastePlainHotkeyCode", default: AppSettings.defaultPastePlainHotkeyCode)  var pastePlainHotkeyCode: Int
+    @ObservationIgnored @Setting("pastePlainHotkeyModifiers", default: AppSettings.defaultActionHotkeyModifiers) var pastePlainHotkeyModifiers: Int
    /// Macro Picker overlay hotkey. Default: Cmd+M (keycode 46 = M).
    /// Effective only while the history window is visible (same scope as edit / paste plain).
-   @ObservationIgnored @Setting("macroPickerHotkeyCode", default: 46)  var macroPickerHotkeyCode: Int
-   @ObservationIgnored @Setting("macroPickerHotkeyModifiers", default: Int(NSEvent.ModifierFlags.command.rawValue)) var macroPickerHotkeyModifiers: Int
+   @ObservationIgnored @Setting("macroPickerHotkeyCode", default: AppSettings.defaultMacroPickerHotkeyCode)  var macroPickerHotkeyCode: Int
+   @ObservationIgnored @Setting("macroPickerHotkeyModifiers", default: AppSettings.defaultActionHotkeyModifiers) var macroPickerHotkeyModifiers: Int
     @ObservationIgnored @Setting("retentionDays", default: 30)        var retentionDays: Int
     @ObservationIgnored @Setting("maxHistoryCount", default: 1000)    var maxHistoryCount: Int
     @ObservationIgnored @Setting("maxItemSizeMB", default: 10)         var maxItemSizeMB: Int

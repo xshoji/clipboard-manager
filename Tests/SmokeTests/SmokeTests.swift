@@ -1,258 +1,234 @@
 import XCTest
 import AppKit
 
-/// Lightweight launch smoke test with settings backup/restore.
+/// XCUITest-based smoke tests for ClipboardManager.
 ///
-/// Test flow:
-/// 1. Terminate any running production app (prevents hotkey double-registration
-///    and pasteboard double-monitoring).
-/// 2. Export UserDefaults to temporary plists via `defaults export`:
-///    - `com.xshoji.ClipboardManager` (.app bundle = production app domain)
-///    - `ClipboardManager` (SPM bare executable = test binary domain)
-/// 3. Overwrite the test binary's hotkey modifiers to cmd+ctrl+opt+shift
-///    via `defaults write` — guaranteed not to collide with the production
-///    default of cmd+ctrl.
-/// 4. Launch the `swift build` binary and verify it survives for several
-///    seconds without crashing.
-/// 5. Terminate the test process via SIGTERM, falling back to SIGKILL on
-///    timeout.
-/// 6. Restore the backed-up settings via `defaults import`.
+/// Verification philosophy:
+///   The sandboxed UI test runner cannot reach the host app's UserDefaults
+///   domain via `defaults read/write`, so all assertions are made against the
+///   app's GUI state (XCUIElement labels / staticTexts / popUpButton values)
+///   instead of reading `defaults`. The host app is launched with
+///   `CM_E2E_OPEN_WINDOW=1` so AppDelegate forces action hotkeys to known
+///   defaults and opens the main + Settings windows immediately.
 ///
-/// Notes:
-/// - SPM bare executables have no Bundle Identifier, so UserDefaults uses
-///   the executable name `ClipboardManager` as its domain (distinct from the
-///   production .app's `com.xshoji.ClipboardManager`).
-/// - The app opens the real SwiftData store under
-///   `~/Library/Application Support`. Clipboard monitoring during the test
-///   will save real pasteboard contents into history (clipboard history
-///   pollution is accepted).
-/// - Settings (UserDefaults) are reliably restored before and after the test.
-/// - If the production app is running, it is force-terminated at test start.
-@MainActor
-final class SmokeTests: XCTestCase {
-    /// Bundle Identifier of the production app (.app bundle).
-    private static let bundleID = "com.xshoji.ClipboardManager"
+/// Test flow per case:
+///   1. setUpWithError terminates any stale instances and (re)launches the
+///      E2E app. AppDelegate writes the action hotkey defaults before any
+///      window appears, so each test starts from a clean state.
+///   2. Interact with UI elements via XCUIElement (click Clear/Reset/Record,
+///      or call `typeKey(_:modifierFlags:)` to synthesize a key event).
+///   3. Verify the resulting UI state (e.g. the Edit hotkey display label
+///      becomes "(none)" after Clear, "⌘E" after Reset, "⇧⌘A" after Record).
+///   4. Terminate the app.
+///
+/// Requirements:
+/// - The terminal running `xcodebuild test` must have Accessibility permission
+///   (System Settings → Privacy & Security → Accessibility). The first time
+///   the E2E app is launched it will prompt for Accessibility permission via
+///   `AXIsProcessTrustedWithOptions`; grant it once for
+///   "com.xshoji.ClipboardManager.E2E". Personal Team signing keeps the team
+///   id stable so subsequent runs do not need re-granting.
+/// - The E2E host app shares the executable name "ClipboardManager" with the
+///   production build so UserDefaults.standard resolves to the same defaults
+///   domain ("ClipboardManager"); its bundle id is
+///   "com.xshoji.ClipboardManager.E2E" so TCC entries are isolated.
+final class SmokeUITests: XCTestCase {
+    private static let e2eBundleID = "com.xshoji.ClipboardManager.E2E"
+    private static let productionBundleID = "com.xshoji.ClipboardManager"
 
-    /// UserDefaults domain for the SPM bare executable (executable name).
-    private static let spmDefaultsDomain = "ClipboardManager"
-
-    /// Temporary plist paths for UserDefaults backup.
-    private static let backupPathBundle = NSTemporaryDirectory() + "cm-e2e-settings-bundle.plist"
-    private static let backupPathSPM = NSTemporaryDirectory() + "cm-e2e-settings-spm.plist"
-
-    /// Test hotkey modifiers: cmd+ctrl+opt+shift (4 modifiers).
-    /// Guaranteed not to collide with the production default of cmd+ctrl.
-    private static let testHotkeyModifiers = Int(
-        NSEvent.ModifierFlags.command.rawValue
-        | NSEvent.ModifierFlags.control.rawValue
-        | NSEvent.ModifierFlags.option.rawValue
-        | NSEvent.ModifierFlags.shift.rawValue
-    )
-
-    /// Whether settings backup succeeded (ensures restore runs only once).
-    private static var backupTaken = false
-
-    /// Seconds the app must survive after launch without crashing to pass.
-    private let survivalSeconds: TimeInterval = 5
-
-    /// Seconds to wait after SIGTERM before sending SIGKILL.
-    private let terminateTimeoutSeconds: TimeInterval = 3
+    private let startupSeconds: TimeInterval = 3
 
     // MARK: - Setup / Teardown
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        // 1. Terminate the production app if it is running.
-        Self.terminateRunningApp()
-        // 2. Back up settings only once (subsequent test cases do not overwrite).
-        if !Self.backupTaken {
-            try Self.exportSettings()
-            Self.backupTaken = true
-        }
-        // 3. Overwrite test hotkeys (on the SPM domain the test binary reads).
-        try Self.setTestHotkeys()
-    }
-
-    override class func tearDown() {
-        // 6. Restore backed-up settings (only if export succeeded).
-        if Self.backupTaken {
-            try? Self.restoreSettings()
-        }
-        super.tearDown()
+        continueAfterFailure = false
+        Self.terminateRunningApps()
     }
 
     // MARK: - Tests
 
     func testAppLaunchesWithoutCrash() throws {
-        log("testAppLaunchesWithoutCrash: start")
-
-        log("buildAndLocateBinary: begin")
-        let binaryPath = try buildAndLocateBinary()
-        log("buildAndLocateBinary: done path=\(binaryPath)")
-
-        let app = Process()
-        app.executableURL = URL(fileURLWithPath: binaryPath)
-        // Redirect child process stdout/stderr to /dev/null to avoid
-        // pipe EOF waits and log noise.
-        let devnull = FileHandle(forWritingAtPath: "/dev/null")!
-        app.standardOutput = devnull
-        app.standardError = devnull
-
-        log("Process.run: begin")
-        try app.run()
-        log("Process.run: done pid=\(app.processIdentifier)")
-
-        // Always terminate, regardless of success or failure.
-        defer {
-            Self.forceTerminate(app, timeout: terminateTimeoutSeconds)
-        }
-
-        // Wait for the survival period and check the process is still alive.
-        log("sleep \(survivalSeconds)s start")
-        Thread.sleep(forTimeInterval: survivalSeconds)
-        log("sleep done, isRunning=\(app.isRunning)")
-
-        XCTAssertTrue(
-            app.isRunning,
-            "App exited within \(survivalSeconds) seconds (possible crash). exitCode=\(app.terminationStatus)"
-        )
-        log("testAppLaunchesWithoutCrash: assertion passed ✓")
+        let app = makeApp()
+        app.launch()
+        Thread.sleep(forTimeInterval: startupSeconds)
+        XCTAssertTrue(app.state == .runningForeground || app.state == .runningBackground,
+                      "App crashed within \(startupSeconds)s (state=\(app.state.rawValue))")
+        app.terminate()
     }
 
-    /// Writes unbuffered log output to stderr (XCTest buffers stdout).
-    private static func log(_ msg: String) {
-        let line = "[SmokeTests] \(msg)\n"
-        FileHandle.standardError.write(line.data(using: .utf8)!)
-    }
-    private func log(_ msg: String) {
-        Self.log(msg)
-    }
+    /// Verifies the Settings form reflects the history limit defaults baked in
+    /// by AppDelegate on E2E launch (retention=30 days, maxCount=1,000,
+    /// maxItemSizeMB=10). Persistence across relaunch cannot be exercised
+    /// because the sandboxed test runner cannot read the host app's defaults
+    /// domain; this test is the GUI-state surrogate.
+    func testHistorySettingsReflectInUI() throws {
+        let app = makeApp()
+        app.launch()
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
 
-    // MARK: - Helpers
+        // SwiftUI Form Pickers render as NSPopUpButton on macOS; the selected
+        // item's label is exposed via the popUpButton's `value`.
+        let retentionPopUp = app.popUpButtons.element(boundBy: 0)
+        XCTAssertTrue(retentionPopUp.waitForExistence(timeout: 5), "Retention picker not found")
+        XCTAssertEqual(try XCTUnwrap(retentionPopUp.value as? String), "30 days",
+                       "Retention picker did not show '30 days'")
 
-    /// Terminates any running production app. No-op if none is running.
-    private static func terminateRunningApp() {
-        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-        guard !apps.isEmpty else { return }
-        Self.log("Terminating \(apps.count) running app instance(s)")
-        for app in apps {
-            app.terminate()
-        }
-        // terminate() is asynchronous; wait briefly to ensure exit.
-        Thread.sleep(forTimeInterval: 1.0)
-    }
+        let maxItemsPopUp = app.popUpButtons.element(boundBy: 1)
+        XCTAssertTrue(maxItemsPopUp.waitForExistence(timeout: 5), "Max items picker not found")
+        XCTAssertEqual(try XCTUnwrap(maxItemsPopUp.value as? String), "1,000",
+                       "Max items picker did not show '1,000'")
 
-    /// Exports current UserDefaults to temporary plists via `defaults export`.
-    /// Backs up both the production domain (.app) and the SPM domain (bare executable).
-    private static func exportSettings() throws {
-        try runShell("defaults export \(bundleID) '\(backupPathBundle)'")
-        // The SPM domain plist may not exist yet (export succeeds with an empty plist).
-        try runShell("defaults export \(spmDefaultsDomain) '\(backupPathSPM)'")
-        Self.log("Settings exported to temporary plists")
-    }
-
-    /// Restores backed-up settings via `defaults import`.
-    private static func restoreSettings() throws {
-        try runShell("defaults import \(bundleID) '\(backupPathBundle)'")
-        try runShell("defaults import \(spmDefaultsDomain) '\(backupPathSPM)'")
-        Self.log("Settings restored from temporary plists")
-    }
-
-    /// Overwrites all hotkey modifier keys in the SPM domain (read by the test
-    /// binary) to the test value (cmd+ctrl+opt+shift).
-    private static func setTestHotkeys() throws {
-        let mods = testHotkeyModifiers
-        let modifierKeys = [
-            "hotkeyModifiers",
-            "editHotkeyModifiers",
-            "pastePlainHotkeyModifiers",
-            "macroPickerHotkeyModifiers",
-        ]
-        for key in modifierKeys {
-            try runShell("defaults write \(spmDefaultsDomain) \(key) -int \(mods)")
-        }
-        Self.log("Test hotkeys written to SPM domain (\(spmDefaultsDomain))")
-    }
-
-    /// Terminates the process via SIGTERM, falling back to SIGKILL on timeout.
-    /// Using only `waitUntilExit()` can hang if NSApplication's terminate
-    /// handler does not complete.
-    private static func forceTerminate(_ proc: Process, timeout: TimeInterval) {
-        guard proc.isRunning else {
-            proc.waitUntilExit()
-            return
-        }
-        let pid = proc.processIdentifier
-        Self.log("Terminating pid=\(pid) (SIGTERM)")
-
-        // Send SIGTERM (equivalent to Process.terminate).
-        kill(pid, SIGTERM)
-
-        // Poll every 100ms until the timeout.
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if !proc.isRunning {
-                proc.waitUntilExit()
-                Self.log("pid=\(pid) exited after SIGTERM (code=\(proc.terminationStatus))")
-                return
-            }
-            Thread.sleep(forTimeInterval: 0.1)
-        }
-
-        // If SIGTERM did not work, force-kill with SIGKILL.
-        Self.log("pid=\(pid) did not exit after \(timeout)s, sending SIGKILL")
-        kill(pid, SIGKILL)
-        proc.waitUntilExit()
-        Self.log("pid=\(pid) killed (code=\(proc.terminationStatus))")
-    }
-
-    /// Runs a shell command; throws on non-zero exit.
-    @discardableResult
-    private static func runShell(_ command: String) throws -> String {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        proc.arguments = ["-c", command]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
-        try proc.run()
-        proc.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
-        if proc.terminationStatus != 0 {
-            throw NSError(
-                domain: "SmokeTests",
-                code: Int(proc.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: "Shell command failed: \(command)\n\(output)"]
+        // Max item size is a Stepper with label text "Max item size: 10 MB".
+        //
+        // SwiftUI on macOS exposes the rendered Text content as the
+        // staticText's *value* (not its `label`) when the Text is standalone,
+        // while Text used as the label of a Label/Picker shows up under
+        // `label`. The Stepper here renders "Max item size: 10 MB" as a plain
+        // Text, so the string is in `value` and `label` is empty. Query both
+        // attributes so the match is reliable regardless of which slot
+        // SwiftUI populates.
+        //
+        // We wait for the staticText to exist (failing the test if it never
+        // shows up) instead of silently skipping the assertion — a missing
+        // label means the Stepper is gone or renamed, which is a regression
+        // we want to catch.
+        let maxItemText = app.staticTexts.matching(
+            NSPredicate(
+                format: "(label CONTAINS 'Max item size' OR label CONTAINS '10 MB' OR value CONTAINS 'Max item size' OR value CONTAINS '10 MB')"
             )
-        }
-        return output
+        ).firstMatch
+        XCTAssertTrue(
+            maxItemText.waitForExistence(timeout: 5),
+            "Max item size staticText not found; dumping app tree:\n\(app.debugDescription)"
+        )
+        // The content string ("Max item size: 10 MB") may be stored in either
+        // `label` or `value` depending on the SwiftUI rendering path, so
+        // inspect whichever is non-empty.
+        let maxItemContent = maxItemText.label.isEmpty ? (maxItemText.value as? String ?? "") : maxItemText.label
+        XCTAssertTrue(
+            maxItemContent.contains("10"),
+            "Max item size did not show '10 MB', got '\(maxItemContent)'"
+        )
+        app.terminate()
     }
 
-    /// Returns the absolute path of the `ClipboardManager` executable by
-    /// querying `swift build --show-bin-path`.
-    /// Does NOT run `swift build` here because `swift test` has already
-    /// built the binary (calling `swift build` would deadlock on the
-    /// `.build` directory lock).
-    private func buildAndLocateBinary() throws -> String {
-        let pathProc = Process()
-        pathProc.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
-        pathProc.arguments = ["build", "--show-bin-path"]
-        let pathPipe = Pipe()
-        pathProc.standardOutput = pathPipe
-        try pathProc.run()
-        let pathData = pathPipe.fileHandleForReading.readDataToEndOfFile()
-        pathProc.waitUntilExit()
+    /// Verifies that clicking "Clear" on the Edit Action Hotkey makes its
+    /// display label become "(none)".
+    func testActionHotkeyClear() throws {
+        let app = makeApp()
+        app.launch()
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
 
-        let binDir = String(data: pathData, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        XCTAssertFalse(binDir.isEmpty, "swift build --show-bin-path output is empty")
+        // Edit hotkey starts at default ⌘E so Clear button is visible.
+        let clearButton = app.buttons["action.edit.clear"]
+        XCTAssertTrue(clearButton.waitForExistence(timeout: 10), "Edit Clear button not found")
+        clearButton.click()
+        Thread.sleep(forTimeInterval: 1.0)
 
-        let binaryPath = "\(binDir)/ClipboardManager"
-        XCTAssertTrue(
-            FileManager.default.isReadableFile(atPath: binaryPath),
-            "Executable not found: \(binaryPath)"
-        )
-        return binaryPath
+        let display = app.staticTexts["action.edit.display"]
+        if !display.exists {
+            Self.log("Display label not found (clear); dumping app tree:\n\(app.debugDescription)")
+        }
+        XCTAssertTrue(display.exists, "Action edit display label not found")
+        // SwiftUI exposes the Text content as the element's `value` (not `label`).
+        let displayValue = display.value as? String ?? ""
+        XCTAssertEqual(displayValue, "(none)",
+                       "Edit hotkey display should be '(none)' after Clear, got '\(displayValue)'")
+        app.terminate()
+    }
+
+    /// Verifies that clicking "Reset" on the Edit Action Hotkey restores
+    /// its display label to "⌘E" (= default ⌘E).
+    /// This test first changes the Edit hotkey to a non-default value via
+    /// Record, then clicks Reset.
+    func testActionHotkeyReset() throws {
+        let app = makeApp()
+        app.launch()
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+
+        // Step 1: clear the Edit hotkey so Reset has something to restore.
+        let clearButton = app.buttons["action.edit.clear"]
+        XCTAssertTrue(clearButton.waitForExistence(timeout: 10), "Edit Clear button not found (pre-reset)")
+        clearButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        // After Clear, the Clear button is conditionally hidden (keyCode/mof==0).
+        // The Reset button remains visible.
+        let resetButton = app.buttons["action.edit.reset"]
+        XCTAssertTrue(resetButton.waitForExistence(timeout: 5), "Edit Reset button not found")
+        resetButton.click()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        let display = app.staticTexts["action.edit.display"]
+        if !display.exists {
+            Self.log("Display label not found (reset); dumping app tree:\n\(app.debugDescription)")
+        }
+        XCTAssertTrue(display.exists, "Action edit display label not found")
+        let displayValue = display.value as? String ?? ""
+        XCTAssertEqual(displayValue, "⌘E",
+                       "Edit hotkey display should be '⌘E' after Reset, got '\(displayValue)'")
+        app.terminate()
+    }
+
+    /// Verifies that clicking "Record" on the EditAction Hotkey and then
+    /// synthesizing a Cmd+Shift+A key event via XCUIElement captures the
+    /// new shortcut, shown as "⇧⌘A".
+    func testActionHotkeyRecord() throws {
+        let app = makeApp()
+        app.launch()
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+
+        let recordButton = app.buttons["action.edit.record"]
+        XCTAssertTrue(recordButton.waitForExistence(timeout: 5), "Edit Record button not found")
+        recordButton.click()
+        // Wait for CaptureKeyView to become first responder.
+        Thread.sleep(forTimeInterval: 1.0)
+        // Synthesize Cmd+Shift+A via XCUIElement. macOS XCUItest exposes
+        // `typeKey(_:modifierFlags:)` which sends a real key event with the
+        // specified modifiers, sidestepping the System Events / AppleScript
+        // path that the sandboxed UI test runner cannot use.
+        app.typeKey("a", modifierFlags: [.command, .shift])
+        Thread.sleep(forTimeInterval: 1.0)
+
+        let display = app.staticTexts["action.edit.display"]
+        XCTAssertTrue(display.exists, "Action edit display label not found")
+        let displayValue = display.value as? String ?? ""
+        XCTAssertEqual(displayValue, "⇧⌘A",
+                       "Edit hotkey display should be '⇧⌘A' after Record, got '\(displayValue)'")
+        app.terminate()
+    }
+
+    // MARK: - App Launcher
+
+    /// Builds an XCUIApplication preconfigured with the E2E bundle id and the
+    /// `CM_E2E_OPEN_WINDOW=1` launch environment so AppDelegate forces the
+    /// action hotkey defaults, prompts for Accessibility, and opens the main
+    /// window and the Settings window immediately on launch.
+    private func makeApp() -> XCUIApplication {
+        let app = XCUIApplication(bundleIdentifier: Self.e2eBundleID)
+        app.launchEnvironment["CM_E2E_OPEN_WINDOW"] = "1"
+        return app
+    }
+
+    // MARK: - Shell Helpers
+
+    private static func terminateRunningApps() {
+        for bid in [productionBundleID, e2eBundleID] {
+            let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bid)
+            guard !apps.isEmpty else { continue }
+            Self.log("Terminating \(apps.count) running app instance(s) for \(bid)")
+            for app in apps { app.terminate() }
+            Thread.sleep(forTimeInterval: 1.0)
+        }
+    }
+
+    // MARK: - Logging
+
+    private static func log(_ msg: String) {
+        FileHandle.standardError.write("[SmokeUITests] \(msg)\n".data(using: .utf8)!)
     }
 }

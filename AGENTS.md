@@ -46,6 +46,7 @@ ClipboardManager/
 │   ├── ClipboardApp.swift          # @main entry point
 │   ├── AppDelegate.swift           # app lifecycle, window management
 │   └── Info.plist
+│   └── Info.E2E.plist             # XCUITest-host variant (bundle id …E2E)
 ├── UI/
 │   ├── MainView.swift              # main UI
 │   ├── HeaderBar.swift             # header controls
@@ -109,6 +110,32 @@ ClipboardManager/
 - Prefer `swift build`; run focused tests when added.
 - Preserve existing formatting and Swift concurrency isolation.
 - Check `git diff` before finishing.
+
+## Build / Test Pipeline (two-track)
+
+- **Production build**: `Package.swift` → `swift build` / `Scripts/build-app.sh`.
+  Used for local runs and GitHub Releases (un-signed or ad-hoc). Do **not**
+  introduce Xcode-only config here. `swift test` is a **no-op** here on
+  purpose: `Package.swift` no longer declares a `testTarget` because the
+  smoke tests are XCUITests, which SPM cannot host. Use the E2E track below
+  to run tests.
+- **E2E (XCUITest) build**: `project.yml` → `Scripts/run-e2e-tests.sh`
+  (wraps `xcodegen` + `xcodebuild test`). The generated `*.xcodeproj` /
+  `*.xcworkspace` are gitignored and recreated on every run.
+- The XCUITest host app reuses the same sources but ships with
+  `ClipboardManager/App/Info.E2E.plist` (bundle id
+  `com.xshoji.ClipboardManager.E2E`) so TCC entries are isolated from the
+  production app. The executable name stays `ClipboardManager` so
+  `UserDefaults.standard` resolves to the same defaults domain as production.
+- UI elements exposed to XCUITest must keep their `accessibilityIdentifier`
+  stable (e.g. `settingsButton`, `globalHotkey.record`, `action.edit.reset`).
+  When adding a new hotkey row, pass a stable `accessibilityIDPrefix` to
+  `MacroHotkeyRecorderView`.
+- Running the tests locally requires:
+  1. `brew install xcodegen`
+  2. Accessibility permission for the terminal/IDE invoking the script, and
+     (once) for the E2E app bundle id.
+  3. Optional `DEVELOPMENT_TEAM=...` (Personal Team ID) for stable TCC.
 
 ## Safety Rules
 

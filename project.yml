@@ -1,0 +1,124 @@
+name: ClipboardManager
+options:
+  bundleIdPrefix: com.xshoji
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+  xcodeVersion: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ALWAYS_SEARCH_USER_PATHS: NO
+    CLANG_ENABLE_MODULES: YES
+    SWIFT_EMIT_LOC_STRINGS: NO
+    DEAD_CODE_STRIPPING: YES
+    # The E2E host app needs to read/write `~/Library/Preferences/ClipboardManager.plist`
+    # (the same domain the production build uses) and drive XCUIElement. App Sandbox
+    # would redirect UserDefaults.standard into the app container and block the
+    # test runner's `defaults read/write` from affecting the host app. Disable it
+    # for all targets in this project; the host app is local-test-only and is
+    # never shipped via this xcodeproj.
+    ENABLE_APP_SANDBOX: NO
+    ENABLE_HARDENED_RUNTIME: NO
+
+targets:
+  ClipboardManager:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: ClipboardManager
+        excludes:
+          - "App/Info.plist"
+          - "App/Info.E2E.plist"
+    resources:
+      - path: ClipboardManager/Resources/Assets.xcassets
+        type: folder.src
+    settings:
+      base:
+        INFOPLIST_FILE: ClipboardManager/App/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.xshoji.ClipboardManager
+        PRODUCT_NAME: ClipboardManager
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: NO
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+        SWIFT_OBJC_BRIDGING_HEADER: ""
+        OTHER_LDFLAGS: ""
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        DEAD_CODE_STRIPPING: YES
+
+  # E2E (XCUITest) variant of the host app.
+  # Uses a separate bundle id and Info.plist so TCC permissions granted to the
+  # test runner do not collide with the production app. The executable name is
+  # kept as "ClipboardManager" so UserDefaults.standard resolves to the same
+  # defaults domain as the production build (SmokeTests rely on this).
+  ClipboardManagerE2E:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: ClipboardManager
+        excludes:
+          - "App/Info.plist"
+          - "App/Info.E2E.plist"
+    resources:
+      - path: ClipboardManager/Resources/Assets.xcassets
+        type: folder.src
+    settings:
+      base:
+        INFOPLIST_FILE: ClipboardManager/App/Info.E2E.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.xshoji.ClipboardManager.E2E
+        PRODUCT_NAME: ClipboardManager
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: NO
+        # Personal Team auto-signing for local testing only.
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: YES
+        SWIFT_OBJC_BRIDGING_HEADER: ""
+        OTHER_LDFLAGS: ""
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        DEAD_CODE_STRIPPING: YES
+
+  SmokeUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/SmokeTests
+    dependencies:
+      - target: ClipboardManagerE2E
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.xshoji.SmokeUITests
+        PRODUCT_NAME: SmokeUITests
+        GENERATE_INFOPLIST_FILE: YES
+        # UI test bundles need to be signed (even ad-hoc) to drive XCUIApplication.
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: YES
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
+
+schemes:
+  ClipboardManager:
+    build:
+      targets:
+        ClipboardManager: all
+  SmokeUITests:
+    build:
+      targets:
+        ClipboardManagerE2E: all
+        SmokeUITests: [test]
+    test:
+      targets:
+        - SmokeUITests
+      gatherCoverageData: false

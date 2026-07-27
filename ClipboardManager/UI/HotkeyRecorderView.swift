@@ -14,16 +14,19 @@ struct HotkeyRecorderView: View {
                 .frame(minWidth: 120)
                 .padding(4)
                 .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.separatorLine))
+                .accessibilityIdentifier("globalHotkey.display")
             Button(recording ? "Press keys…" : "Record") {
                 recording = true
             }
             .disabled(recording)
+            .accessibilityIdentifier("globalHotkey.record")
             Button("Reset") {
-                settings.hotkeyKeyCode = 7
-                settings.hotkeyModifiers = Int(NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.control.rawValue)
+                settings.hotkeyKeyCode = AppSettings.defaultHotkeyKeyCode
+                settings.hotkeyModifiers = AppSettings.defaultHotkeyModifiers
                 refresh()
                 NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil)
             }
+            .accessibilityIdentifier("globalHotkey.reset")
         }
         .onAppear { refresh() }
         .onReceive(NotificationCenter.default.publisher(for: .mainHotkeyRegistrationResult)) { _ in
@@ -59,6 +62,9 @@ struct MacroHotkeyRecorderView: View {
     /// Optional reset handler. When non-nil, a "Reset" button is shown.
     /// Clicking it invokes this closure; the view then refreshes its display.
     let resetAction: (() -> Void)?
+    /// Stable identifier prefix appended to record/clear/reset/display accessibilityIdentifier
+    /// so XCUITest can address a specific action hotkey row (e.g. "action.edit.record").
+    let accessibilityIDPrefix: String
     @State private var recording = false
     @State private var display: String = ""
 
@@ -66,12 +72,14 @@ struct MacroHotkeyRecorderView: View {
         keyCode: Binding<Int>,
         modifiers: Binding<Int>,
         onShortcutChange: @escaping (Int, Int) -> Void = { _, _ in },
-        resetAction: (() -> Void)? = nil
+        resetAction: (() -> Void)? = nil,
+        accessibilityIDPrefix: String = "macro"
     ) {
         self.keyCode = keyCode
         self.modifiers = modifiers
         self.onShortcutChange = onShortcutChange
         self.resetAction = resetAction
+        self.accessibilityIDPrefix = accessibilityIDPrefix
     }
 
     var body: some View {
@@ -80,8 +88,10 @@ struct MacroHotkeyRecorderView: View {
                 .frame(minWidth: 120)
                 .padding(4)
                 .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.separatorLine))
+                .accessibilityIdentifier("\(accessibilityIDPrefix).display")
             Button(recording ? "Press…" : "Record") { recording = true }
                 .disabled(recording)
+                .accessibilityIdentifier("\(accessibilityIDPrefix).record")
             if keyCode.wrappedValue != 0 || modifiers.wrappedValue != 0 {
                 Button("Clear") {
                     keyCode.wrappedValue = 0
@@ -89,12 +99,14 @@ struct MacroHotkeyRecorderView: View {
                     refresh()
                     onShortcutChange(0, 0)
                 }
+                .accessibilityIdentifier("\(accessibilityIDPrefix).clear")
             }
             if let resetAction = resetAction {
                 Button("Reset") {
                     resetAction()
                     refresh()
                 }
+                .accessibilityIdentifier("\(accessibilityIDPrefix).reset")
             }
         }
         .onAppear { refresh() }

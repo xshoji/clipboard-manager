@@ -42,6 +42,7 @@ struct HeaderBar: View {
             label: { Image(systemName: "gear") },
             helpText: "Settings"
         )
+        .accessibilityIdentifier("settingsButton")
     }
 
     private var pinButton: some View {

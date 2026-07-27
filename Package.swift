@@ -11,7 +11,7 @@ let package = Package(
         .executableTarget(
             name: "ClipboardManager",
             path: "ClipboardManager",
-            exclude: ["App/Info.plist"],
+            exclude: ["App/Info.plist", "App/Info.E2E.plist"],
             resources: [
                 .process("Resources/Assets.xcassets")
             ],
@@ -26,9 +26,6 @@ let package = Package(
                 .linkedFramework("Vision"),
             ]
         ),
-        .testTarget(
-            name: "SmokeTests",
-            dependencies: []
-        ),
     ]
 )
+

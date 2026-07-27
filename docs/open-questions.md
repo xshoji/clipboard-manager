@@ -85,6 +85,18 @@
 - **Default (current)**: Not configured.
 - **Status**: Open. Depends on 4.1.
 
+### 4.3 E2E test signing (local only)
+
+- **Question**: How should the XCUITest host app be signed so Accessibility / TCC permission is not reset between runs?
+- **Default (current)**: The E2E host app (`project.yml` target `ClipboardManagerE2E`) is signed ad-hoc (`CODE_SIGN_IDENTITY = -`) by default. To keep TCC entries stable across rebuilds locally, pass `DEVELOPMENT_TEAM=<Personal Team ID>` to `Scripts/run-e2e-tests.sh` so both the host app and the UI test bundle are signed with the same dev team.
+- **Status**: Local-only concern. GitHub Releases continue to use the unsigned `Scripts/build-app.sh` flow; the E2E pipeline is intentionally not part of CI.
+
+### 4.4 E2E test runner terminates the production app
+
+- **Question**: Should the XCUITest harness force-terminate the production `com.xshoji.ClipboardManager` app on `setUp`?
+- **Default (current)**: `SmokeUITests.setUpWithError()` calls `terminateRunningApps()` for both the E2E bundle id and the production bundle id. This is intentional: if the production app is running, its global hotkey registrations and pasteboard monitor would double-register and pollute the test. The trade-off is that **running the E2E suite locally will kill any running production ClipboardManager instance** without warning. This is accepted because the suite is local-only and not run on CI.
+- **Status**: Accepted local-only behavior, documented here so contributors are not surprised. Revisit if the E2E suite is ever wired into CI.
+
 ## 5. UX
 
 ### 5.1 First-run permission copy

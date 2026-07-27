@@ -15,6 +15,10 @@
 
 # Xcode
 .swiftpm
+# XCUITest host project is regenerated from project.yml by xcodegen.
+# Keep it out of the repo; it is recreated by Scripts/run-e2e-tests.sh.
+*.xcodeproj
+*.xcworkspace
 
 # archive
 docs/archive/*

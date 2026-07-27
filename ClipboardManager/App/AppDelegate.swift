@@ -78,6 +78,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // matching Maccy/Paste behavior. The main window is shown later via the global hotkey,
         // menu bar item, or selection-from-menu. Do NOT steal focus from the user's current app
         // at launch (review #8).
+
+        // E2E smoke tests: when launched with the environment variable
+        // CM_E2E_OPEN_WINDOW=1, force the history / action hotkey settings to
+        // known default values (so each test starts from a clean state — the
+        // sandboxed UI test runner cannot reach the host app's defaults
+        // domain via `defaults write`), prompt for Accessibility permission
+        // so the XCUITest harness can introspect the app, and open the main +
+        // Settings windows immediately so the test can drive them via
+        // XCUIElement.
+        //
+        // Guarded by `#if DEBUG` so the E2E launch path and the
+        // `AXIsProcessTrustedWithOptions` prompt cannot fire from a Release
+        // build of the production app even if the environment variable is
+        // ever set by mistake. The E2E host app is built in the `Debug`
+        // configuration (see project.yml / Scripts/run-e2e-tests.sh).
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CM_E2E_OPEN_WINDOW"] == "1" {
+            forceE2EDefaultSettings()
+            // Ask the system to prompt for Accessibility permission so the
+            // XCUITest harness can introspect the app; no-op when the
+            // permission is already granted. Uses the raw key literal to stay
+            // Sendable on Swift 6.
+            let options: NSDictionary = ["AXTrustedCheckOptionPrompt": true]
+            _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
+            container.coordinator.showMainWindow(focusSearch: false)
+            container.coordinator.showSettings()
+        }
+        #endif
+    }
+
+    /// Resets all action hotkeys and the history limit settings to their
+    /// built-in defaults. Only invoked when the app is launched with
+    /// `CM_E2E_OPEN_WINDOW=1` (E2E smoke test mode).
+    ///
+    /// Defaults are sourced from `AppSettings`'s single source of truth so
+    /// the E2E harness and the production Reset buttons cannot drift.
+    private func forceE2EDefaultSettings() {
+        settings.hotkeyKeyCode = AppSettings.defaultHotkeyKeyCode
+        settings.hotkeyModifiers = AppSettings.testHotkeyModifiers
+        settings.editHotkeyCode = AppSettings.defaultEditHotkeyCode
+        settings.editHotkeyModifiers = AppSettings.defaultActionHotkeyModifiers
+        settings.pastePlainHotkeyCode = AppSettings.defaultPastePlainHotkeyCode
+        settings.pastePlainHotkeyModifiers = AppSettings.defaultActionHotkeyModifiers
+        settings.macroPickerHotkeyCode = AppSettings.defaultMacroPickerHotkeyCode
+        settings.macroPickerHotkeyModifiers = AppSettings.defaultActionHotkeyModifiers
+        settings.retentionDays = 30
+        settings.maxHistoryCount = 1000
+        settings.maxItemSizeMB = 10
+        NotificationCenter.default.post(name: .actionHotkeysChanged, object: nil)
+        NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

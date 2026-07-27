@@ -56,6 +56,7 @@ struct SettingsView: View {
                 ForEach(ActionHotkeyKind.allCases, id: \.self) { kind in
                     HStack {
                         Text(kind.label)
+                            .accessibilityIdentifier("action.\(kind.idPrefix).label")
                         Spacer()
                         MacroHotkeyRecorderView(
                             keyCode: Binding(
@@ -72,7 +73,8 @@ struct SettingsView: View {
                             resetAction: {
                                 kind.set((kind.defaultKeyCode, kind.defaultModifiers), in: settings)
                                 NotificationCenter.default.post(name: .actionHotkeysChanged, object: nil)
-                            }
+                            },
+                            accessibilityIDPrefix: "action.\(kind.idPrefix)"
                         )
                     }
                 }
@@ -251,6 +253,15 @@ struct SettingsView: View {
             }
         }
 
+        /// Stable identifier suffix used for accessibilityIdentifier on UI elements.
+        var idPrefix: String {
+            switch self {
+            case .edit:        return "edit"
+            case .pastePlain:  return "pastePlain"
+            case .macroPicker: return "macroPicker"
+            }
+        }
+
         var keyCodePath: ReferenceWritableKeyPath<AppSettings, Int> {
             switch self {
             case .edit:        return \.editHotkeyCode
@@ -267,18 +278,20 @@ struct SettingsView: View {
             }
         }
 
-        /// Default key code (matches @Setting default in AppSettings).
+        /// Default key code for this action. Defaults are owned by `AppSettings`
+        /// (single source of truth) so the Reset button in this view and the
+        /// E2E harness in `AppDelegate.forceE2EDefaultSettings` cannot drift.
         var defaultKeyCode: Int {
             switch self {
-            case .edit:        return 14   // E
-            case .pastePlain:  return 35   // P
-            case .macroPicker: return 46   // M
+            case .edit:        return AppSettings.defaultEditHotkeyCode
+            case .pastePlain:  return AppSettings.defaultPastePlainHotkeyCode
+            case .macroPicker: return AppSettings.defaultMacroPickerHotkeyCode
             }
         }
 
         /// Default modifier (Cmd only for all actions).
         var defaultModifiers: Int {
-            Int(NSEvent.ModifierFlags.command.rawValue)
+            AppSettings.defaultActionHotkeyModifiers
         }
 
         func get(in settings: AppSettings) -> (Int, Int) {
