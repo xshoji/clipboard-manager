@@ -80,6 +80,12 @@ final class MainWindowCoordinator: MainWindowLifecycle {
 
     func mainWindowInstallHotkeys() { onInstallHotkeys() }
     func mainWindowUninstallHotkeys() { onUninstallHotkeys() }
-    func mainWindowDidClose() { viewModel.stop() }
+    func mainWindowDidClose() {
+        // Keep the view model's change observer active so clipboard history is
+        // updated in the background even while the window is hidden. Stopping the
+        // observer here caused copied items to only appear (with a visible delay)
+        // when the window was reopened and the async reload completed.
+        // viewModel.start() is called once at launch (AppDelegate) and stays active.
+    }
     func confirmClearHistory() { onClearHistory() }
 }

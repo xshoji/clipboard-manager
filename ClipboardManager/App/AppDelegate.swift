@@ -37,6 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PreviewImageEditor.shared.configure(repository: container.repository)
         container.repository.start()
         monitor.start()
+        // Start the history view model at launch so its change observer stays active
+        // and clipboard history is updated in the background even while the history
+        // window is hidden. This avoids the delay where copied items only appeared
+        // after the window was reopened and the async reload completed.
+        container.historyViewModel.start()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(mainHotkeyChanged),
