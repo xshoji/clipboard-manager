@@ -91,6 +91,7 @@ struct MacroScriptRowView: View {
                         .onChange(of: interpreterPreset) { _, v in
                             if v != "custom" { interpreter = v }
                         }
+                        .accessibilityIdentifier("\(accessibilityIDPrefix).interpreterPreset")
                     }
                 } else {
                     TextField("", text: $interpreter).textFieldStyle(.roundedBorder)

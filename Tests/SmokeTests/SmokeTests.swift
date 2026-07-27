@@ -402,6 +402,181 @@ final class SmokeUITests: XCTestCase {
         app.terminate()
     }
 
+    /// Verifies that switching the inline-script interpreter preset from
+    /// `/bin/sh` (default for the Add Macro… seed) to `/bin/bash` is persisted
+    /// through the Save → confirm dialog. After Save the row model is
+    /// republished and the preset popUp's selected value shows `/bin/bash`.
+    ///
+    /// Note: in inline mode the interpreter TextField is only rendered when
+    /// the preset is "Custom"; for the seeded "/bin/sh" → "/bin/bash" path we
+    /// observe the preset popUp's `value` instead of the TextField. The macro
+    /// model's `interpreter` field mirrors the preset (see
+    /// `onChange(of: interpreterPreset)`), so the popUp's selected label is a
+    /// faithful proxy for the persisted interpreter.
+    func testChangeMacroInterpreterPreset() throws {
+        let app = makeApp()
+        app.launch()
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+
+        // Seed: add one macro and register it (same flow as testAddMacroScript).
+        let addButton = app.buttons["macro.add"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found (seed)")
+        addButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        let nameField = app.textFields["macro.0.name"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found")
+        nameField.click()
+        nameField.typeText("X")
+        let saveButton = app.buttons["macro.0.save"]
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Macro Save button not found (seed)")
+        saveButton.click()
+        let confirmSave = app.buttons["macro.0.confirm.save"]
+        XCTAssertTrue(confirmSave.waitForExistence(timeout: 5), "Confirm-Save button not found (seed)")
+        confirmSave.click()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // Sanity: the interpreter preset is "/bin/sh" (MacroScript default).
+        // In inline mode the preset is shown via a popUpButton; the selected
+        // item's label is the popUp's `value` (SwiftUI Picker → NSPopUpButton).
+        let presetPopUp = app.popUpButtons["macro.0.interpreterPreset"]
+        XCTAssertTrue(presetPopUp.waitForExistence(timeout: 5), "Interpreter preset popUp not found (seed)")
+        let seedPreset = try XCTUnwrap(presetPopUp.value as? String)
+        XCTAssertEqual(seedPreset, "/bin/sh",
+                       "Seeded interpreter preset should be '/bin/sh', got '\(seedPreset)'")
+
+        // Switch the preset to /bin/bash by opening the popUp and tapping
+        // the matching menu item.
+        presetPopUp.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        let bashMenuItem = app.menuItems["/bin/bash"]
+        XCTAssertTrue(bashMenuItem.waitForExistence(timeout: 3), "/bin/bash menu item not found")
+        bashMenuItem.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // The preset change immediately writes `interpreter = "/bin/bash"`
+        // (`onChange(of: interpreterPreset)`), and the row's dirty flag flips
+        // because interpreter now differs from the macro model. Save → confirm.
+        let saveButtonEdit = app.buttons["macro.0.save"]
+        XCTAssertTrue(saveButtonEdit.isEnabled, "Macro Save should be enabled after changing interpreter preset")
+        saveButtonEdit.click()
+        let confirmSaveEdit = app.buttons["macro.0.confirm.save"]
+        XCTAssertTrue(confirmSaveEdit.waitForExistence(timeout: 5), "Confirm-Save button not found (edit)")
+        confirmSaveEdit.click()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // Assert the persisted preset (and therefore the interpreter) is the
+        // new one.
+        let finalPreset = try XCTUnwrap(app.popUpButtons["macro.0.interpreterPreset"].value as? String)
+        XCTAssertEqual(finalPreset, "/bin/bash",
+                       "Interpreter preset should be '/bin/bash' after preset change, got '\(finalPreset)'")
+        app.terminate()
+    }
+
+    /// Verifies that switching the source type to "Script file" and entering
+    /// a real script path (a file created under the user's home directory by
+    /// the test runner) validates and saves successfully. After Save the row
+    /// model is republished; the path field shows the resolved path and the
+    /// fingerprint-captured badge must NOT appear (file-mode macros show no
+    /// badge; only inline-mode ones do — see MacroScriptRowView.confirmSave).
+    func testMacroScriptFileSource() throws {
+        let app = makeApp()
+        app.launch()
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+
+        // Create a real, executable shell script file in the user's home
+        // directory. MacroScriptPathValidator rejects paths outside $HOME
+        // (`.outsideHome`) and non-existent files (`.fileNotFound`), so we
+        // need an in-home, in-disk file. The temporary directory provided by
+        // `NSTemporaryDirectory()` is usually outside $HOME on macOS
+        // (`/var/folders/...`), so we write directly to `~/` instead.
+        let home = NSHomeDirectory()
+        let scriptPath = (home as NSString).appendingPathComponent("ClipboardManagerE2ETestMacro.sh")
+        let scriptBody = "#!/bin/sh\necho hi > \"$CB_OUTPUT_FILE\"\n"
+        do {
+            try scriptBody.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+            // Best-effort chmod; non-executable file still passes path
+            // validation (only `fileExists`, not `isExecutable`) but we set
+            // the bit anyway so the test exercises a realistic file.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                   ofItemAtPath: scriptPath)
+        }
+        defer {
+            try? FileManager.default.removeItem(atPath: scriptPath)
+        }
+
+        // Seed: add one macro and register it (same flow as testAddMacroScript).
+        let addButton = app.buttons["macro.add"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found (seed)")
+        addButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        let nameField = app.textFields["macro.0.name"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found")
+        nameField.click()
+        nameField.typeText("X")
+        let saveButton = app.buttons["macro.0.save"]
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Macro Save button not found (seed)")
+        saveButton.click()
+        let confirmSave = app.buttons["macro.0.confirm.save"]
+        XCTAssertTrue(confirmSave.waitForExistence(timeout: 5), "Confirm-Save button not found (seed)")
+        confirmSave.click()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // Switch the source type from "Inline shell" to "Script file".
+        // SwiftUI `.pickerStyle(.segmented)` inside a macOS Form renders as
+        // an NSMatrix-style RadioGroup (not NSSegmentedControl); each option
+        // is exposed to AX as a RadioButton with the option's label. The
+        // `accessibilityIdentifier("macro.0.sourceType")` we put on the
+        // Picker surfaces on the RadioGroup element. We tap the
+        // "Script file" RadioButton to flip the source type.
+        let sourceTypeGroup = app.radioGroups["macro.0.sourceType"]
+        XCTAssertTrue(sourceTypeGroup.waitForExistence(timeout: 5),
+                      "Source type radio group not found; dumping tree:\n\(app.debugDescription)")
+        let scriptFileRadio = sourceTypeGroup.radioButtons["Script file"]
+        XCTAssertTrue(scriptFileRadio.waitForExistence(timeout: 3), "'Script file' radio button not found")
+        scriptFileRadio.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Now the inline editor is hidden and the path TextField + Browse
+        // button are shown. Enter the absolute path to the home script.
+        let pathField = app.textFields["macro.0.path"]
+        XCTAssertTrue(pathField.waitForExistence(timeout: 5), "Path TextField not found after switching to Script file")
+        pathField.click()
+        Thread.sleep(forTimeInterval: 0.3)
+        pathField.typeText(scriptPath)
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Save the edit; the confirmation dialog appears because the
+        // file-mode fingerprint is captured at confirm-save time too.
+        let saveButtonEdit = app.buttons["macro.0.save"]
+        XCTAssertTrue(saveButtonEdit.waitForExistence(timeout: 3), "Macro Save button not found (file)")
+        XCTAssertTrue(saveButtonEdit.isEnabled, "Macro Save should be enabled after entering the path")
+        saveButtonEdit.click()
+        let confirmSaveEdit = app.buttons["macro.0.confirm.save"]
+        XCTAssertTrue(confirmSaveEdit.waitForExistence(timeout: 5), "Confirm-Save button not found (file)")
+        confirmSaveEdit.click()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // The path field should reflect the persisted (resolved) path. The
+        // validator resolves symlinks but the absolute path under $HOME
+        // should be a prefix-equal match (no symlinks involved on a normal
+        // home dir).
+        let persistedPath = try XCTUnwrap(app.textFields["macro.0.path"].value as? String)
+        XCTAssertEqual(persistedPath, scriptPath,
+                       "Persisted path should match what we typed, got '\(persistedPath)'")
+
+        // File-mode macros don't show the fingerprint-captured badge — only
+        // inline-mode ones do. Assert the badge is absent to lock this
+        // behavior (regression guard against accidentally re-routing file
+        // mode through the inline badge path).
+        XCTAssertFalse(app.staticTexts["macro.0.fingerprintCaptured"].exists,
+                       "Fingerprint-captured badge should NOT appear for file-mode macros")
+        XCTAssertFalse(app.staticTexts["macro.0.validationError"].exists,
+                       "Validation error label should NOT appear after successful file-mode save")
+        app.terminate()
+    }
+
     // MARK: - App Launcher
 
     /// Builds an XCUIApplication preconfigured with the E2E bundle id and the
