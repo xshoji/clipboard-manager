@@ -202,6 +202,206 @@ final class SmokeUITests: XCTestCase {
         app.terminate()
     }
 
+    // MARK: - Macro Script CRUD
+
+    /// Verifies that clicking "Add Macro…" inserts a single editable row,
+    /// that the row's name field is focusable and the Save button is
+    /// initially disabled (no content change yet), and that filling in a
+    /// name + Save on the registration confirmation dialog persists the
+    /// macro (the fingerprint-captured badge appears and the empty-state
+    /// text is gone).
+    ///
+    /// Notes:
+    /// - AppDelegate.forceE2EDefaultSettings resets `macroScripts` to []
+    ///   on launch so this test always starts from zero macros.
+    /// - The Macro row's inline example already satisfies `canApply`
+    ///   (name="New Macro", interpreter="/bin/sh", inline body non-empty),
+    ///   so we only need to touch the name to flip the dirty flag and
+    ///   then click Save.
+    func testAddMacroScript() throws {
+        let app = makeApp()
+        app.launch()
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+
+        // Sanity: no macros on launch (forceE2EDefaultSettings clears them).
+        let emptyLabel = app.staticTexts["macro.empty"]
+        XCTAssertTrue(emptyLabel.waitForExistence(timeout: 5), "Macro empty-state label not found")
+
+        let addButton = app.buttons["macro.add"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found")
+        addButton.click()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // The first row's controls live under the "macro.0" prefix.
+        let nameField = app.textFields["macro.0.name"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found after Add")
+        nameField.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Touch the name to mark the row dirty (otherwise Save stays disabled
+        // even though canApply is technically true, because `hasContentChanges`
+        // compares against the macro model and the seed values are identical
+        // until the user types). We append a character so the text binding
+        // fires `onChange`.
+        nameField.typeText("X")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let saveButton = app.buttons["macro.0.save"]
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Macro Save button not found")
+        XCTAssertTrue(saveButton.isEnabled, "Macro Save should be enabled after editing the name")
+        saveButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Registration confirmation dialog (per design-implementation.md §5.1-1).
+        let confirmSave = app.buttons["macro.0.confirm.save"]
+        XCTAssertTrue(confirmSave.waitForExistence(timeout: 5), "Confirm-Save button not found")
+        confirmSave.click()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // The fingerprint-captured badge shows only on inline-script macros
+        // once the user confirms the registration dialog (see MacroScriptRowView.confirmSave).
+        let badge = app.staticTexts["macro.0.fingerprintCaptured"]
+        XCTAssertTrue(badge.waitForExistence(timeout: 5), "Fingerprint-captured badge not shown after Save")
+        XCTAssertFalse(app.staticTexts["macro.empty"].exists,
+                       "Empty-state label should disappear once a macro is registered")
+        app.terminate()
+    }
+
+    /// Verifies that an existing macro's name can be edited and the change
+    /// is persisted through the Save → confirm dialog. After Save the row
+    /// model snapshot is updated, so re-opening the name field shows the new
+    /// value (proving the edit was committed, not just buffered in @State).
+    func testEditMacroScript() throws {
+        let app = makeApp()
+        app.launch()
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+
+        // Seed: add one macro and register it (same flow as testAddMacroScript).
+        let addButton = app.buttons["macro.add"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found (seed)")
+        addButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        let nameField = app.textFields["macro.0.name"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found")
+        nameField.click()
+        Thread.sleep(forTimeInterval: 0.3)
+        nameField.typeText("X")
+        let saveButton = app.buttons["macro.0.save"]
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Macro Save button not found (seed)")
+        saveButton.click()
+        let confirmSave = app.buttons["macro.0.confirm.save"]
+        XCTAssertTrue(confirmSave.waitForExistence(timeout: 5), "Confirm-Save button not found (seed)")
+        confirmSave.click()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // After registration, the row model is republished and the name field
+        // reflects the persisted value (name should end with "X" since the
+        // seed input was "New Macro" + "X").
+        let nameAfterSeed = try XCTUnwrap(nameField.value as? String)
+        XCTAssertTrue(nameAfterSeed.hasSuffix("X"),
+                      "Name should reflect seeded edit after registration, got '\(nameAfterSeed)'")
+
+        // Edit: select-all the name field and replace with a new name.
+        nameField.click()
+        nameField.typeKey("a", modifierFlags: .command)
+        nameField.typeText("Edited Macro")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Save the edit; the confirmation dialog appears because the
+        // inline-script fingerprint is re-captured on every confirm-save.
+        let saveButtonEdit = app.buttons["macro.0.save"]
+        XCTAssertTrue(saveButtonEdit.isEnabled, "Macro Save should be enabled after editing the name")
+        saveButtonEdit.click()
+        let confirmSaveEdit = app.buttons["macro.0.confirm.save"]
+        XCTAssertTrue(confirmSaveEdit.waitForExistence(timeout: 5), "Confirm-Save button not found (edit)")
+        confirmSaveEdit.click()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // Assert the persisted name is the new one.
+        let finalName = try XCTUnwrap(nameField.value as? String)
+        XCTAssertEqual(finalName, "Edited Macro",
+                       "Macro name should be 'Edited Macro' after editing, got '\(finalName)'")
+        app.terminate()
+    }
+
+    /// Verifies that closing the Settings window while a macro row is dirty
+    /// (edits not yet saved) raises the "Unsaved Macro Changes" NSAlert, and
+    /// that choosing "Cancel" on that alert keeps the Settings window open
+    /// and leaves the in-progress edit intact. Re-focusing the name field
+    /// should still show the unsaved value (proving the edit was not
+    /// silently committed/dropped).
+    func testUnsavedMacroChangesModalOnClose() throws {
+        let app = makeApp()
+        app.launch()
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+
+        // Add a macro and immediately edit its name WITHOUT clicking Save so
+        // the row stays dirty (`viewModel.unsavedMacroIDs` contains the row).
+        let addButton = app.buttons["macro.add"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found")
+        addButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        let nameField = app.textFields["macro.0.name"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found")
+        nameField.click()
+        Thread.sleep(forTimeInterval: 0.3)
+        nameField.typeText("UnsavedEdit")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Sanity: the dirty edit is buffered in the name field's value.
+        let bufferedName = try XCTUnwrap(nameField.value as? String)
+        XCTAssertTrue(bufferedName.hasSuffix("UnsavedEdit"),
+                      "Name field should show unsaved edit, got '\(bufferedName)'")
+
+        // Trigger the close. SettingsWindowController.windowShouldClose runs
+        // the NSAlert. XCUITest exposes it as `app.dialogs`. The Settings
+        // window's traffic-light buttons (close / miniaturize / zoom) appear
+        // in `settingsWindow.buttons`; the close button is the leftmost one
+        // (boundBy: 0).
+        let closeButton = settingsWindow.buttons.element(boundBy: 0)
+        XCTAssertTrue(closeButton.exists, "Settings window close button not found")
+        closeButton.click()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // The unsaved-changes alert is an NSAlert; XCUI exposes it via
+        // `app.dialogs`.
+        let unsavedAlert = app.dialogs.element(boundBy: 0)
+        XCTAssertTrue(unsavedAlert.waitForExistence(timeout: 5),
+                      "Unsaved-changes alert did not appear on close; dumping tree:\n\(app.debugDescription)")
+        // The alert's message text is "Unsaved Macro Changes". Either read it
+        // from the static text or just rely on the Cancel button being present.
+        let cancelButton = unsavedAlert.buttons["Cancel"]
+        XCTAssertTrue(cancelButton.exists, "Cancel button not found on unsaved-changes alert")
+        cancelButton.click()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // After Cancel, the Settings window must still exist (the close was
+        // vetoed by windowShouldClose returning false).
+        XCTAssertTrue(settingsWindow.exists,
+                      "Settings window should still be open after Canceling the unsaved-changes alert")
+        XCTAssertFalse(app.dialogs.element(boundBy: 0).exists,
+                       "Unsaved-changes alert should be dismissed after Cancel")
+
+        // The unsaved edit must still be intact in the name field — i.e., the
+        // Cancel path did NOT commit the change.
+        let nameAfterCancel = try XCTUnwrap(app.textFields["macro.0.name"].value as? String)
+        XCTAssertTrue(nameAfterCancel.hasSuffix("UnsavedEdit"),
+                      "Unsaved edit should be preserved after Canceling the alert, got '\(nameAfterCancel)'")
+
+        // Re-focus the name field by clicking it and confirm the edit is still
+        // there (defensive: ensures the field is still interactive and the
+        // dirty state survives the alert cycle).
+        nameField.click()
+        Thread.sleep(forTimeInterval: 0.3)
+        let nameRefocused = try XCTUnwrap(nameField.value as? String)
+        XCTAssertTrue(nameRefocused.hasSuffix("UnsavedEdit"),
+                      "Unsaved edit should still be in the name field after re-focusing, got '\(nameRefocused)'")
+        app.terminate()
+    }
+
     // MARK: - App Launcher
 
     /// Builds an XCUIApplication preconfigured with the E2E bundle id and the

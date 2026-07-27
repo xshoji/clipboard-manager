@@ -5,6 +5,13 @@ struct MacroScriptRowView: View {
     let macro: MacroScript
     let onUpdate: (MacroScript) -> Void
     let onDirtyChange: ((UUID, Bool) -> Void)?
+    /// Stable identifier prefix used for every accessibilityIdentifier on this
+    /// row's child elements (name field, save button, remove button, …). The
+    /// SettingsView supplies a positional prefix ("macro.0", "macro.1", …) so
+    /// XCUITest can address a specific row without depending on the macro's
+    /// UUID. Defaults to "macro" when unspecified so non-E2E callers keep
+    /// working.
+    let accessibilityIDPrefix: String
     @Environment(AppSettings.self) private var settings
     @Environment(SettingsViewModel.self) private var viewModel
     @State private var name: String
@@ -41,8 +48,12 @@ struct MacroScriptRowView: View {
         "/usr/local/bin/zsh",
     ]
 
-    init(macro: MacroScript, onUpdate: @escaping (MacroScript) -> Void, onDirtyChange: ((UUID, Bool) -> Void)? = nil) {
+    init(macro: MacroScript,
+         accessibilityIDPrefix: String = "macro",
+         onUpdate: @escaping (MacroScript) -> Void,
+         onDirtyChange: ((UUID, Bool) -> Void)? = nil) {
         self.macro = macro
+        self.accessibilityIDPrefix = accessibilityIDPrefix
         self.onUpdate = onUpdate
         self.onDirtyChange = onDirtyChange
         _name = State(initialValue: macro.name)
@@ -62,6 +73,7 @@ struct MacroScriptRowView: View {
             LabeledContent("Name") {
                 TextField("", text: $name).textFieldStyle(.roundedBorder)
                    .multilineTextAlignment(.leading)
+                   .accessibilityIdentifier("\(accessibilityIDPrefix).name")
             }
             LabeledContent("Interpreter") {
                 if sourceType == "inline" {
@@ -69,6 +81,7 @@ struct MacroScriptRowView: View {
                         if interpreterPreset == "custom" {
                             TextField("", text: $interpreter).textFieldStyle(.roundedBorder)
                                 .multilineTextAlignment(.leading)
+                                .accessibilityIdentifier("\(accessibilityIDPrefix).interpreter")
                         }
                         Picker("", selection: $interpreterPreset) {
                             ForEach(Self.shellPresets, id: \.self) { Text($0).tag($0) }
@@ -82,13 +95,15 @@ struct MacroScriptRowView: View {
                 } else {
                     TextField("", text: $interpreter).textFieldStyle(.roundedBorder)
                         .multilineTextAlignment(.leading)
+                        .accessibilityIdentifier("\(accessibilityIDPrefix).interpreter")
                 }
             }
             LabeledContent("Shortcut") {
                 MacroHotkeyRecorderView(
                     keyCode: $hotkeyCode,
                     modifiers: $hotkeyModifiers,
-                    onShortcutChange: saveShortcut
+                    onShortcutChange: saveShortcut,
+                    accessibilityIDPrefix: "\(accessibilityIDPrefix).hotkey"
                 )
             }
             Text("Shortcut changes are saved automatically.")
@@ -101,15 +116,19 @@ struct MacroScriptRowView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
+                .accessibilityIdentifier("\(accessibilityIDPrefix).sourceType")
             }
             if sourceType == "file" {
                 HStack {
                     TextField("Path", text: $path).textFieldStyle(.roundedBorder)
                         .multilineTextAlignment(.leading)
+                        .accessibilityIdentifier("\(accessibilityIDPrefix).path")
                     Button("Browse") { browse() }
+                        .accessibilityIdentifier("\(accessibilityIDPrefix).browse")
                 }
             } else {
                 ShellScriptEditor(text: $inlineScript)
+                    .accessibilityIdentifier("\(accessibilityIDPrefix).inlineScript")
                     .frame(minHeight: 120)
                     .overlay {
                         RoundedRectangle(cornerRadius: 5)
@@ -139,17 +158,21 @@ struct MacroScriptRowView: View {
                 )
                 .foregroundStyle(.green)
                 .font(.caption)
+                .accessibilityIdentifier("\(accessibilityIDPrefix).fingerprintCaptured")
             }
             if let error = validationError {
                 Label(error, systemImage: "xmark.octagon.fill")
                     .foregroundStyle(.red)
                     .font(.caption)
+                    .accessibilityIdentifier("\(accessibilityIDPrefix).validationError")
             }
             HStack {
                 Button("Save") { apply() }
                     .disabled(!canApply)
+                    .accessibilityIdentifier("\(accessibilityIDPrefix).save")
                 Spacer()
                 Button("Remove", role: .destructive) { remove() }
+                    .accessibilityIdentifier("\(accessibilityIDPrefix).remove")
             }
             .padding(.bottom, 6)
         }
@@ -160,7 +183,9 @@ struct MacroScriptRowView: View {
             titleVisibility: .visible
         ) {
             Button("Save", role: .none) { confirmSave() }
+                .accessibilityIdentifier("\(accessibilityIDPrefix).confirm.save")
             Button("Cancel", role: .cancel) { cancelConfirm() }
+                .accessibilityIdentifier("\(accessibilityIDPrefix).confirm.cancel")
         } message: {
             Text("This script can access your clipboard contents. Do not specify untrusted scripts.")
         }
@@ -373,7 +398,20 @@ struct MacroScriptRowView: View {
         }
         hotkeyCode = updated.hotkeyCode
         hotkeyModifiers = updated.hotkeyModifiers
-        showFingerprintCaptured = false
+        // Preserve the "fingerprint captured" badge when the just-saved model
+        // actually carries a new fingerprint. `confirmSave()` sets this flag
+        // to `true` and then calls `onUpdate`, which republishes the macro and
+        // triggers this `syncState` via `.onChange(of: macro)`. Without this
+        // guard the unconditional reset would clear the badge immediately
+        // after the user confirmed the registration dialog (regression seen in
+        // SmokeUITests.testAddMacroScript). We only keep it true when the
+        // fingerprint really transitioned from nil to a value; for any other
+        // external update (e.g. Reset / shortcut save) the badge is cleared.
+        if updated.lastFingerprint != nil, previous.lastFingerprint == nil {
+            showFingerprintCaptured = true
+        } else {
+            showFingerprintCaptured = false
+        }
         validationError = nil
         checkDirty()
     }

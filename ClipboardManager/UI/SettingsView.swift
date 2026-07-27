@@ -87,13 +87,19 @@ struct SettingsView: View {
             }
 
             Section("Macro Scripts") {
-                ForEach(settings.macroScripts) { macro in
+                ForEach(Array(settings.macroScripts.enumerated()), id: \.element.id) { idx, macro in
                     MacroScriptRowView(
                         macro: macro,
+                        // Stable identifier prefix used for every accessibilityIdentifier
+                        // on the row's child elements (name field, save button, etc.).
+                        // The index is positional and shifts if macros above are
+                        // removed; for E2E that is acceptable because tests
+                        // re-resolve the prefix right after Add/Remove.
+                        accessibilityIDPrefix: "macro.\(idx)",
                         onUpdate: { edited in
                             var arr = settings.macroScripts
-                            if let idx = arr.firstIndex(where: { $0.id == edited.id }) {
-                                arr[idx] = edited
+                            if let i = arr.firstIndex(where: { $0.id == edited.id }) {
+                                arr[i] = edited
                             }
                             settings.macroScripts = arr
                         },
@@ -110,6 +116,7 @@ struct SettingsView: View {
                 }
                 if settings.macroScripts.isEmpty {
                     Text("No Macros registered.").foregroundStyle(.secondary)
+                        .accessibilityIdentifier("macro.empty")
                 }
                 Button("Add Macro…") {
                     // Adds an inline example that the user edits in place; the row's Save
@@ -124,6 +131,7 @@ struct SettingsView: View {
                         """
                     ))
                 }
+                .accessibilityIdentifier("macro.add")
             }
 
             Section("Macro Behavior") {

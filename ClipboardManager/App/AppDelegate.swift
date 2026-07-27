@@ -126,6 +126,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.retentionDays = 30
         settings.maxHistoryCount = 1000
         settings.maxItemSizeMB = 10
+        // Reset macro scripts to a clean state so the E2E tests do not depend
+        // on macro scripts persisted by a prior production run in the same
+        // UserDefaults domain ("ClipboardManager"). Without this, the host
+        // app would inherit the user's existing macros and tests that count
+        // rows / drive the Add button would be order-dependent on the host
+        // machine's defaults. This mirrors how each other test assertion above
+        // starts from the baked-in defaults instead of dumped-in state.
+        settings.macroScripts = []
         NotificationCenter.default.post(name: .actionHotkeysChanged, object: nil)
         NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil)
     }
