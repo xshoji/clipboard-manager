@@ -94,10 +94,19 @@ struct MacroHotkeyRecorderView: View {
                 .accessibilityIdentifier("\(accessibilityIDPrefix).record")
             if keyCode.wrappedValue != 0 || modifiers.wrappedValue != 0 {
                 Button("Clear") {
-                    keyCode.wrappedValue = 0
-                    modifiers.wrappedValue = 0
-                    refresh()
+                    // `onShortcutChange` is the single writer path; the host
+                    // decides whether to actually clear (e.g. action hotkeys
+                    // go through `applyActionHotkey` so the duplicate guard
+                    // runs). The display is refreshed *after* the host writes
+                    // so the new value is reflected; we don't write the Binding
+                    // here for action hotkeys because the host owns the value.
+                    // Macro rows use @State-backed Bindings whose `set` is
+                    // *not* a no-op, so for those we still update the binding
+                    // so the dirty/onChange tracking fires — but we refresh
+                    // after `onShortcutChange` regardless so the final value
+                    // is what is shown.
                     onShortcutChange(0, 0)
+                    refresh()
                 }
                 .accessibilityIdentifier("\(accessibilityIDPrefix).clear")
             }
@@ -117,11 +126,18 @@ struct MacroHotkeyRecorderView: View {
             if recording {
                 ListenerView { kc, mods in
                     guard mods != 0 else { return }
+                    // Write the Binding for macro-row @State parity (dirty /
+                    // onChange tracking fires from this write). For action
+                    // hotkeys the Binding `set` is a no-op because
+                    // `applyActionHotkey` is the single writer — the display
+                    // is refreshed explicitly *after* `onShortcutChange` so
+                    // the verified value is shown (or the pre-change value
+                    // when the candidate was rejected by the duplicate guard).
                     keyCode.wrappedValue = kc
                     modifiers.wrappedValue = mods
-                    refresh()
                     recording = false
                     onShortcutChange(kc, mods)
+                    refresh()
                 }
             }
         }

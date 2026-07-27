@@ -61,18 +61,28 @@ struct SettingsView: View {
                         MacroHotkeyRecorderView(
                             keyCode: Binding(
                                 get: { settings[keyPath: kind.keyCodePath] },
-                                set: { settings[keyPath: kind.keyCodePath] = $0 }
+                                set: { _ in
+                                    // No-op: `applyActionHotkey` is the single
+                                    // writer for this kind's setting so the
+                                    // duplicate guard always runs and the
+                                    // pre-change value can be reverted. The
+                                    // display refreshes via `onChange(of:)`
+                                    // after the setter writes (review #2).
+                                }
                             ),
                             modifiers: Binding(
                                 get: { settings[keyPath: kind.modifiersPath] },
-                                set: { settings[keyPath: kind.modifiersPath] = $0 }
+                                set: { _ in }
                             ),
                             onShortcutChange: { keyCode, mods in
-                                saveActionHotkey(kind, keyCode: keyCode, modifiers: mods)
+                                applyActionHotkey(kind, keyCode: keyCode, modifiers: mods)
                             },
                             resetAction: {
-                                kind.set((kind.defaultKeyCode, kind.defaultModifiers), in: settings)
-                                NotificationCenter.default.post(name: .actionHotkeysChanged, object: nil)
+                                applyActionHotkey(
+                                    kind,
+                                    keyCode: kind.defaultKeyCode,
+                                    modifiers: kind.defaultModifiers
+                                )
                             },
                             accessibilityIDPrefix: "action.\(kind.idPrefix)"
                         )
@@ -312,26 +322,33 @@ struct SettingsView: View {
         }
     }
 
-    private func saveActionHotkey(_ kind: ActionHotkeyKind, keyCode: Int, modifiers: Int) {
-        // Duplicate guard (review #16): reject when the new binding collides with the
-        // *other* action hotkey's current binding. Carbon's RegisterEventHotKey would
-        // otherwise silently reject the second registration and one action would be a
-        // no-op. `MacroHotkeyRecorderView` writes the new value through the Binding's
-        // `set` before invoking `onShortcutChange`, so we revert here on collision.
-        if modifiers != 0 {
-            // Snapshot all action hotkey bindings so we can revert the one that was
-            // already written by the Binding's `set` if a collision is detected.
-            let prev = snapshotActionHotkeys()
-            // Build the candidate binding table with the new value applied.
-            var candidate = prev
-            candidate.values[kind] = (keyCode, modifiers)
-            if collidingActionHotkey(for: kind, candidate: candidate) != nil {
-                // Revert the binding that was already written by the Binding's `set` so
-                // the recorder display and the persisted value stay consistent.
-                revertActionHotkey(kind: kind, to: prev)
-                showActionHotkeyDuplicateError = true
-                return
-            }
+    /// Applies an action hotkey change (Record / Reset / Clear) through a single
+    /// path so the duplicate guard is always exercised (review #2). The view's
+    /// Binding `set` is a no-op for action hotkeys; this method is the single
+    /// writer of `kind`'s setting via `kind.set`, and the view's
+    /// `onChange(of: keyCode/modifiers)` refreshes the display from the
+    /// post-write value. On collision this method simply does not write, so the
+    /// recorder display and the persisted value stay at the pre-change binding
+    /// without needing a revert step (the previous implementation snapshotted
+    /// *after* the Binding had already written the new value, so its revert
+    /// restored the post-change value instead of the pre-change value).
+    private func applyActionHotkey(_ kind: ActionHotkeyKind, keyCode: Int, modifiers: Int) {
+        // Snapshot the *current* bindings so the candidate table reflects the
+        // pre-change state for every kind other than `kind`.
+        let prev = snapshotActionHotkeys()
+        var candidate = prev
+        candidate.values[kind] = (keyCode, modifiers)
+        // Reject when the candidate collides with another action hotkey's
+        // *current* binding. Carbon's RegisterEventHotKey would otherwise
+        // silently reject the second registration and one action would be a
+        // no-op. Zero-modifier bindings (Clear) are allowed through without
+        // collision checking because an unset binding cannot conflict.
+        if modifiers != 0, collidingActionHotkey(for: kind, candidate: candidate) != nil {
+            // Do NOT write the new value; the Binding-derived display will not
+            // move because we never wrote. Surface the duplicate alert so the
+            // user knows the shortcut is already taken by another action.
+            showActionHotkeyDuplicateError = true
+            return
         }
         kind.set((keyCode, modifiers), in: settings)
         NotificationCenter.default.post(name: .actionHotkeysChanged, object: nil)
@@ -358,11 +375,5 @@ struct SettingsView: View {
             if other.0 == target.0 && other.1 == target.1 { return otherKind }
         }
         return nil
-    }
-
-    private func revertActionHotkey(kind: ActionHotkeyKind, to snapshot: ActionHotkeySnapshot) {
-        if let prev = snapshot.values[kind] {
-            kind.set(prev, in: settings)
-        }
     }
 }
