@@ -39,6 +39,7 @@ final class ClipboardEntity {
     /// on-the-fly lowercasing when nil.
     var textPreviewLowercased: String?
     @Attribute(.externalStorage) var richText: Data?
+    @Attribute(.externalStorage) var html: Data?
     @Attribute(.externalStorage) var imageData: Data?
     @Attribute(.externalStorage) var thumbnail: Data?
     var sourceBundleID: String?
@@ -50,6 +51,7 @@ final class ClipboardEntity {
         kind: String,
         text: String? = nil,
         richText: Data? = nil,
+        html: Data? = nil,
         imageData: Data? = nil,
         thumbnail: Data? = nil,
         sourceBundleID: String? = nil,
@@ -72,6 +74,7 @@ final class ClipboardEntity {
             self.textCharacterCount = nil
         }
         self.richText = richText
+        self.html = html
         self.imageData = imageData
         self.thumbnail = thumbnail
         self.sourceBundleID = sourceBundleID

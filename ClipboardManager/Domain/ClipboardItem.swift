@@ -11,6 +11,7 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
     let isTextPreviewTruncated: Bool
     let textCharacterCount: Int?
     let thumbnail: Data?
+    let isHtml: Bool
     let sourceBundleID: String?
     let contentHash: String?
 

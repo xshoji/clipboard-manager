@@ -123,6 +123,7 @@ final class ClipboardEntity {
     var kind: String            // "text" / "image"
     var text: String?          // Plain text (search target)
     var richText: Data?        // RTFD (for rich restoration on paste)
+    var html: Data?            // HTML source (for rich paste + styled preview)
     var imageData: Data?       // PNG (image history)
     var thumbnail: Data?       // For fast list display
     var sourceBundleID: String?
@@ -139,12 +140,15 @@ final class ClipboardEntity {
 | kind | String | "text" / "image" |
 | text | String? | Plain text (search target) |
 | richText | Data? | RTFD (for rich restoration on paste) |
+| html | Data? | HTML source (for rich paste + styled preview). Stored with `@Attribute(.externalStorage)` |
 | imageData | Data? | PNG (image history) |
 | thumbnail | Data? | For fast list display |
 | sourceBundleID | String? | Source app identifier |
 | contentHash | String? | SHA256 for dedup (text or imageData) |
 
 > **Edit handling**: Results edited in `TextEditView` are **saved as a new Entity with `kind = "text"` and `richText = nil`** (per `design-app.md §2.1.4`). The original rich text history remains as a separate Entity.
+> **HTML format handling**: When a clipboard entry provides HTML (via `public.html` pasteboard type) without RTF/RTFD, the raw HTML `Data` is stored in the `html` attribute and the plain-text representation (extracted from the HTML) is stored in `text`. This covers apps that expose HTML but not RTF (e.g. web browsers, some email clients). At paste time, if `html` is present it is written to the pasteboard as `public.html` alongside the plain text, so the target app can pick up the styled content. The preview pane renders HTML via `NSTextView` + `NSAttributedString(html:)`.
+> **Dedup and HTML**: `contentHash` is derived from the **plain-text** representation (`Data(text.utf8)`), not from the HTML markup. This means two copies with identical plain text but different HTML markup (e.g. copied from different apps with different styling) are treated as duplicates — only the first copy is kept. This is an accepted tradeoff: the vast majority of use-cases care about the text content, not the markup. If "same text, different formatting" preservation is needed in the future, the hash would need to incorporate the `html`/`richText` payload (review #2).
 > **Search scale**: For 100,000+ items with full-text search, `LIKE` queries on `text` become heavy, so v2 should consider prefiltering using `contentHash` suffix or introducing SQLite FTS5 (see §9).
 
 ### 3.2 AppSettings (UserDefaults)
@@ -215,9 +219,10 @@ final class ClipboardEntity {
 ```
 [UI item selection + paste command]
   → Branch:
-      Rich   → write RTFD + text to NSPasteboard
-      Plain  → write text only
-      Macro   → write temp file → MacroRunner.run(script, inputFile)
+      Rich (RTFD) → write RTFD + text to NSPasteboard
+      Rich (HTML) → write public.html + text to NSPasteboard
+      Plain       → write text only
+      Macro       → write temp file → MacroRunner.run(script, inputFile)
              → read output file → write to pasteboard
   → NSApp.activate(ignoringOtherApps: true) to restore previous app
   → User presses Cmd+V to complete paste

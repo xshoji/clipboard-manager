@@ -9,6 +9,7 @@ struct PreviewPane: View {
     @State private var isExpanded: Bool = false
     @State private var fullText: String? = nil
     @State private var previewImage: NSImage? = nil
+    @State private var htmlAttributed: NSAttributedString? = nil
 
     private static let previewCharLimit = 2_000
 
@@ -43,16 +44,23 @@ struct PreviewPane: View {
         .onChange(of: item?.id) { _, _ in
             isExpanded = false
             fullText = nil
+            htmlAttributed = nil
         }
         .task(id: item?.id) {
             previewImage = nil
-            guard let item, item.isImage,
-                  let data = await viewModel.imageData(id: item.id) else { return }
-            previewImage = ThumbnailImageCache.image(
-                forData: data,
-                representation: .full,
-                contentHash: item.contentHash
-            )
+            htmlAttributed = nil
+            guard let item else { return }
+            if item.isImage, let data = await viewModel.imageData(id: item.id) {
+                previewImage = ThumbnailImageCache.image(
+                    forData: data,
+                    representation: .full,
+                    contentHash: item.contentHash
+                )
+            } else if item.isHtml, let data = await viewModel.htmlContent(id: item.id) {
+                // NSAttributedString(html:) is synchronous and heavy; parse off the
+                // main actor to avoid blocking the UI thread during preview (review #5).
+                htmlAttributed = await Self.parsedAttributedString(fromHTML: data)
+            }
         }
     }
 
@@ -69,6 +77,12 @@ struct PreviewPane: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        } else if entity.isHtml, let htmlAttributed {
+            ScrollView(scrollAxes) {
+                AttributedTextView(attributedString: htmlAttributed)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .defaultScrollAnchor(.topLeading)
         } else {
             ScrollView(scrollAxes) {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -154,5 +168,58 @@ struct PreviewPane: View {
         f.dateStyle = .short
         f.timeStyle = .medium
         return f.string(from: d)
+    }
+
+    /// `NSAttributedString` is not `Sendable`, so we wrap it for safe transfer across
+    /// actor boundaries. `NSAttributedString` is effectively immutable for our read-only
+    /// preview use-case, so `@unchecked Sendable` is safe here (review #5).
+    private struct HTMLParseResult: @unchecked Sendable {
+        let attributed: NSAttributedString?
+    }
+
+    /// Parses HTML into an `NSAttributedString` on a background priority to keep the
+    /// main actor free (review #5). `NSAttributedString(html:)` is synchronous and
+    /// can take tens of milliseconds for non-trivial HTML.
+    private static nonisolated func parseHTML(_ data: Data) -> HTMLParseResult {
+        HTMLParseResult(attributed: try? NSAttributedString(
+            data: data,
+            options: [
+                .documentType: NSAttributedString.DocumentType.html,
+                .characterEncoding: String.Encoding.utf8.rawValue
+            ],
+            documentAttributes: nil
+        ))
+    }
+
+    private static func parsedAttributedString(fromHTML data: Data) async -> NSAttributedString? {
+        await Task.detached(priority: .userInitiated) {
+            parseHTML(data)
+        }.value.attributed
+    }
+}
+
+/// Renders an `NSAttributedString` (e.g. rich HTML) inside SwiftUI using `NSTextView`.
+/// The view is selectable but not editable, so users can copy from the preview.
+struct AttributedTextView: NSViewRepresentable {
+    let attributedString: NSAttributedString
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        guard let textView = scrollView.documentView as? NSTextView else { return scrollView }
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.backgroundColor = .clear
+        textView.drawsBackground = false
+        textView.textContainer?.widthTracksTextView = true
+        // With widthTracksTextView = true, the text container automatically tracks the
+        // textView width, so an explicit containerSize is unnecessary. Setting width to
+        // 0 can cause the first layout pass to clip text (review #6).
+        textView.autoresizingMask = [.width]
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? NSTextView else { return }
+        textView.textStorage?.setAttributedString(attributedString)
     }
 }

@@ -21,7 +21,7 @@ final class PersistenceController {
         self.settings = settings
         // Use a versioned schema so SwiftData records the schema version and can run
         // `PersistenceMigrationPlan` when future model changes are introduced.
-        let schema = Schema(versionedSchema: SchemaV1.self)
+        let schema = Schema(versionedSchema: SchemaV2.self)
         let url = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first!

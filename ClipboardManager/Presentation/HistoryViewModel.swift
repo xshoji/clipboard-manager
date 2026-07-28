@@ -38,6 +38,7 @@ final class HistoryViewModel {
     func delete(id: UUID) { repository.delete(id: id) }
     func fullText(id: UUID) async -> String? { await repository.fetchFullText(id: id) }
     func imageData(id: UUID) async -> Data? { await repository.fetchImageData(id: id) }
+    func htmlContent(id: UUID) async -> Data? { await repository.fetchHtmlContent(id: id) }
     func imageByteCount(id: UUID) async -> Int? { await repository.fetchImageData(id: id)?.count }
     @discardableResult func saveText(_ text: String) -> Bool { repository.insert(.init(kind: "text", text: text, contentHash: HashUtil.sha256Hex(of: Data(text.utf8))), purpose: "TextEditView.saveAsNew") }
     @discardableResult func pasteStandard(item: ClipboardItem, rich: Bool, activate: Bool = true) async -> Bool { await pasteCoordinator.pasteStandard(item: item, rich: rich, activate: activate) }

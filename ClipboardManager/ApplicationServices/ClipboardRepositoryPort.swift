@@ -11,9 +11,10 @@ import Foundation
 protocol ClipboardRepositoryPort: AnyObject {
     func fetchAll() async -> [ClipboardItem]
     func fetch(id: UUID) -> ClipboardItem?
-    func fetchTextContent(id: UUID, includeRichText: Bool) async -> ClipboardRepository.TextContent?
+    func fetchTextContent(id: UUID, includeRich: Bool) async -> ClipboardRepository.TextContent?
     func fetchImageData(id: UUID) async -> Data?
     func fetchFullText(id: UUID) async -> String?
+    func fetchHtmlContent(id: UUID) async -> Data?
     @discardableResult
     func insert(_ item: ClipboardRepository.NewItem, removingDuplicates: Bool, purpose: String) -> Bool
     @discardableResult

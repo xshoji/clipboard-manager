@@ -40,7 +40,7 @@ final class PasteCoordinator {
             }
             wrote = true
         } else {
-            guard let content = await repository.fetchTextContent(id: item.id, includeRichText: rich) else { return false }
+            guard let content = await repository.fetchTextContent(id: item.id, includeRich: rich) else { return false }
             writeText(content, rich: rich)
             wrote = true
         }
@@ -101,7 +101,12 @@ final class PasteCoordinator {
     private func writeText(_ content: ClipboardRepository.TextContent, rich: Bool) {
         suppressedWrite { pb in
             pb.clearContents()
-            if rich, let data = content.richText, let type = Self.richTextType(data) {
+            if rich, let html = content.html, !html.isEmpty {
+                pb.setData(html, forType: NSPasteboard.PasteboardType("public.html"))
+                if let text = content.text, !text.isEmpty {
+                    pb.setString(text, forType: .string)
+                }
+            } else if rich, let data = content.richText, let type = Self.richTextType(data) {
                 pb.setData(data, forType: type); pb.setString(content.text ?? "", forType: .string)
             } else { pb.setString(content.text ?? "", forType: .string) }
         }
@@ -115,7 +120,7 @@ final class PasteCoordinator {
                 pasteboard.setData(data, forType: .png)
             }
         } else {
-            guard let content = await repository.fetchTextContent(id: item.id, includeRichText: true) else { return false }
+            guard let content = await repository.fetchTextContent(id: item.id, includeRich: true) else { return false }
             writeText(content, rich: true)
         }
         return true

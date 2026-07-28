@@ -11,12 +11,14 @@ final class ClipboardRepository: ClipboardRepositoryPort, ClipboardHistoryWritin
     struct TextContent: Sendable {
         let text: String?
         let richText: Data?
+        let html: Data?
     }
 
     struct NewItem: Sendable {
         let kind: String
         var text: String? = nil
         var richText: Data? = nil
+        var html: Data? = nil
         var imageData: Data? = nil
         var thumbnail: Data? = nil
         var sourceBundleID: String? = nil
@@ -44,12 +46,13 @@ final class ClipboardRepository: ClipboardRepositoryPort, ClipboardHistoryWritin
         entity(id: id).map(Self.item)
     }
 
-    func fetchTextContent(id: UUID, includeRichText: Bool) async -> TextContent? {
-        await dataActor.fetchTextContent(id: id, includeRichText: includeRichText)
+    func fetchTextContent(id: UUID, includeRich: Bool) async -> TextContent? {
+        await dataActor.fetchTextContent(id: id, includeRich: includeRich)
     }
 
     func fetchImageData(id: UUID) async -> Data? { await dataActor.fetchImageData(id: id) }
     func fetchFullText(id: UUID) async -> String? { await dataActor.fetchFullText(id: id) }
+    func fetchHtmlContent(id: UUID) async -> Data? { await dataActor.fetchHtmlContent(id: id) }
 
     @discardableResult
     func insert(_ item: NewItem, removingDuplicates: Bool = false, purpose: String) -> Bool {
@@ -61,8 +64,8 @@ final class ClipboardRepository: ClipboardRepositoryPort, ClipboardHistoryWritin
             }
         }
         context.insert(ClipboardEntity(kind: item.kind, text: item.text, richText: item.richText,
-            imageData: item.imageData, thumbnail: item.thumbnail, sourceBundleID: item.sourceBundleID,
-            contentHash: item.contentHash))
+            html: item.html, imageData: item.imageData, thumbnail: item.thumbnail,
+            sourceBundleID: item.sourceBundleID, contentHash: item.contentHash))
         guard persistence.saveContext(context, purpose: purpose) else {
             context.rollback()
             return false
@@ -102,7 +105,8 @@ final class ClipboardRepository: ClipboardRepositoryPort, ClipboardHistoryWritin
             textPreview: entity.textPreview, textPreviewLowercased: entity.textPreviewLowercased,
             isTextPreviewTruncated: entity.isTextPreviewTruncated ?? false,
             textCharacterCount: entity.textCharacterCount, thumbnail: entity.thumbnail,
-            sourceBundleID: entity.sourceBundleID, contentHash: entity.contentHash)
+            isHtml: entity.html != nil, sourceBundleID: entity.sourceBundleID,
+            contentHash: entity.contentHash)
     }
 
     private func notifyChange() {

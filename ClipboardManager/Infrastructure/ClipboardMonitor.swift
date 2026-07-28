@@ -255,12 +255,23 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
             prepareImageSave(pb, pngData)
             return
         }
+        if let tiffData = pb.data(forType: .tiff), !tiffData.isEmpty,
+           let pngData = Self.pngData(fromTiff: tiffData), !pngData.isEmpty {
+            prepareImageSave(pb, pngData)
+            return
+        }
         if let rtfData = pb.data(forType: .rtfd), !rtfData.isEmpty {
             prepareTextSave(pb, rich: rtfData)
             return
         }
         if let rtfData = pb.data(forType: .rtf), !rtfData.isEmpty {
             prepareTextSave(pb, rich: rtfData)
+            return
+        }
+        let htmlType = NSPasteboard.PasteboardType("public.html")
+        if let htmlData = pb.data(forType: htmlType), !htmlData.isEmpty {
+            let plain = Self.plainText(fromHTML: htmlData) ?? pb.string(forType: .string) ?? ""
+            prepareTextSave(pb, plain: plain, html: htmlData)
             return
         }
         if let text = pb.string(forType: .string), !text.isEmpty {
@@ -311,11 +322,11 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
         )
     }
 
-    private func prepareTextSave(_ pb: NSPasteboard, plain: String? = nil, rich: Data? = nil) {
+    private func prepareTextSave(_ pb: NSPasteboard, plain: String? = nil, rich: Data? = nil, html: Data? = nil) {
         let text = plain ?? pb.string(forType: .string) ?? ""
         if text.isEmpty { return }
         let maxBytes = settings.maxItemSizeMB * 1024 * 1024
-        if text.utf8.count > maxBytes || (rich?.count ?? 0) > maxBytes {
+        if text.utf8.count > maxBytes || (rich?.count ?? 0) > maxBytes || (html?.count ?? 0) > maxBytes {
             Self.logger.info("text exceeded maxItemSizeMB (\(self.settings.maxItemSizeMB)MB), skipped")
             DispatchQueue.main.async {
                 AppNotifier.notify(
@@ -326,6 +337,12 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
             }
             return
         }
+        // contentHash is derived from the plain-text representation. This means HTML
+        // copies that share the same plain text but differ in markup (e.g. re-copied
+        // from a different app with different styling) are treated as duplicates and
+        // only the first copy is kept. This is an accepted tradeoff: the vast majority
+        // of use-cases care about the text content, not the markup. See
+        // docs/design-implementation.md §3.1 (review #2).
         let hash = HashUtil.sha256Hex(of: Data(text.utf8))
         // Skip-on-identical-immediate: see `prepareImageSave` for the rationale. Avoids
         // a needless SwiftData write + `removeDuplicates` fetch when the copy is
@@ -338,6 +355,7 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
             kind: "text",
             text: text,
             richText: rich,
+            html: html,
             imageData: nil,
             thumbnail: nil,
             sourceBundleID: sourceBundle,
@@ -354,6 +372,7 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
         kind: String,
         text: String?,
         richText: Data?,
+        html: Data? = nil,
         imageData: Data?,
         thumbnail: Data?,
         sourceBundleID: String?,
@@ -367,6 +386,7 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
                 kind: kind,
                 text: text,
                 richText: richText,
+                html: html,
                 imageData: imageData,
                 thumbnail: thumbnail,
                 sourceBundleID: sourceBundleID,
@@ -381,6 +401,27 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
                 }
             }
         }
+    }
+
+    /// Converts a TIFF pasteboard payload to PNG so it can be stored as a standard
+    /// image history item and written back as `.png` on paste.
+    private static func pngData(fromTiff data: Data) -> Data? {
+        guard let image = NSImage(data: data),
+              let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
+        return png
+    }
+
+    /// Extracts a plain-text fallback from HTML data for search and preview.
+    private static func plainText(fromHTML data: Data) -> String? {
+        guard let attributed = try? NSAttributedString(
+            data: data,
+            options: [.documentType: NSAttributedString.DocumentType.html],
+            documentAttributes: nil
+        ) else { return nil }
+        let text = attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     /// Determines whether the pasteboard contains a concealed copy from a password manager.

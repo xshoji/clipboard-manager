@@ -138,6 +138,7 @@ struct FooterBar: View {
         if let b = entity.sourceBundleID { s += "Source: \(b)\n" }
         if let h = entity.contentHash { s += "Hash: \(h)\n" }
         if let count = entity.textCharacterCount { s += "Length: \(count) chars\n" }
+        if entity.isHtml { s += "Format: HTML\n" }
         if entity.isImage, let count = await viewModel.imageByteCount(id: entity.id) { s += "Image size: \(count) bytes\n" }
         return s
     }

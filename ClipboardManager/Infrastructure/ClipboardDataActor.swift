@@ -20,6 +20,7 @@ actor ClipboardDataActor {
                     isTextPreviewTruncated: entity.isTextPreviewTruncated ?? false,
                     textCharacterCount: entity.textCharacterCount,
                     thumbnail: entity.thumbnail,
+                    isHtml: entity.html != nil,
                     sourceBundleID: entity.sourceBundleID,
                     contentHash: entity.contentHash
                 )
@@ -32,13 +33,20 @@ actor ClipboardDataActor {
     func fetchImageData(id: UUID) -> Data? { entity(id: id)?.imageData }
     func fetchFullText(id: UUID) -> String? { entity(id: id)?.text }
 
-    func fetchTextContent(id: UUID, includeRichText: Bool) -> ClipboardRepository.TextContent? {
+    /// Fetches the text payload for paste. When `includeRich` is true, both `richText`
+    /// (RTFD) and `html` are included; when false, only plain `text` is returned.
+    /// The name `includeRich` (not `includeRichText`) reflects that it gates both rich
+    /// text and HTML (review #4).
+    func fetchTextContent(id: UUID, includeRich: Bool) -> ClipboardRepository.TextContent? {
         guard let entity = entity(id: id) else { return nil }
         return ClipboardRepository.TextContent(
             text: entity.text,
-            richText: includeRichText ? entity.richText : nil
+            richText: includeRich ? entity.richText : nil,
+            html: includeRich ? entity.html : nil
         )
     }
+
+    func fetchHtmlContent(id: UUID) -> Data? { entity(id: id)?.html }
 
     private func entity(id: UUID) -> ClipboardEntity? {
         let descriptor = FetchDescriptor<ClipboardEntity>(predicate: #Predicate { $0.id == id })
