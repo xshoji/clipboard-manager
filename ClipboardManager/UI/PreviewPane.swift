@@ -229,6 +229,14 @@ struct PreviewPane: View {
     }
 }
 
+/// `NSTextView` subclass that refuses to become a key view or first responder.
+/// Used inside the always-mounted `AttributedTextView` so the AppKit text view
+/// never steals keyboard focus from the SwiftUI history list's arrow-key
+/// navigation, which would cause the system beep and break cursor movement.
+private final class NonKeyTextView: NSTextView {
+    override var canBecomeKeyView: Bool { false }
+}
+
 /// Renders an `NSAttributedString` (e.g. rich HTML) inside SwiftUI using `NSTextView`.
 /// The view is selectable but not editable, so users can copy from the preview.
 /// The returned `NSScrollView` owns scrolling — do NOT wrap this in a SwiftUI
@@ -252,29 +260,36 @@ struct AttributedTextView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
-        guard let textView = scrollView.documentView as? NSTextView else { return scrollView }
-
-        scrollView.borderType = .noBorder
-        scrollView.drawsBackground = false
+        // Create a scrollable NonKeyTextView instead of the default NSTextView.
+        // NonKeyTextView refuses first responder so the always-mounted AppKit
+        // view never steals keyboard focus from SwiftUI's arrow-key navigation.
+        let textView = NonKeyTextView()
+        let scrollView = NSScrollView()
+        scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
-        // Overlay scrollers float on top of content without reserving layout
-        // space, matching SwiftUI's native ScrollView behavior. Do NOT set
-        // autohidesScrollers — it is ignored for overlay style and has no effect.
+        scrollView.hasHorizontalScroller = wrapsLines ? false : true
+        scrollView.autohidesScrollers = false
         scrollView.scrollerStyle = .overlay
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
 
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = !wrapsLines
+        textView.isRichText = true
         textView.isEditable = false
         textView.isSelectable = true
-        textView.isRichText = true
         textView.drawsBackground = false
         textView.backgroundColor = .clear
         textView.textColor = NSColor.labelColor
-
-        // Allow the text view to grow vertically so scrolling works for long content.
-        textView.isVerticallyResizable = true
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.minSize = NSSize(width: 0, height: 0)
+        textView.autoresizingMask = [.width]
         textView.textContainer?.heightTracksTextView = false
+        textView.textContainer?.widthTracksTextView = wrapsLines
+        textView.textContainer?.containerSize = NSSize(
+            width: wrapsLines ? max(scrollView.contentSize.width, 1) : CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
 
         synchronize(scrollView, textView: textView, coordinator: context.coordinator)
         return scrollView
