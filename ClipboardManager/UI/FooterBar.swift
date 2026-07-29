@@ -60,6 +60,7 @@ struct FooterBar: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.visible)
         .help("Run paste macro")
+        .accessibilityIdentifier("runMacroMenu")
     }
 
     private var moreMenu: some View {

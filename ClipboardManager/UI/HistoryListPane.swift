@@ -93,6 +93,7 @@ struct HistoryListPane: View {
                 .textFieldStyle(.plain)
                 .focused($searchFocused)
                 .submitLabel(.search)
+                .accessibilityIdentifier("searchField")
                 .onSubmit {
                     // The search field is incremental, so Enter does not need to
                     // commit a query. Instead, mirror the list's Return behavior:
@@ -159,6 +160,7 @@ struct HistoryListPane: View {
             .focusable()
             .focusEffectDisabled()
             .focused($listFocused)
+            .accessibilityIdentifier("historyList")
             .onMoveCommand { direction in
                 moveSelection(direction)
             }
