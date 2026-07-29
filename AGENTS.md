@@ -157,6 +157,44 @@ ClipboardManager/
      (once) for the E2E app bundle id.
   3. Optional `DEVELOPMENT_TEAM=...` (Personal Team ID) for stable TCC.
 
+### Smoke UI Test Rules
+
+- Keep smoke tests in `Tests/SmokeTests/SmokeTests.swift` focused on observable
+  user workflows. Assert the documented product contract, not an incidental UI
+  condition. For example, a successful paste or Macro intentionally activates
+  the previous app, so the ClipboardManager window is not expected to remain key.
+- Reuse the test file's `exists(_:timeout:)` helper instead of calling
+  `waitForExistence(timeout:)` directly. The helper avoids XCTest's roughly
+  one-second initial polling delay when an element is already present while
+  retaining the full timeout for cold or slow runs.
+- Prefer condition-based waiting for asynchronous work. Poll the observable
+  result with a short interval and a bounded deadline; do not sleep for the
+  whole worst-case duration. Keep fixed sleeps limited to the established
+  `uiPump` when SwiftUI needs a brief state-propagation turn. Do not globally
+  reduce `uiPump` without repeated focused runs because 0.1 seconds has caused
+  dirty-state/save-dialog flakes on this app.
+- Avoid long `XCUIElement.typeText` payloads: XCUITest enters them character by
+  character and SwiftUI may recompute state for every character. Use the
+  shortest input that proves the behavior, keep generated paths compact, and
+  verify the real externally observable result (for example, Macro output on
+  `NSPasteboard`) instead of adding a longer test-only script or side channel.
+- Treat SwiftUI accessibility elements as snapshots. After an action that can
+  rebuild a list or filtered view, query the element again rather than reusing
+  a potentially stale `XCUIElement`. For keyboard-focus workflows, send keys
+  through `XCUIApplication` so they reach the current first responder; do not
+  target the element that is merely expected to have focus.
+- Keep `accessibilityIdentifier` values stable and semantic. Query by identifier
+  rather than element index except for native controls with no stable identity,
+  such as a window's traffic-light close button.
+- Clipboard-seeding data, macro names, and temporary filenames must be unique
+  enough to avoid deduplication or collision. Remove only files created by the
+  current test; never clear user directories or production clipboard history.
+- During iteration, run the smallest relevant case:
+  `DEVELOPMENT_TEAM=... Scripts/run-e2e-tests.sh SmokeUITests/testMethodName`.
+  Redirect verbose output to `/tmp` and inspect only failures or the final test
+  summary. Run the full E2E suite only when the combined workflow needs final
+  verification.
+
 ## Safety Rules
 
 - Never discard or rewrite unrelated user changes.
