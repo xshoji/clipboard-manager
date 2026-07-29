@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct MainView: View {
@@ -9,8 +10,12 @@ struct MainView: View {
     let onShowSettings: () -> Void
     @State private var editingItem: ClipboardItem?
     @State private var sidebarVisible: Bool
-   @State private var macroPickerPresented: Bool = false
+    @State private var macroPickerPresented: Bool = false
     @State private var isOcrInProgress: Bool = false
+    /// Responder that owned keyboard focus before the Macro Picker overlay was
+    /// shown. Restored on dismiss so focus does not get "lost" after Esc (the
+    /// overlay's `@FocusState` release leaves no responder owning the key loop).
+    @State private var responderBeforePicker: NSResponder? = nil
 
     init(
         focusSearch: Bool,
@@ -50,18 +55,30 @@ struct MainView: View {
         }
        .overlay {
            if macroPickerPresented {
-               MacroPickerOverlay(
-                   macros: settings.macroScripts,
-                   onSelect: { macro in
-                       macroPickerPresented = false
-                       runMacro(macro)
-                   },
-                   onCancel: { macroPickerPresented = false }
-               )
-               .transition(.opacity)
+                MacroPickerOverlay(
+                    macros: settings.macroScripts,
+                    onSelect: { macro in
+                        macroPickerPresented = false
+                        runMacro(macro)
+                    },
+                    onCancel: { macroPickerPresented = false }
+                )
+                .transition(.opacity)
            }
        }
-       .animation(.easeOut(duration: 0.12), value: macroPickerPresented)
+        .animation(.easeOut(duration: 0.12), value: macroPickerPresented)
+        .onChange(of: macroPickerPresented) { _, presented in
+            // When the Macro Picker is dismissed (Esc, Cmd+M toggle, Enter, or
+            // background click), the overlay's `@FocusState` releases and no
+            // responder owns the key loop, so arrow-key navigation breaks.
+            // Restore the responder that owned focus before the picker opened.
+            // When opening, snapshot the current responder so we can restore it.
+            if presented {
+                responderBeforePicker = NSApp.keyWindow?.firstResponder
+            } else {
+                restoreFocusAfterPicker()
+            }
+        }
         .overlay {
             if isOcrInProgress {
                 OcrProgressOverlay()
@@ -95,11 +112,11 @@ struct MainView: View {
            // Cmd+M (default) while the history window is visible. Toggle so Cmd+M both
            // opens and closes the overlay. Beep if no entity is selected (AppDelegate
            // already guards this, but double-check here for safety).
-           guard viewModel.selectedItem != nil else {
-               NSSound.beep()
-               return
-           }
-           macroPickerPresented.toggle()
+            guard viewModel.selectedItem != nil else {
+                NSSound.beep()
+                return
+            }
+            macroPickerPresented.toggle()
        }
        .onReceive(NotificationCenter.default.publisher(for: .ocrProgressDidChange)) { note in
            if let v = note.userInfo?["inProgress"] as? Bool {
@@ -112,17 +129,30 @@ struct MainView: View {
         await viewModel.pasteStandard(item: item, rich: rich)
     }
 
-   /// Runs the given Macro against the currently selected entity (used by the
-   /// Macro Picker overlay's Enter handler). Mirrors `FooterBar.runMacro` and
-   /// `AppDelegate.runMacroFromHotkey`: Macro execution is offloaded to a
-   /// background Task so the main thread is not blocked (review #4), and
-   /// `PasteCoordinator` handles success / failure fallback.
-   private func runMacro(_ macro: MacroScript) {
-       guard let item = viewModel.selectedItem else { return }
-       Task { @MainActor in
-           _ = await viewModel.runMacro(macro: macro, item: item)
-       }
-   }
+    /// Runs the given Macro against the currently selected entity (used by the
+    /// Macro Picker overlay's Enter handler). Mirrors `FooterBar.runMacro` and
+    /// `AppDelegate.runMacroFromHotkey`: Macro execution is offloaded to a
+    /// background Task so the main thread is not blocked (review #4), and
+    /// `PasteCoordinator` handles success / failure fallback.
+    private func runMacro(_ macro: MacroScript) {
+        guard let item = viewModel.selectedItem else { return }
+        Task { @MainActor in
+            _ = await viewModel.runMacro(macro: macro, item: item)
+        }
+    }
+
+    /// Restores keyboard focus to the responder that owned it before the Macro
+    /// Picker overlay opened. Falls back to making the key window the key responder
+    /// if the snapshot is stale (e.g., the view was removed while the picker was up).
+    private func restoreFocusAfterPicker() {
+        guard let responder = responderBeforePicker else { return }
+        responderBeforePicker = nil
+        guard let window = NSApp.keyWindow else { return }
+        guard window.makeFirstResponder(responder) else {
+            window.makeFirstResponder(nil)
+            return
+        }
+    }
 
     @ViewBuilder
     private var content: some View {

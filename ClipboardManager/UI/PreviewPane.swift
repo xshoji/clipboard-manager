@@ -10,7 +10,11 @@ struct PreviewPane: View {
     @State private var fullText: String? = nil
     @State private var previewImage: NSImage? = nil
     /// Parsed HTML result paired with the item ID it was loaded for, so a stale
-    /// parse from a previous item never bleeds into the current selection.
+    /// parse from a previous item never bleeds into the current selection. We
+    /// intentionally do NOT clear it in `.task(id:)`: paired with `itemID` it is
+    /// stale-safe, and keeping the previous value acts as a one-item cache that
+    /// prevents a two-phase render (plain-text fallback → AppKit swap-in) when
+    /// re-selecting an HTML item.
     @State private var loadedHTML: LoadedHTML? = nil
 
     private struct LoadedHTML {
@@ -54,14 +58,6 @@ struct PreviewPane: View {
         }
         .task(id: item?.id) {
             previewImage = nil
-            // Note: we do NOT clear loadedHTML here. It is paired with itemID,
-            // so a stale value cannot bleed into the current selection. Keeping
-            // the previous value acts as a one-item cache: re-selecting the
-            // previous HTML item shows content instantly without re-fetching.
-            // Most importantly, clearing it here would cause the content(_:)
-            // view builder to fall through to the plain-text branch while the
-            // async fetch is in flight, then swap in the AppKit view after
-            // completion — a two-phase render that causes visible jank.
             guard let item else { return }
             if item.isImage, let data = await viewModel.imageData(id: item.id) {
                 previewImage = ThumbnailImageCache.image(
@@ -70,9 +66,9 @@ struct PreviewPane: View {
                     contentHash: item.contentHash
                 )
             } else if item.isHtml, let data = await viewModel.htmlContent(id: item.id) {
-                // NSAttributedString(html:) MUST be called on the main thread — Apple's
-                // HTML importer synchronizes with the main run loop and times out or
-                // returns unstable results when called off-main.
+                // NSAttributedString(html:) MUST run on the main thread: Apple's
+                // HTML importer synchronizes with the main run loop and times out
+                // or returns partial output when called off-main.
                 let result = Self.parseHTML(data)
                 guard !Task.isCancelled, let result else { return }
                 loadedHTML = LoadedHTML(itemID: item.id, attributed: result)
@@ -83,13 +79,12 @@ struct PreviewPane: View {
     @ViewBuilder
     private func content(_ entity: ClipboardItem) -> some View {
         ZStack {
-            // Keep the AppKit NSScrollView always mounted so that selecting an
-            // HTML item never triggers makeNSView (which causes a layout flash).
-            // When the current item is not HTML, the view is hidden via opacity
-            // and disabled for hit-testing/accessibility. The attributedString
-            // is empty for non-HTML items, so no stale content is visible.
+            // Always mount the AppKit scroll view so selecting an HTML item
+            // never triggers `makeNSView` (which causes a layout flash). When
+            // the current item is not HTML, the view is hidden via opacity and
+            // disabled for hit-testing/accessibility. The attributed string is
+            // empty for non-HTML items, so no stale content is visible.
             AttributedTextView(
-                documentID: entity.isHtml ? entity.id : nil,
                 attributedString: attributedHTML(for: entity),
                 wrapsLines: wrapMode != "nowrap"
             )
@@ -212,8 +207,8 @@ struct PreviewPane: View {
     /// results (timeouts, partial output) when called from a background queue.
     /// The importer embeds explicit foreground colors (typically black) that are
     /// invisible on the app's dark background. We strip them here so the
-    /// NSTextView's `textColor` (set in updateNSView, in the view's appearance
-    /// context) is used instead. Bold/italic/size are preserved.
+    /// `NSTextView.textColor` (set in the view's appearance context) is used
+    /// instead. Bold/italic/size are preserved.
     private static func parseHTML(_ data: Data) -> NSAttributedString? {
         guard let attr = try? NSAttributedString(
             data: data,
@@ -229,10 +224,10 @@ struct PreviewPane: View {
     }
 }
 
-/// `NSTextView` subclass that refuses to become a key view or first responder.
-/// Used inside the always-mounted `AttributedTextView` so the AppKit text view
-/// never steals keyboard focus from the SwiftUI history list's arrow-key
-/// navigation, which would cause the system beep and break cursor movement.
+/// `NSTextView` subclass that refuses to become a key view or first responder,
+/// so the always-mounted AppKit text view never steals keyboard focus from the
+/// SwiftUI history list's arrow-key navigation (which would cause a system beep
+/// and break cursor movement).
 private final class NonKeyTextView: NSTextView {
     override var canBecomeKeyView: Bool { false }
 }
@@ -242,33 +237,20 @@ private final class NonKeyTextView: NSTextView {
 /// The returned `NSScrollView` owns scrolling — do NOT wrap this in a SwiftUI
 /// `ScrollView`; the double-scroll-view causes layout collapse.
 ///
-/// This view should be kept always-mounted (e.g. in a ZStack with opacity toggling)
-/// so that switching to an HTML item does not trigger `makeNSView`, which causes a
-/// visible layout flash. When always-mounted, only `updateNSView` runs, which
+/// Keep this view always-mounted (e.g. in a `ZStack` with opacity toggling) so
+/// switching to an HTML item never triggers `makeNSView` (which causes a visible
+/// layout flash). When always-mounted, only `updateNSView` runs, which
 /// efficiently updates the text storage in-place.
 struct AttributedTextView: NSViewRepresentable {
-    let documentID: UUID?
     let attributedString: NSAttributedString
     let wrapsLines: Bool
 
-    final class Coordinator {
-        var didApplyInitialState = false
-        var documentID: UUID?
-        var wrapsLines: Bool?
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
     func makeNSView(context: Context) -> NSScrollView {
-        // Create a scrollable NonKeyTextView instead of the default NSTextView.
-        // NonKeyTextView refuses first responder so the always-mounted AppKit
-        // view never steals keyboard focus from SwiftUI's arrow-key navigation.
         let textView = NonKeyTextView()
         let scrollView = NSScrollView()
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = wrapsLines ? false : true
-        scrollView.autohidesScrollers = false
         scrollView.scrollerStyle = .overlay
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
@@ -276,76 +258,39 @@ struct AttributedTextView: NSViewRepresentable {
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.minSize = NSSize(width: 0, height: 0)
         textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = !wrapsLines
         textView.isRichText = true
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
         textView.backgroundColor = .clear
         textView.textColor = NSColor.labelColor
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.heightTracksTextView = false
-        textView.textContainer?.widthTracksTextView = wrapsLines
-        textView.textContainer?.containerSize = NSSize(
-            width: wrapsLines ? max(scrollView.contentSize.width, 1) : CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        )
+        configureWrapping(scrollView, textView: textView, wrapsLines: wrapsLines)
 
-        synchronize(scrollView, textView: textView, coordinator: context.coordinator)
+        applyText(textView)
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
-        synchronize(scrollView, textView: textView, coordinator: context.coordinator)
+        configureWrapping(scrollView, textView: textView, wrapsLines: wrapsLines)
+        applyText(textView)
     }
 
-    private func synchronize(
-        _ scrollView: NSScrollView,
-        textView: NSTextView,
-        coordinator: Coordinator
-    ) {
-        // Update wrap mode if it changed (also works on first apply).
-        if coordinator.wrapsLines != wrapsLines {
-            configureWrapping(scrollView, textView: textView, wrapsLines: wrapsLines)
-            coordinator.wrapsLines = wrapsLines
-        }
-
-        let documentChanged = !coordinator.didApplyInitialState || coordinator.documentID != documentID
-        let contentChanged = !textView.attributedString().isEqual(to: attributedString)
-
-        guard documentChanged || contentChanged else { return }
-
-        if contentChanged {
-            let storage = textView.textStorage
-            storage?.beginEditing()
-            storage?.setAttributedString(attributedString)
-            // Override foreground color in the view's appearance context so the
-            // HTML importer's embedded black does not bleed through on dark backgrounds.
-            let fullRange = NSRange(location: 0, length: storage?.length ?? 0)
-            storage?.addAttribute(.foregroundColor, value: NSColor.labelColor, range: fullRange)
-            storage?.endEditing()
-        }
-
-        coordinator.didApplyInitialState = true
-        coordinator.documentID = documentID
-
-        // Scroll to top on document change.
-        if documentChanged {
-            scrollView.contentView.scroll(to: .zero)
-            scrollView.reflectScrolledClipView(scrollView.contentView)
-        }
-
-        // Flash scrollers after layout so the user sees that the content is
-        // scrollable when it overflows (overlay scrollers are hidden at rest).
-        if attributedString.length > 0 {
-            DispatchQueue.main.async { [weak scrollView] in
-                scrollView?.layoutSubtreeIfNeeded()
-                scrollView?.flashScrollers()
-            }
-        }
+    /// Replaces the text storage only when the content actually changed, avoiding
+    /// needless layout passes on every `updateNSView` invocation.
+    private func applyText(_ textView: NSTextView) {
+        guard !textView.attributedString().isEqual(to: attributedString) else { return }
+        let storage = textView.textStorage
+        storage?.beginEditing()
+        storage?.setAttributedString(attributedString)
+        // Re-apply foreground color in the view's current appearance so the HTML
+        // importer's embedded black does not bleed through on dark backgrounds.
+        let fullRange = NSRange(location: 0, length: storage?.length ?? 0)
+        storage?.addAttribute(.foregroundColor, value: NSColor.labelColor, range: fullRange)
+        storage?.endEditing()
     }
 
+    /// Configures line wrapping vs. horizontal scrolling for the text container.
     private func configureWrapping(
         _ scrollView: NSScrollView,
         textView: NSTextView,
@@ -363,7 +308,6 @@ struct AttributedTextView: NSViewRepresentable {
                 : .greatestFiniteMagnitude,
             height: .greatestFiniteMagnitude
         )
-
         scrollView.hasHorizontalScroller = !wrapsLines
     }
 }
