@@ -109,17 +109,17 @@ final class SmokeUITests: XCTestCase {
         let app = makeApp()
         app.launch()
         let settingsWindow = app.windows["ClipboardManager Settings"]
-        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+        XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
 
         // SwiftUI Form Pickers render as NSPopUpButton on macOS; the selected
         // item's label is exposed via the popUpButton's `value`.
         let retentionPopUp = app.popUpButtons.element(boundBy: 0)
-        XCTAssertTrue(retentionPopUp.waitForExistence(timeout: 5), "Retention picker not found")
+        XCTAssertTrue(exists(retentionPopUp, timeout: 5), "Retention picker not found")
         XCTAssertEqual(try XCTUnwrap(retentionPopUp.value as? String), "30 days",
                        "Retention picker did not show '30 days'")
 
         let maxItemsPopUp = app.popUpButtons.element(boundBy: 1)
-        XCTAssertTrue(maxItemsPopUp.waitForExistence(timeout: 5), "Max items picker not found")
+        XCTAssertTrue(exists(maxItemsPopUp, timeout: 5), "Max items picker not found")
         XCTAssertEqual(try XCTUnwrap(maxItemsPopUp.value as? String), "1,000",
                        "Max items picker did not show '1,000'")
 
@@ -139,7 +139,7 @@ final class SmokeUITests: XCTestCase {
             )
         ).firstMatch
         XCTAssertTrue(
-            maxItemText.waitForExistence(timeout: 5),
+            exists(maxItemText, timeout: 5),
             "Max item size staticText not found; dumping app tree:\n\(app.debugDescription)"
         )
         let maxItemContent = maxItemText.label.isEmpty ? (maxItemText.value as? String ?? "") : maxItemText.label
@@ -157,16 +157,16 @@ final class SmokeUITests: XCTestCase {
         let app = makeApp()
         app.launch()
         let settingsWindow = app.windows["ClipboardManager Settings"]
-        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+        XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
 
         let display = app.staticTexts["action.edit.display"]
 
         // Step 1: Clear the Edit hotkey (default ⌘E) → "(none)".
         let clearButton = app.buttons["action.edit.clear"]
-        XCTAssertTrue(clearButton.waitForExistence(timeout: 10), "Edit Clear button not found")
+        XCTAssertTrue(exists(clearButton, timeout: 10), "Edit Clear button not found")
         clearButton.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
-        XCTAssertTrue(display.waitForExistence(timeout: 5), "Display label not found after Clear")
+        XCTAssertTrue(exists(display, timeout: 5), "Display label not found after Clear")
         XCTAssertEqual(display.value as? String ?? "", "(none)",
                        "Edit hotkey display should be '(none)' after Clear, got '\(display.value as? String ?? "")'")
 
@@ -174,7 +174,7 @@ final class SmokeUITests: XCTestCase {
         // After Clear, the Clear button is conditionally hidden (keyCode/mof==0);
         // the Reset button remains visible.
         let resetButton = app.buttons["action.edit.reset"]
-        XCTAssertTrue(resetButton.waitForExistence(timeout: 5), "Edit Reset button not found")
+        XCTAssertTrue(exists(resetButton, timeout: 5), "Edit Reset button not found")
         resetButton.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
         XCTAssertEqual(display.value as? String ?? "", "⌘E",
@@ -185,7 +185,7 @@ final class SmokeUITests: XCTestCase {
         // sidestepping the System Events / AppleScript path that the sandboxed
         // UI test runner cannot use.
         let recordButton = app.buttons["action.edit.record"]
-        XCTAssertTrue(recordButton.waitForExistence(timeout: 5), "Edit Record button not found")
+        XCTAssertTrue(exists(recordButton, timeout: 5), "Edit Record button not found")
         recordButton.click()
         // CaptureKeyView needs to become first responder before the synthetic
         // key event lands. 0.3s is enough on local runners; the previous 1.0s
@@ -208,21 +208,21 @@ final class SmokeUITests: XCTestCase {
         let app = makeApp()
         app.launch()
         let settingsWindow = app.windows["ClipboardManager Settings"]
-        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+        XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
 
         // Sanity: no macros on launch (forceE2EDefaultSettings clears them).
         let emptyLabel = app.staticTexts["macro.empty"]
-        XCTAssertTrue(emptyLabel.waitForExistence(timeout: 5), "Macro empty-state label not found")
+        XCTAssertTrue(exists(emptyLabel, timeout: 5), "Macro empty-state label not found")
 
         // --- Step 1: Add Macro ---
         let addButton = app.buttons["macro.add"]
-        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found")
+        XCTAssertTrue(exists(addButton, timeout: 5), "Add Macro button not found")
         addButton.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
 
         // The first row's controls live under the "macro.0" prefix.
         let nameField = app.textFields["macro.0.name"]
-        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found after Add")
+        XCTAssertTrue(exists(nameField, timeout: 5), "Macro row name field not found after Add")
         nameField.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
 
@@ -235,21 +235,21 @@ final class SmokeUITests: XCTestCase {
         Thread.sleep(forTimeInterval: Self.uiPump)
 
         let saveButton = app.buttons["macro.0.save"]
-        XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Macro Save button not found")
+        XCTAssertTrue(exists(saveButton, timeout: 3), "Macro Save button not found")
         XCTAssertTrue(saveButton.isEnabled, "Macro Save should be enabled after editing the name")
         saveButton.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
 
         // Registration confirmation dialog (per design-implementation.md §5.1-1).
         let confirmSave = app.buttons["macro.0.confirm.save"]
-        XCTAssertTrue(confirmSave.waitForExistence(timeout: 5), "Confirm-Save button not found")
+        XCTAssertTrue(exists(confirmSave, timeout: 5), "Confirm-Save button not found")
         confirmSave.click()
         Thread.sleep(forTimeInterval: 0.3)
 
         // The fingerprint-captured badge shows only on inline-script macros
         // once the user confirms the registration dialog (see MacroScriptRowView.confirmSave).
         let badge = app.staticTexts["macro.0.fingerprintCaptured"]
-        XCTAssertTrue(badge.waitForExistence(timeout: 5), "Fingerprint-captured badge not shown after Save")
+        XCTAssertTrue(exists(badge, timeout: 5), "Fingerprint-captured badge not shown after Save")
         XCTAssertFalse(app.staticTexts["macro.empty"].exists,
                        "Empty-state label should disappear once a macro is registered")
 
@@ -270,7 +270,7 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(saveButtonEdit.isEnabled, "Macro Save should be enabled after editing the name")
         saveButtonEdit.click()
         let confirmSaveEdit = app.buttons["macro.0.confirm.save"]
-        XCTAssertTrue(confirmSaveEdit.waitForExistence(timeout: 5), "Confirm-Save button not found (edit)")
+        XCTAssertTrue(exists(confirmSaveEdit, timeout: 5), "Confirm-Save button not found (edit)")
         confirmSaveEdit.click()
         Thread.sleep(forTimeInterval: 0.3)
 
@@ -281,14 +281,14 @@ final class SmokeUITests: XCTestCase {
 
         // --- Step 3: Switch the interpreter preset /bin/sh → /bin/bash ---
         let presetPopUp = app.popUpButtons["macro.0.interpreterPreset"]
-        XCTAssertTrue(presetPopUp.waitForExistence(timeout: 5), "Interpreter preset popUp not found")
+        XCTAssertTrue(exists(presetPopUp, timeout: 5), "Interpreter preset popUp not found")
         let seedPreset = try XCTUnwrap(presetPopUp.value as? String)
         XCTAssertEqual(seedPreset, "/bin/sh",
                        "Seeded interpreter preset should be '/bin/sh', got '\(seedPreset)'")
         presetPopUp.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
         let bashMenuItem = app.menuItems["/bin/bash"]
-        XCTAssertTrue(bashMenuItem.waitForExistence(timeout: 3), "/bin/bash menu item not found")
+        XCTAssertTrue(exists(bashMenuItem, timeout: 3), "/bin/bash menu item not found")
         bashMenuItem.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
 
@@ -297,7 +297,7 @@ final class SmokeUITests: XCTestCase {
         // because interpreter now differs from the macro model. Save → confirm.
         XCTAssertTrue(saveButtonEdit.isEnabled, "Macro Save should be enabled after changing interpreter preset")
         saveButtonEdit.click()
-        XCTAssertTrue(confirmSaveEdit.waitForExistence(timeout: 5), "Confirm-Save button not found (preset)")
+        XCTAssertTrue(exists(confirmSaveEdit, timeout: 5), "Confirm-Save button not found (preset)")
         confirmSaveEdit.click()
         Thread.sleep(forTimeInterval: 0.3)
 
@@ -327,7 +327,7 @@ final class SmokeUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.3)
 
         let unsavedAlert = app.dialogs.element(boundBy: 0)
-        XCTAssertTrue(unsavedAlert.waitForExistence(timeout: 5),
+        XCTAssertTrue(exists(unsavedAlert, timeout: 5),
                       "Unsaved-changes alert did not appear on close; dumping tree:\n\(app.debugDescription)")
         let discardButton = unsavedAlert.buttons["Discard"]
         XCTAssertTrue(discardButton.exists, "Discard button not found on unsaved-changes alert")
@@ -341,22 +341,22 @@ final class SmokeUITests: XCTestCase {
 
         // Reopen Settings from the main window's HeaderBar gear button.
         let mainWindow = app.windows.firstMatch
-        XCTAssertTrue(mainWindow.waitForExistence(timeout: 5),
+        XCTAssertTrue(exists(mainWindow, timeout: 5),
                       "Main window should remain open after Settings closes")
         let settingsButton = app.buttons["settingsButton"]
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: 5),
+        XCTAssertTrue(exists(settingsButton, timeout: 5),
                       "Settings button not found on main window")
         settingsButton.click()
         Thread.sleep(forTimeInterval: 0.5)
 
         let reopenedSettingsWindow = app.windows["ClipboardManager Settings"]
-        XCTAssertTrue(reopenedSettingsWindow.waitForExistence(timeout: 10),
+        XCTAssertTrue(exists(reopenedSettingsWindow, timeout: 10),
                       "Settings window should reopen after clicking the settings button")
 
         // The macro row should still exist and show the last-saved name, not
         // the discarded "UnsavedEdit" suffix.
         let nameFieldAfterReopen = app.textFields["macro.0.name"]
-        XCTAssertTrue(nameFieldAfterReopen.waitForExistence(timeout: 5),
+        XCTAssertTrue(exists(nameFieldAfterReopen, timeout: 5),
                       "Macro row name field not found after reopening Settings")
         let nameAfterDiscard = try XCTUnwrap(nameFieldAfterReopen.value as? String)
         XCTAssertEqual(nameAfterDiscard, "Edited Macro",
@@ -379,7 +379,10 @@ final class SmokeUITests: XCTestCase {
         let home = NSHomeDirectory()
         let e2eDir = (home as NSString)
             .appendingPathComponent(".ClipboardManagerE2E")
-        let scriptName = "macro-\(UUID().uuidString).sh"
+        // Keep the path short because XCUITest types it one character at a
+        // time. A 12-hex suffix is ample for a local test, and the explicit
+        // collision check below still prevents overwriting an existing file.
+        let scriptName = "m-\(UUID().uuidString.prefix(12)).sh"
         let scriptURL = URL(fileURLWithPath: e2eDir, isDirectory: true)
             .appendingPathComponent(scriptName, isDirectory: false)
         let scriptPath = scriptURL.path
@@ -416,17 +419,17 @@ final class SmokeUITests: XCTestCase {
 
         // Switch the source type from "Inline shell" to "Script file".
         let sourceTypeGroup = app.radioGroups["macro.0.sourceType"]
-        XCTAssertTrue(sourceTypeGroup.waitForExistence(timeout: 5),
+        XCTAssertTrue(exists(sourceTypeGroup, timeout: 5),
                       "Source type radio group not found; dumping tree:\n\(app.debugDescription)")
         let scriptFileRadio = sourceTypeGroup.radioButtons["Script file"]
-        XCTAssertTrue(scriptFileRadio.waitForExistence(timeout: 3), "'Script file' radio button not found")
+        XCTAssertTrue(exists(scriptFileRadio, timeout: 3), "'Script file' radio button not found")
         scriptFileRadio.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
 
         // Now the inline editor is hidden and the path TextField + Browse
         // button are shown. Enter the absolute path to the home script.
         let pathField = app.textFields["macro.0.path"]
-        XCTAssertTrue(pathField.waitForExistence(timeout: 5), "Path TextField not found after switching to Script file")
+        XCTAssertTrue(exists(pathField, timeout: 5), "Path TextField not found after switching to Script file")
         pathField.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
         pathField.typeText(scriptPath)
@@ -434,10 +437,10 @@ final class SmokeUITests: XCTestCase {
 
         // Save the edit; the confirmation dialog appears because the
         // file-mode fingerprint is captured at confirm-save time too.
-        XCTAssertTrue(saveButtonEdit.waitForExistence(timeout: 3), "Macro Save button not found (file)")
+        XCTAssertTrue(exists(saveButtonEdit, timeout: 3), "Macro Save button not found (file)")
         XCTAssertTrue(saveButtonEdit.isEnabled, "Macro Save should be enabled after entering the path")
         saveButtonEdit.click()
-        XCTAssertTrue(confirmSaveEdit.waitForExistence(timeout: 5), "Confirm-Save button not found (file)")
+        XCTAssertTrue(exists(confirmSaveEdit, timeout: 5), "Confirm-Save button not found (file)")
         confirmSaveEdit.click()
         Thread.sleep(forTimeInterval: 0.3)
 
@@ -472,6 +475,12 @@ final class SmokeUITests: XCTestCase {
         return app
     }
 
+    /// Avoids XCTest's one-second initial polling delay when the element is
+    /// already present, while preserving the original timeout on cold runs.
+    private func exists(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        element.exists || element.waitForExistence(timeout: timeout)
+    }
+
     // MARK: - Clipboard Seeding Helper
 
     /// Writes a string to the system pasteboard (`NSPasteboard.general`) from
@@ -495,7 +504,7 @@ final class SmokeUITests: XCTestCase {
         // Wait for the host app's poller to pick the write up and render a row.
         // The poll interval defaults to ~500ms, so ~15s covers cold runs.
         let list = app.scrollViews["historyList"]
-        XCTAssertTrue(list.waitForExistence(timeout: 5), "historyList not found")
+        XCTAssertTrue(exists(list, timeout: 5), "historyList not found")
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             let rows = list.staticTexts.count
@@ -532,23 +541,23 @@ final class SmokeUITests: XCTestCase {
         }
 
         let mainWindow = app.windows.firstMatch
-        XCTAssertTrue(mainWindow.waitForExistence(timeout: 10), "Main window did not appear")
+        XCTAssertTrue(exists(mainWindow, timeout: 10), "Main window did not appear")
 
         // Seed a single clipboard entry so the history list is non-empty and
         // the moveSelection(.up) "already at top" branch is reachable.
         try seedClipboardHistory(app: app, text: "E2EFocusSeed", expectedCount: 1)
 
         let searchField = app.textFields["searchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "searchField not found")
+        XCTAssertTrue(exists(searchField, timeout: 5), "searchField not found")
         let historyList = app.scrollViews["historyList"]
-        XCTAssertTrue(historyList.waitForExistence(timeout: 5), "historyList not found")
+        XCTAssertTrue(exists(historyList, timeout: 5), "historyList not found")
 
         // --- Step 1: ↑ at the top of the list → search field focus ---
         // Click the first row to anchor selection at the top and establish
         // list focus, then press ↑. The list opens with the topmost item
         // selected (resetSelectionToTop) so one ↑ moves focus to search.
         let firstRow = historyList.staticTexts.firstMatch
-        XCTAssertTrue(firstRow.waitForExistence(timeout: 5), "first history row not found")
+        XCTAssertTrue(exists(firstRow, timeout: 5), "first history row not found")
         firstRow.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
 
@@ -618,20 +627,20 @@ final class SmokeUITests: XCTestCase {
         let app = makeApp()
         app.launch()
         let settingsWindow = app.windows["ClipboardManager Settings"]
-        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+        XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
 
         // Sanity: no macros on launch (forceE2EDefaultSettings clears them).
         let emptyLabel = app.staticTexts["macro.empty"]
-        XCTAssertTrue(emptyLabel.waitForExistence(timeout: 5), "Macro empty-state label not found")
+        XCTAssertTrue(exists(emptyLabel, timeout: 5), "Macro empty-state label not found")
 
         // --- Step 1: Add an inline-script macro ---
         let addButton = app.buttons["macro.add"]
-        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found")
+        XCTAssertTrue(exists(addButton, timeout: 5), "Add Macro button not found")
         addButton.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
 
         let nameField = app.textFields["macro.0.name"]
-        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found after Add")
+        XCTAssertTrue(exists(nameField, timeout: 5), "Macro row name field not found after Add")
         nameField.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
         // Replace the seed name "New Macro" with "EchoMacro".
@@ -639,24 +648,19 @@ final class SmokeUITests: XCTestCase {
         nameField.typeText("EchoMacro")
         Thread.sleep(forTimeInterval: Self.uiPump)
 
-        // Edit the inline script body so the macro writes a unique marker into
-        // a known, readable location: `$HOME/.ClipboardManagerE2E/macro-output.txt`.
-        // MacroRunner sets $CB_OUTPUT_FILE to a path inside the host app's
-        // NSTemporaryDirectory(), which is the user's per-user temp dir but
-        // uses a random filename we cannot read from the test process. So we
-        // additionally copy the same content to a fixed in-home path that the
-        // test process can read.
-        //
+        // Edit the inline script body so the macro writes a unique marker to
+        // its normal output file. PasteCoordinator then places that output on
+        // the system pasteboard, which the test process can observe directly.
         // ShellScriptEditor is an NSViewRepresentable that wraps NSScrollView
         // + NSTextView. The accessibilityIdentifier("macro.0.inlineScript") is
         // applied to the SwiftUI view, which surfaces on the underlying
         // NSScrollView in the AX tree — so we resolve it as a ScrollView, then
         // drill into its documentView via the contained TextView.
         let inlineScroll = app.scrollViews["macro.0.inlineScript"]
-        XCTAssertTrue(inlineScroll.waitForExistence(timeout: 5),
+        XCTAssertTrue(exists(inlineScroll, timeout: 5),
                       "Inline script scroll view not found; dumping tree:\n\(app.debugDescription)")
         let inlineEditor = inlineScroll.textViews.firstMatch
-        XCTAssertTrue(inlineEditor.waitForExistence(timeout: 5),
+        XCTAssertTrue(exists(inlineEditor, timeout: 5),
                       "Inline script text view not found inside scroll view; dumping tree:\n\(app.debugDescription)")
         inlineEditor.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
@@ -665,34 +669,22 @@ final class SmokeUITests: XCTestCase {
         inlineEditor.typeKey(.delete, modifierFlags: [])
         Thread.sleep(forTimeInterval: Self.uiPump)
         let marker = "E2E_MACRO_FOOTER_RUN_\(UUID().uuidString.prefix(8))"
-        let home = NSHomeDirectory()
-        let e2eDir = (home as NSString)
-            .appendingPathComponent(".ClipboardManagerE2E")
-        let outPath = (e2eDir as NSString).appendingPathComponent("macro-footer-\(UUID().uuidString.prefix(8)).txt")
-        try FileManager.default.createDirectory(
-            atPath: e2eDir,
-            withIntermediateDirectories: true
-        )
-        // The script body writes the marker to BOTH $CB_OUTPUT_FILE (so the
-        // app sees the macro's normal output) and the fixed in-home path the
-        // test polls. We use printf to avoid a trailing newline in the marker
-        // file so XCTAssertEqual can compare exact contents.
-        let scriptBody = "#!/bin/sh\nm=\"\(marker)\"\nprintf '%s' \"$m\" > \"$CB_OUTPUT_FILE\"\nmkdir -p \"$HOME/.ClipboardManagerE2E\"\nprintf '%s' \"$m\" > \"\(outPath)\"\n"
+        let scriptBody = "printf \(marker) > \"$CB_OUTPUT_FILE\""
         inlineEditor.typeText(scriptBody)
         Thread.sleep(forTimeInterval: Self.uiPump)
 
         // Save + confirm registration.
         let saveButton = app.buttons["macro.0.save"]
-        XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Macro Save button not found")
+        XCTAssertTrue(exists(saveButton, timeout: 3), "Macro Save button not found")
         XCTAssertTrue(saveButton.isEnabled, "Macro Save should be enabled after editing the inline script")
         saveButton.click()
         let confirmSave = app.buttons["macro.0.confirm.save"]
-        XCTAssertTrue(confirmSave.waitForExistence(timeout: 5), "Confirm-Save button not found")
+        XCTAssertTrue(exists(confirmSave, timeout: 5), "Confirm-Save button not found")
         confirmSave.click()
         Thread.sleep(forTimeInterval: 0.3)
 
         let badge = app.staticTexts["macro.0.fingerprintCaptured"]
-        XCTAssertTrue(badge.waitForExistence(timeout: 5), "Fingerprint-captured badge not shown after Save")
+        XCTAssertTrue(exists(badge, timeout: 5), "Fingerprint-captured badge not shown after Save")
         XCTAssertFalse(app.staticTexts["macro.empty"].exists,
                        "Empty-state label should disappear once a macro is registered")
 
@@ -704,45 +696,38 @@ final class SmokeUITests: XCTestCase {
         XCTAssertFalse(settingsWindow.exists, "Settings window should be closed")
 
         let mainWindow = app.windows.firstMatch
-        XCTAssertTrue(mainWindow.waitForExistence(timeout: 5), "Main window did not appear after Settings closed")
+        XCTAssertTrue(exists(mainWindow, timeout: 5), "Main window did not appear after Settings closed")
 
         // --- Step 3: Seed a clipboard entry so there is a selected item ---
         try seedClipboardHistory(app: app, text: "E2EMacroTarget", expectedCount: 1)
 
         // --- Step 4: Open the "Run Macro" pull-down and click EchoMacro ---
         let runMacroMenu = app.menuButtons["runMacroMenu"]
-        XCTAssertTrue(runMacroMenu.waitForExistence(timeout: 5),
+        XCTAssertTrue(exists(runMacroMenu, timeout: 5),
                       "Run Macro menu button not found; dumping tree:\n\(app.debugDescription)")
         runMacroMenu.click()
         Thread.sleep(forTimeInterval: Self.uiPump)
 
         let macroMenuItem = app.menuItems["EchoMacro"]
-        XCTAssertTrue(macroMenuItem.waitForExistence(timeout: 5),
+        XCTAssertTrue(exists(macroMenuItem, timeout: 5),
                       "EchoMacro menu item not found in Run Macro pull-down; dumping tree:\n\(app.debugDescription)")
         macroMenuItem.click()
 
-        // --- Step 5: Poll the in-home output file for the marker ---
-        // The macro writes the marker to `outPath` (in $HOME, readable by the
-        // test process) in addition to $CB_CONTENT_FILE (app-internal). Poll
-        // up to ~10s for the file to appear with exactly the marker content.
+        // --- Step 5: Poll the pasteboard for the transformed output ---
+        // PasteCoordinator writes the macro output to the system pasteboard.
         // MacroRunner runs on a background queue and Process.run() is async,
-        // so the file may take a moment to land.
-        let outURL = URL(fileURLWithPath: outPath)
+        // so the transformed value may take a moment to land.
         var found = false
         let pollDeadline = Date().addingTimeInterval(10)
         while Date() < pollDeadline {
-            if let data = try? Data(contentsOf: outURL),
-               let content = String(data: data, encoding: .utf8),
-               content == marker {
+            if NSPasteboard.general.string(forType: .string) == marker {
                 found = true
                 break
             }
-            Thread.sleep(forTimeInterval: 0.25)
+            Thread.sleep(forTimeInterval: 0.05)
         }
         XCTAssertTrue(found,
-                      "Macro output file did not contain marker '\(marker)' within 10s; dumping app tree:\n\(app.debugDescription)")
-        // Clean up the output file we created.
-        try? FileManager.default.removeItem(at: outURL)
+                      "Pasteboard did not contain macro output '\(marker)' within 10s; dumping app tree:\n\(app.debugDescription)")
 
         // Sanity: app should remain running and no error alert should appear
         // after the macro launched. Successful macro execution intentionally
