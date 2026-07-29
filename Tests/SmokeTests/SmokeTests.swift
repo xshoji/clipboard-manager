@@ -199,10 +199,11 @@ final class SmokeUITests: XCTestCase {
     }
 
     /// Exercises the macro script CRUD pipeline end-to-end in a single session:
-    /// Add → Edit name → Clear-close guard → Change interpreter preset →
-    /// Script-file source. The app is launched once for the whole workflow
-    /// instead of once per sub-case, drastically cutting total runtime
-    /// (previously 5 launches × setUp/tearDown taxed the E2E harness).
+    /// Add → Edit name → Discard-close guard (reopen and verify discard) →
+    /// Change interpreter preset → Script-file source. The app is launched
+    /// once for the whole workflow instead of once per sub-case, drastically
+    /// cutting total runtime (previously 5 launches × setUp/tearDown taxed the
+    /// E2E harness).
     func testMacroScriptWorkflow() throws {
         let app = makeApp()
         app.launch()
@@ -304,11 +305,11 @@ final class SmokeUITests: XCTestCase {
         XCTAssertEqual(finalPreset, "/bin/bash",
                        "Interpreter preset should be '/bin/bash' after preset change, got '\(finalPreset)'")
 
-        // --- Step 4: Unsaved-changes guard on close ---
+        // --- Step 4: Discard unsaved changes on close ---
         // Edit the name WITHOUT clicking Save so the row stays dirty, then
-        // attempt to close the Settings window; the "Unsaved Macro Changes"
-        // NSAlert must appear, and Cancel must keep the window open with the
-        // unsaved edit intact.
+        // close the Settings window and choose "Discard" in the alert. The
+        // unsaved edit must be thrown away, so reopening Settings must show
+        // the last committed name ("Edited Macro") instead of the edited text.
         nameField.click()
         nameField.typeKey("a", modifierFlags: .command)
         nameField.typeText("UnsavedEdit")
@@ -328,21 +329,38 @@ final class SmokeUITests: XCTestCase {
         let unsavedAlert = app.dialogs.element(boundBy: 0)
         XCTAssertTrue(unsavedAlert.waitForExistence(timeout: 5),
                       "Unsaved-changes alert did not appear on close; dumping tree:\n\(app.debugDescription)")
-        let cancelButton = unsavedAlert.buttons["Cancel"]
-        XCTAssertTrue(cancelButton.exists, "Cancel button not found on unsaved-changes alert")
-        cancelButton.click()
-        Thread.sleep(forTimeInterval: Self.uiPump)
+        let discardButton = unsavedAlert.buttons["Discard"]
+        XCTAssertTrue(discardButton.exists, "Discard button not found on unsaved-changes alert")
+        discardButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
 
-        XCTAssertTrue(settingsWindow.exists,
-                      "Settings window should still be open after Canceling the unsaved-changes alert")
+        XCTAssertFalse(settingsWindow.exists,
+                       "Settings window should be closed after Discard")
         XCTAssertFalse(app.dialogs.element(boundBy: 0).exists,
-                       "Unsaved-changes alert should be dismissed after Cancel")
+                       "Unsaved-changes alert should be dismissed after Discard")
 
-        // The unsaved edit must still be intact in the name field — the
-        // Cancel path did NOT commit the change.
-        let nameAfterCancel = try XCTUnwrap(app.textFields["macro.0.name"].value as? String)
-        XCTAssertTrue(nameAfterCancel.hasSuffix("UnsavedEdit"),
-                      "Unsaved edit should be preserved after Canceling the alert, got '\(nameAfterCancel)'")
+        // Reopen Settings from the main window's HeaderBar gear button.
+        let mainWindow = app.windows.firstMatch
+        XCTAssertTrue(mainWindow.waitForExistence(timeout: 5),
+                      "Main window should remain open after Settings closes")
+        let settingsButton = app.buttons["settingsButton"]
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 5),
+                      "Settings button not found on main window")
+        settingsButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let reopenedSettingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(reopenedSettingsWindow.waitForExistence(timeout: 10),
+                      "Settings window should reopen after clicking the settings button")
+
+        // The macro row should still exist and show the last-saved name, not
+        // the discarded "UnsavedEdit" suffix.
+        let nameFieldAfterReopen = app.textFields["macro.0.name"]
+        XCTAssertTrue(nameFieldAfterReopen.waitForExistence(timeout: 5),
+                      "Macro row name field not found after reopening Settings")
+        let nameAfterDiscard = try XCTUnwrap(nameFieldAfterReopen.value as? String)
+        XCTAssertEqual(nameAfterDiscard, "Edited Macro",
+                       "Discarded macro name edit should not persist; expected 'Edited Macro', got '\(nameAfterDiscard)'")
 
         // --- Step 5: Switch to Script-file source with a real script ---
         // Create a real, executable shell script file under a dedicated
@@ -454,7 +472,290 @@ final class SmokeUITests: XCTestCase {
         return app
     }
 
-    // MARK: - Shell Helpers
+    // MARK: - Clipboard Seeding Helper
+
+    /// Writes a string to the system pasteboard (`NSPasteboard.general`) from
+    /// the test runner process. The host app's `ClipboardMonitor` polls the
+    /// same system-wide pasteboard on a utility queue, so a write from the UI
+    /// test process is observable by the app under test. We then poll the main
+    /// window's history list until at least `expectedCount` rows appear.
+    ///
+    /// Each call advances `NSPasteboard.general.changeCount` once, so the
+    /// monitor records exactly one new history entry per call. Strings are
+    /// unique-ified with a UUID suffix so successive seeds do not deduplicate
+    /// into a single history row.
+    private func seedClipboardHistory(app: XCUIApplication,
+                                      text: String,
+                                      expectedCount: Int,
+                                      timeout: TimeInterval = 15) throws {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        let unique = "\(text)-\(UUID().uuidString.prefix(8))"
+        pb.setString(unique, forType: .string)
+        // Wait for the host app's poller to pick the write up and render a row.
+        // The poll interval defaults to ~500ms, so ~15s covers cold runs.
+        let list = app.scrollViews["historyList"]
+        XCTAssertTrue(list.waitForExistence(timeout: 5), "historyList not found")
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let rows = list.staticTexts.count
+            if rows >= expectedCount { return }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        let rows = list.staticTexts.count
+        XCTFail("historyList did not reach expected row count \(expectedCount) within \(timeout)s (got \(rows)); dumping tree:\n\(app.debugDescription)")
+    }
+
+    // MARK: - Tests: Keyboard Navigation & Macro Execution
+
+    /// Opens the history window, seeds one entry via the system pasteboard,
+    /// then verifies two keyboard-navigation behaviors:
+    ///   1. With list focus, pressing ↑ at the top of the list moves focus
+    ///      back to the search field (HistoryListPane.moveSelection(.up) with
+    ///      currentIndex == 0 flips `searchFocused = true`).
+    ///   2. With the search field focused, pressing ↓ moves focus to the list
+    ///      and advances selection (HistoryListPane.onKeyPress(.downArrow)).
+    ///
+    /// Both assertions are focus-state surrogates: XCTest cannot directly read
+    /// SwiftUI `@FocusState`, so we send keys through the application to the
+    /// current first responder and observe whether the search value changes.
+    func testKeyboardNavigationBetweenSearchAndList() throws {
+        let app = makeApp()
+        app.launch()
+
+        // Close Settings (opened by AppDelegate on E2E launch) so the main
+        // window is the key window driving keyboard focus.
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        if settingsWindow.exists {
+            settingsWindow.buttons.element(boundBy: 0).click()
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+
+        let mainWindow = app.windows.firstMatch
+        XCTAssertTrue(mainWindow.waitForExistence(timeout: 10), "Main window did not appear")
+
+        // Seed a single clipboard entry so the history list is non-empty and
+        // the moveSelection(.up) "already at top" branch is reachable.
+        try seedClipboardHistory(app: app, text: "E2EFocusSeed", expectedCount: 1)
+
+        let searchField = app.textFields["searchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "searchField not found")
+        let historyList = app.scrollViews["historyList"]
+        XCTAssertTrue(historyList.waitForExistence(timeout: 5), "historyList not found")
+
+        // --- Step 1: ↑ at the top of the list → search field focus ---
+        // Click the first row to anchor selection at the top and establish
+        // list focus, then press ↑. The list opens with the topmost item
+        // selected (resetSelectionToTop) so one ↑ moves focus to search.
+        let firstRow = historyList.staticTexts.firstMatch
+        XCTAssertTrue(firstRow.waitForExistence(timeout: 5), "first history row not found")
+        firstRow.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        // Press ↑ on the list; expected to flip focus to the search field.
+        app.typeKey(.upArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        // After ↑, searchField should hold keyboard focus — verify by typing
+        // through the app to its current first responder. Using the app rather
+        // than targeting the TextField avoids asking XCUITest to act on a stale
+        // AX element while SwiftUI refreshes the filtered history tree.
+        app.typeKey("e", modifierFlags: [])
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        let searchValueAfterUp = app.textFields["searchField"].value as? String ?? ""
+        XCTAssertEqual(searchValueAfterUp, "e",
+                       "Search field did not receive focus after ↑ from list (value='\(searchValueAfterUp)')")
+
+        // Clear the typed query so subsequent ↓ navigation starts from empty.
+        app.typeKey("a", modifierFlags: .command)
+        app.typeKey(.delete, modifierFlags: [])
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        // --- Step 2: ↓ from the search field → list focus + selection move ---
+        // Press ↓ while the search field is focused. The HistoryListPane
+        // onKeyPress(.downArrow) handler flips listFocused = true and advances
+        // selection. XCUIElement does not expose SwiftUI selection directly,
+        // so verify indirectly that the search field gave up focus: typing
+        // after ↓ must not echo into the search field.
+        app.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        // Now type into the (now non-focused) search field path. With the list
+        // focused, typing a character should not modify the search field value.
+        // We use the keyboard via the app-level typeKey (no modifier) — if the
+        // search field still had focus it would echo 'b'; if the list has focus
+        // (the expected outcome) the search value stays empty.
+        app.typeKey("b", modifierFlags: [])
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        let searchValueAfterDown = app.textFields["searchField"].value as? String ?? ""
+        XCTAssertEqual(searchValueAfterDown, "",
+                       "Search field should have given up focus after ↓ (value='\(searchValueAfterDown)'); expected empty")
+
+        // And the list should now accept arrow keys: pressing ↓ again should
+        // not crash the app. Verify that the list and its window remain open.
+        // (Selection index bump is not directly observable through XCUIElement.)
+        app.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        XCTAssertTrue(historyList.exists, "historyList should still exist after ↓ navigation")
+        XCTAssertTrue(mainWindow.exists, "Main window should remain open after list navigation")
+    }
+
+    /// Verifies the FooterBar "Run Macro" pull-down menu can launch a
+    /// registered macro against the selected history entry and produce the
+    /// expected output through `$CB_OUTPUT_FILE`. Flow:
+    ///   1. Launch E2E app (Settings opens automatically).
+    ///   2. Register a single inline-script macro via Settings whose inline
+    ///      script writes the macro's invocation marker into `$CB_OUTPUT_FILE`.
+    ///   3. Close Settings, focus the main window, seed a clipboard entry so
+    ///      there is a selected history item for the macro to run against.
+    ///   4. Open the "Run Macro" pull-down and click the macro's menu item.
+    ///   5. Poll the output file until it contains the marker.
+    ///
+    /// The script body is identical in spirit to the one used by
+    /// `testMacroScriptWorkflow` but writes a fixed marker string so the test
+    /// can assert exact contents instead of just file existence.
+    func testRunMacroFromFooterPullDown() throws {
+        let app = makeApp()
+        app.launch()
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), "Settings window did not appear on launch")
+
+        // Sanity: no macros on launch (forceE2EDefaultSettings clears them).
+        let emptyLabel = app.staticTexts["macro.empty"]
+        XCTAssertTrue(emptyLabel.waitForExistence(timeout: 5), "Macro empty-state label not found")
+
+        // --- Step 1: Add an inline-script macro ---
+        let addButton = app.buttons["macro.add"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Macro button not found")
+        addButton.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        let nameField = app.textFields["macro.0.name"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Macro row name field not found after Add")
+        nameField.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        // Replace the seed name "New Macro" with "EchoMacro".
+        nameField.typeKey("a", modifierFlags: .command)
+        nameField.typeText("EchoMacro")
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        // Edit the inline script body so the macro writes a unique marker into
+        // a known, readable location: `$HOME/.ClipboardManagerE2E/macro-output.txt`.
+        // MacroRunner sets $CB_OUTPUT_FILE to a path inside the host app's
+        // NSTemporaryDirectory(), which is the user's per-user temp dir but
+        // uses a random filename we cannot read from the test process. So we
+        // additionally copy the same content to a fixed in-home path that the
+        // test process can read.
+        //
+        // ShellScriptEditor is an NSViewRepresentable that wraps NSScrollView
+        // + NSTextView. The accessibilityIdentifier("macro.0.inlineScript") is
+        // applied to the SwiftUI view, which surfaces on the underlying
+        // NSScrollView in the AX tree — so we resolve it as a ScrollView, then
+        // drill into its documentView via the contained TextView.
+        let inlineScroll = app.scrollViews["macro.0.inlineScript"]
+        XCTAssertTrue(inlineScroll.waitForExistence(timeout: 5),
+                      "Inline script scroll view not found; dumping tree:\n\(app.debugDescription)")
+        let inlineEditor = inlineScroll.textViews.firstMatch
+        XCTAssertTrue(inlineEditor.waitForExistence(timeout: 5),
+                      "Inline script text view not found inside scroll view; dumping tree:\n\(app.debugDescription)")
+        inlineEditor.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        // Select-all + delete to clear the seed, then type our script body.
+        inlineEditor.typeKey("a", modifierFlags: .command)
+        inlineEditor.typeKey(.delete, modifierFlags: [])
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        let marker = "E2E_MACRO_FOOTER_RUN_\(UUID().uuidString.prefix(8))"
+        let home = NSHomeDirectory()
+        let e2eDir = (home as NSString)
+            .appendingPathComponent(".ClipboardManagerE2E")
+        let outPath = (e2eDir as NSString).appendingPathComponent("macro-footer-\(UUID().uuidString.prefix(8)).txt")
+        try FileManager.default.createDirectory(
+            atPath: e2eDir,
+            withIntermediateDirectories: true
+        )
+        // The script body writes the marker to BOTH $CB_OUTPUT_FILE (so the
+        // app sees the macro's normal output) and the fixed in-home path the
+        // test polls. We use printf to avoid a trailing newline in the marker
+        // file so XCTAssertEqual can compare exact contents.
+        let scriptBody = "#!/bin/sh\nm=\"\(marker)\"\nprintf '%s' \"$m\" > \"$CB_OUTPUT_FILE\"\nmkdir -p \"$HOME/.ClipboardManagerE2E\"\nprintf '%s' \"$m\" > \"\(outPath)\"\n"
+        inlineEditor.typeText(scriptBody)
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        // Save + confirm registration.
+        let saveButton = app.buttons["macro.0.save"]
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Macro Save button not found")
+        XCTAssertTrue(saveButton.isEnabled, "Macro Save should be enabled after editing the inline script")
+        saveButton.click()
+        let confirmSave = app.buttons["macro.0.confirm.save"]
+        XCTAssertTrue(confirmSave.waitForExistence(timeout: 5), "Confirm-Save button not found")
+        confirmSave.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let badge = app.staticTexts["macro.0.fingerprintCaptured"]
+        XCTAssertTrue(badge.waitForExistence(timeout: 5), "Fingerprint-captured badge not shown after Save")
+        XCTAssertFalse(app.staticTexts["macro.empty"].exists,
+                       "Empty-state label should disappear once a macro is registered")
+
+        // --- Step 2: Close Settings so the main window is key ---
+        let closeButton = settingsWindow.buttons.element(boundBy: 0)
+        XCTAssertTrue(closeButton.exists, "Settings window close button not found")
+        closeButton.click()
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertFalse(settingsWindow.exists, "Settings window should be closed")
+
+        let mainWindow = app.windows.firstMatch
+        XCTAssertTrue(mainWindow.waitForExistence(timeout: 5), "Main window did not appear after Settings closed")
+
+        // --- Step 3: Seed a clipboard entry so there is a selected item ---
+        try seedClipboardHistory(app: app, text: "E2EMacroTarget", expectedCount: 1)
+
+        // --- Step 4: Open the "Run Macro" pull-down and click EchoMacro ---
+        let runMacroMenu = app.menuButtons["runMacroMenu"]
+        XCTAssertTrue(runMacroMenu.waitForExistence(timeout: 5),
+                      "Run Macro menu button not found; dumping tree:\n\(app.debugDescription)")
+        runMacroMenu.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        let macroMenuItem = app.menuItems["EchoMacro"]
+        XCTAssertTrue(macroMenuItem.waitForExistence(timeout: 5),
+                      "EchoMacro menu item not found in Run Macro pull-down; dumping tree:\n\(app.debugDescription)")
+        macroMenuItem.click()
+
+        // --- Step 5: Poll the in-home output file for the marker ---
+        // The macro writes the marker to `outPath` (in $HOME, readable by the
+        // test process) in addition to $CB_CONTENT_FILE (app-internal). Poll
+        // up to ~10s for the file to appear with exactly the marker content.
+        // MacroRunner runs on a background queue and Process.run() is async,
+        // so the file may take a moment to land.
+        let outURL = URL(fileURLWithPath: outPath)
+        var found = false
+        let pollDeadline = Date().addingTimeInterval(10)
+        while Date() < pollDeadline {
+            if let data = try? Data(contentsOf: outURL),
+               let content = String(data: data, encoding: .utf8),
+               content == marker {
+                found = true
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        XCTAssertTrue(found,
+                      "Macro output file did not contain marker '\(marker)' within 10s; dumping app tree:\n\(app.debugDescription)")
+        // Clean up the output file we created.
+        try? FileManager.default.removeItem(at: outURL)
+
+        // Sanity: app should remain running and no error alert should appear
+        // after the macro launched. Successful macro execution intentionally
+        // activates the previously frontmost app, so the ClipboardManager
+        // window is expected to stop being key/hittable.
+        XCTAssertTrue(app.state == .runningForeground || app.state == .runningBackground,
+                      "App should remain running after launching macro from Run Macro menu (state=\(app.state.rawValue))")
+        XCTAssertFalse(app.dialogs.element(boundBy: 0).exists,
+                       "No error dialog should appear after running macro from footer pull-down")
+        XCTAssertTrue(mainWindow.exists, "Main window should remain open after macro run")
+    }
+
+    // MARK: - App Launcher (original location preserved below)
 
     private static func terminateRunningApps() {
         for bid in [productionBundleID, e2eBundleID] {
