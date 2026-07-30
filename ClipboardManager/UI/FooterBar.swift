@@ -120,11 +120,11 @@ struct FooterBar: View {
         guard let entity = selected.wrappedValue else {
             return
         }
-        if entity.isImage {
-            PreviewImageEditor.shared.editImage(item: entity)
-        } else {
-            onEdit(entity)
-        }
+        // Routing (image → Preview.app launch, text → TextEditView sheet) is owned
+        // by the injected `onEdit` closure (supplied by `MainView.edit(_:)`), so
+        // this view does not reference `PreviewImageEditor` (Infrastructure)
+        // directly (review #4).
+        onEdit(entity)
     }
 
     private func deleteSelected() {

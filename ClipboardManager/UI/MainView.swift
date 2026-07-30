@@ -8,6 +8,18 @@ struct MainView: View {
     let focusSearch: Bool
     let onClearHistory: () -> Void
     let onShowSettings: () -> Void
+    /// Restores the previously-frontmost application after the history window
+    /// closes (Esc path). Injected by `MainWindowCoordinator` so this view does
+    /// not reference `AppActivator` (Infrastructure) directly — the same
+    /// "UI must not know side-effecting Infrastructure" rule applied to
+    /// `PasteCoordinator`'s `AppActivating` port (review #4).
+    let onActivatePreviousApp: () -> Void
+    /// Launches Preview.app to edit the given image history item. Injected by
+    /// `MainWindowCoordinator` so this view (and `FooterBar`) do not reference
+    /// `PreviewImageEditor` (Infrastructure) directly. The text-edit path stays
+    /// in this view via the `editingItem` sheet — only the image-edit side
+    /// effect is hoisted out (review #4).
+    let onEditImage: (ClipboardItem) -> Void
     @State private var editingItem: ClipboardItem?
     @State private var sidebarVisible: Bool
     @State private var macroPickerPresented: Bool = false
@@ -21,12 +33,16 @@ struct MainView: View {
         focusSearch: Bool,
         viewModel: HistoryViewModel,
         onClearHistory: @escaping () -> Void,
-        onShowSettings: @escaping () -> Void
+        onShowSettings: @escaping () -> Void,
+        onActivatePreviousApp: @escaping () -> Void,
+        onEditImage: @escaping (ClipboardItem) -> Void
     ) {
         self.focusSearch = focusSearch
         self.viewModel = viewModel
         self.onClearHistory = onClearHistory
         self.onShowSettings = onShowSettings
+        self.onActivatePreviousApp = onActivatePreviousApp
+        self.onEditImage = onEditImage
         _sidebarVisible = State(initialValue: AppSettings.shared.isSidebarVisible)
     }
 
@@ -39,7 +55,7 @@ struct MainView: View {
             FooterBar(
                 selected: $viewModel.selectedItem,
                 viewModel: viewModel,
-                onEdit: { item in editingItem = item },
+                onEdit: { item in edit(item) },
                 onClearAll: onClearHistory
             )
         }
@@ -51,7 +67,7 @@ struct MainView: View {
             // previously-frontmost app so focus naturally returns to the user's editor
             // instead of lingering on ClipboardManager.
             NSApp.keyWindow?.close()
-            AppActivator.shared.activatePreviousApp()
+            onActivatePreviousApp()
         }
        .overlay {
            if macroPickerPresented {
@@ -102,11 +118,7 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .editActionTriggered)) { note in
             // Triggered by the Edit action hotkey ( window-scoped ). Mirrors `FooterBar.editSelected` behavior.
             guard let item = note.object as? ClipboardItem else { return }
-            if item.isImage {
-                PreviewImageEditor.shared.editImage(item: item)
-            } else {
-                editingItem = item
-            }
+            edit(item)
         }
        .onReceive(NotificationCenter.default.publisher(for: .macroPickerTriggered)) { _ in
            // Cmd+M (default) while the history window is visible. Toggle so Cmd+M both
@@ -127,6 +139,20 @@ struct MainView: View {
 
     private func pasteStandard(item: ClipboardItem, rich: Bool) async -> Bool {
         await viewModel.pasteStandard(item: item, rich: rich)
+    }
+
+    /// Centralized Edit action used by both the `FooterBar.editSelected()` path
+    /// and the `editActionTriggered` window-scoped hotkey. Routes image items to
+    /// the injected `onEditImage` (Preview.app launch, an Infrastructure side
+    /// effect) and text items to the local `TextEditView` sheet. Keeping the
+    /// branch here means `FooterBar` only needs a single `onEdit` callback and
+    /// neither view references `PreviewImageEditor` directly (review #4).
+    private func edit(_ item: ClipboardItem) {
+        if item.isImage {
+            onEditImage(item)
+        } else {
+            editingItem = item
+        }
     }
 
     /// Runs the given Macro against the currently selected entity (used by the

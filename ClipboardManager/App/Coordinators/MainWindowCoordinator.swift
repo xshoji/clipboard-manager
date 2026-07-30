@@ -55,9 +55,22 @@ final class MainWindowCoordinator: MainWindowLifecycle {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.level = settings.isAlwaysOnTop ? .floating : .normal
         position(panel)
+        // The following closures keep Infrastructure side effects
+        // (`AppActivator`, `PreviewImageEditor`) out of the UI layer. `MainView`
+        // and `FooterBar` depend only on these callbacks, mirroring the
+        // inward-only dependency direction enforced elsewhere via the
+        // `AppActivating` / `ClipboardRepositoryPort` ports (review #4).
+        let activatePreviousApp: () -> Void = {
+            AppActivator.shared.activatePreviousApp()
+        }
+        let editImage: (ClipboardItem) -> Void = { item in
+            PreviewImageEditor.shared.editImage(item: item)
+        }
         let content = MainView(focusSearch: focusSearch, viewModel: viewModel,
             onClearHistory: { [weak self] in self?.confirmClearHistory() },
-            onShowSettings: { [weak self] in self?.onShowSettings() }).environment(settings)
+            onShowSettings: { [weak self] in self?.onShowSettings() },
+            onActivatePreviousApp: activatePreviousApp,
+            onEditImage: editImage).environment(settings)
         panel.contentView = NSHostingView(rootView: content)
         let controller = MainWindowController(window: panel, settings: settings)
         controller.lifecycle = self
