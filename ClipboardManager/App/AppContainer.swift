@@ -13,7 +13,13 @@ final class AppContainer {
     let coordinator: AppCoordinator
 
     init() {
-        repository = ClipboardRepository(settings: settings)
+        // Compose the persistence stack explicitly so `ClipboardRepository`
+        // (ApplicationServices) never references `PersistenceController` /
+        // `ClipboardDataActor` (Infrastructure) directly. The adapter is the
+        // single Infrastructure-side entry point that conforms to the
+        // ApplicationServices port.
+        let persistenceAdapter = ClipboardPersistenceAdapter(settings: settings)
+        repository = ClipboardRepository(persistence: persistenceAdapter)
         monitor = ClipboardMonitor(repository: repository, settings: settings)
         pasteCoordinator = PasteCoordinator(
             repository: repository,

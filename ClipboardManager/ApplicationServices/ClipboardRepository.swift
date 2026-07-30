@@ -1,89 +1,71 @@
 import AppKit
 import Foundation
-import SwiftData
 
 extension Notification.Name {
     static let clipboardRepositoryDidChange = Notification.Name("clipboardRepositoryDidChange")
 }
 
+/// ApplicationServices-side boundary for clipboard history persistence.
+///
+/// Architecture:
+/// - Depends on `ClipboardPersistencePort` (an ApplicationServices port
+///   protocol). The concrete adapter (`ClipboardPersistenceAdapter`,
+///   Infrastructure) is injected by `AppContainer`, so this class no longer
+///   references `PersistenceController` / `ClipboardDataActor` directly. The
+///   ApplicationServices -> Infrastructure dependency is removed.
+/// - Exposes `ClipboardRepositoryPort` to Presentation (`HistoryViewModel`,
+///   `PasteCoordinator`) and to Infrastructure (`ClipboardMonitor`,
+///   `PreviewImageEditor`) so both layers depend on an ApplicationServices
+///   port, not a concrete class.
+/// - DTOs (`ClipboardItem`, `ClipboardTextContent`, `NewClipboardItem`) live
+///   in Domain, so neither ApplicationServices nor Infrastructure introduces a
+///   reverse dependency by returning/accepting them.
 @MainActor
 final class ClipboardRepository: ClipboardRepositoryPort, ClipboardHistoryWriting {
-    struct TextContent: Sendable {
-        let text: String?
-        let richText: Data?
-        let html: Data?
-    }
+    private let persistence: ClipboardPersistencePort
 
-    struct NewItem: Sendable {
-        let kind: String
-        var text: String? = nil
-        var richText: Data? = nil
-        var html: Data? = nil
-        var imageData: Data? = nil
-        var thumbnail: Data? = nil
-        var sourceBundleID: String? = nil
-        var contentHash: String? = nil
-    }
-
-    private let persistence: PersistenceController
-    private let dataActor: ClipboardDataActor
-
-    init(persistence: PersistenceController) {
+    init(persistence: ClipboardPersistencePort) {
         self.persistence = persistence
-        self.dataActor = ClipboardDataActor(modelContainer: persistence.container)
         persistence.onLimitsDidDelete = { [weak self] in self?.notifyChange() }
-    }
-    convenience init(settings: AppSettingsStore) {
-        self.init(persistence: PersistenceController(settings: settings))
     }
 
     func start() { persistence.startObservingSettings() }
     func flushOnTerminate() { persistence.flushOnTerminate() }
 
-    func fetchAll() async -> [ClipboardItem] { await dataActor.fetchAll(limit: 500) }
+    func fetchAll() async -> [ClipboardItem] { await persistence.fetchAll(limit: 500) }
 
-    func fetch(id: UUID) -> ClipboardItem? {
-        entity(id: id).map(Self.item)
+    func fetch(id: UUID) async -> ClipboardItem? {
+        await persistence.fetch(id: id)
     }
 
-    func fetchTextContent(id: UUID, includeRich: Bool) async -> TextContent? {
-        await dataActor.fetchTextContent(id: id, includeRich: includeRich)
+    func fetchTextContent(id: UUID, includeRich: Bool) async -> ClipboardTextContent? {
+        await persistence.fetchTextContent(id: id, includeRich: includeRich)
     }
 
-    func fetchImageData(id: UUID) async -> Data? { await dataActor.fetchImageData(id: id) }
-    func fetchFullText(id: UUID) async -> String? { await dataActor.fetchFullText(id: id) }
-    func fetchHtmlContent(id: UUID) async -> Data? { await dataActor.fetchHtmlContent(id: id) }
+    func fetchImageData(id: UUID) async -> Data? {
+        await persistence.fetchImageData(id: id)
+    }
+
+    func fetchFullText(id: UUID) async -> String? {
+        await persistence.fetchFullText(id: id)
+    }
+
+    func fetchHtmlContent(id: UUID) async -> Data? {
+        await persistence.fetchHtmlContent(id: id)
+    }
 
     @discardableResult
-    func insert(_ item: NewItem, removingDuplicates: Bool = false, purpose: String) -> Bool {
-        let context = persistence.container.mainContext
-        if removingDuplicates, let hash = item.contentHash {
-            let descriptor = FetchDescriptor<ClipboardEntity>(predicate: #Predicate { $0.contentHash == hash })
-            for duplicate in persistence.fetchEntities(descriptor, context: context, purpose: "repository.deduplicate") ?? [] {
-                context.delete(duplicate)
-            }
-        }
-        context.insert(ClipboardEntity(kind: item.kind, text: item.text, richText: item.richText,
-            html: item.html, imageData: item.imageData, thumbnail: item.thumbnail,
-            sourceBundleID: item.sourceBundleID, contentHash: item.contentHash))
-        guard persistence.saveContext(context, purpose: purpose) else {
-            context.rollback()
+    func insert(_ item: NewClipboardItem, removingDuplicates: Bool, purpose: String) -> Bool {
+        guard persistence.insert(item, removingDuplicates: removingDuplicates, purpose: purpose) else {
             return false
         }
-        persistence.scheduleEnforceWithDebounce()
         notifyChange()
         return true
     }
 
     @discardableResult
     func delete(id: UUID) -> Bool {
-        guard let value = entity(id: id) else { return false }
-        let context = persistence.container.mainContext
-        context.delete(value)
-        guard persistence.saveContext(context, purpose: "repository.delete") else {
-            context.rollback()
-            return false
-        }
+        guard persistence.delete(id: id) else { return false }
         notifyChange()
         return true
     }
@@ -93,20 +75,6 @@ final class ClipboardRepository: ClipboardRepositoryPort, ClipboardHistoryWritin
         guard persistence.clearAll() else { return false }
         notifyChange()
         return true
-    }
-
-    private func entity(id: UUID) -> ClipboardEntity? {
-        let descriptor = FetchDescriptor<ClipboardEntity>(predicate: #Predicate { $0.id == id })
-        return persistence.fetchEntities(descriptor, context: persistence.container.mainContext, purpose: "repository.fetch")?.first
-    }
-
-    private static func item(_ entity: ClipboardEntity) -> ClipboardItem {
-        ClipboardItem(id: entity.id, createdAt: entity.createdAt, kind: entity.kind,
-            textPreview: entity.textPreview, textPreviewLowercased: entity.textPreviewLowercased,
-            isTextPreviewTruncated: entity.isTextPreviewTruncated ?? false,
-            textCharacterCount: entity.textCharacterCount, thumbnail: entity.thumbnail,
-            isHtml: entity.html != nil, sourceBundleID: entity.sourceBundleID,
-            contentHash: entity.contentHash)
     }
 
     private func notifyChange() {

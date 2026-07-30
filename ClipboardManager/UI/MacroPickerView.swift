@@ -41,9 +41,6 @@ struct MacroPickerView: View {
                 .padding(.horizontal, 14)
                 .padding(.top, 8)
                 .focused($searchFieldFocused)
-                .onChange(of: searchText) { _, _ in
-                    if selectedIndex >= filteredMacros.count { selectedIndex = 0 }
-                }
                 .onKeyPress(.upArrow) {
                     guard !filteredMacros.isEmpty else { return .ignored }
                     if selectedIndex <= 0 {
@@ -75,25 +72,39 @@ struct MacroPickerView: View {
 
             Divider().opacity(0.2).padding(.top, 8)
 
-            if filteredMacros.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "arrow.2.squarepath")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                    Text("No macros registered").foregroundStyle(.secondary)
-                    Text("Add macros in Settings > Macro Scripts.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(filteredMacros.enumerated()), id: \.element.id) { idx, macro in
-                            row(for: macro, idx: idx)
+            ScrollViewReader { proxy in
+                Group {
+                    if filteredMacros.isEmpty {
+                        VStack(spacing: 6) {
+                            Image(systemName: "arrow.2.squarepath")
+                                .font(.title2)
+                                .foregroundStyle(.secondary)
+                            Text("No macros registered").foregroundStyle(.secondary)
+                            Text("Add macros in Settings > Macro Scripts.")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 0) {
+                                ForEach(Array(filteredMacros.enumerated()), id: \.element.id) { idx, macro in
+                                    row(for: macro, idx: idx)
+                                }
+                            }
+                            .padding(.vertical, 4)
                         }
                     }
-                    .padding(.vertical, 4)
+                }
+                .onChange(of: selectedIndex) { _, _ in
+                    guard filteredMacros.indices.contains(selectedIndex) else { return }
+                    // Omitting the anchor scrolls only enough to reveal an off-screen row.
+                    proxy.scrollTo(filteredMacros[selectedIndex].id)
+                }
+                .onChange(of: searchText) { _, _ in
+                    selectedIndex = 0
+                    guard let first = filteredMacros.first else { return }
+                    proxy.scrollTo(first.id)
                 }
             }
 

@@ -1,48 +1,21 @@
 import Foundation
 import AppKit
 
-enum MacroError: Error, CustomStringConvertible {
-    case scriptPathOutsideHome
-    case fingerprintMismatch
-    case fingerprintUnavailable
-    case timeout
-    case exitStatus(Int32)
-    case missingScript
-    case emptyInlineScript
-    case invalidOutputEncoding
-
-    var description: String {
-        switch self {
-        case .scriptPathOutsideHome: return "Script path must be inside $HOME."
-        case .fingerprintMismatch: return "Script fingerprint mismatch. Re-register in Settings."
-        case .fingerprintUnavailable: return "Script fingerprint not available. Re-register in Settings."
-        case .timeout: return "Macro script timed out (>5s)."
-        case .exitStatus(let s): return "Macro script exited with status \(s)."
-        case .missingScript: return "Macro script file not found."
-        case .emptyInlineScript: return "Inline Macro script is empty."
-        case .invalidOutputEncoding: return "Macro output is not valid UTF-8 text."
-        }
-    }
-}
-
+/// Macro execution infrastructure.
+///
+/// Dependency direction note (layers review M2/M3): `MacroRunner` lives in
+/// Infrastructure but reuses the ApplicationServices-side `MacroInput` /
+/// `MacroOutput` / `MacroRunningError` types defined in
+/// `PasteCoordinatorPorts.swift`. The Infrastructure -> ApplicationServices port
+/// dependency is legal (inward), and reusing the port types removes the previous
+/// duplicated `MacroRunner.MacroInput` / `MacroRunner.MacroOutput` / `MacroError`
+/// definitions plus the 1:1 `portError(from:)` mapping in `MacroRunnerAdapter`.
+///
+/// `invalidOutputEncoding` is now thrown here (Infrastructure) right after the
+/// output bytes are read and the image check completes, instead of in
+/// `PasteCoordinator` (ApplicationServices), so byte-level encoding validation
+/// stays in the layer that owns the bytes.
 enum MacroRunner {
-    /// Sendable input for Macro execution; persistence models cannot cross into `Task.detached`,
-    /// so only the necessary information is extracted before execution (review #4).
-    struct MacroInput: Sendable {
-        let isImage: Bool
-        let imageData: Data?
-        let text: String?
-        let sourceBundleID: String?
-    }
-
-    /// Sendable output containing the processed data and whether it decoded as an image.
-    /// The image check is performed on the background task so the main actor never pays
-    /// the decode cost (previously `NSImage(data:)` was called twice on the main actor).
-    struct MacroOutput: Sendable {
-        let data: Data
-        let isImage: Bool
-    }
-
     /// Process and temporary file paths, boxed as `@unchecked Sendable` so it can
     /// cross the `Task.detached` boundary. `Process` is reference-typed but is only
     /// accessed from a single logical flow after launch.
@@ -75,14 +48,16 @@ enum MacroRunner {
 
         if timedOut {
             cleanupFiles(launched)
-            throw MacroError.timeout
+            throw MacroRunningError.timeout
         }
         if launched.proc.terminationStatus != 0 {
             cleanupFiles(launched)
-            throw MacroError.exitStatus(launched.proc.terminationStatus)
+            throw MacroRunningError.exitStatus(launched.proc.terminationStatus)
         }
 
-        // Read output and determine kind on a background task (image decode is heavy).
+        // Read output and determine kind on a background task (image decode + UTF-8
+        // validation are heavy / pure-byte concerns and belong in Infrastructure,
+        // not in PasteCoordinator).
         return try await Task.detached(priority: .userInitiated) {
             defer { cleanupFiles(launched) }
             let fm = FileManager.default
@@ -94,6 +69,11 @@ enum MacroRunner {
                 outData = try Data(contentsOf: launched.inputURL)
             }
             let isImage = !outData.isEmpty && NSImage(data: outData)?.isValid == true
+            // Validate UTF-8 for text output here (Infrastructure concern) so the
+            // ApplicationServices layer never has to inspect raw byte encoding.
+            if !isImage, !outData.isEmpty, String(data: outData, encoding: .utf8) == nil {
+                throw MacroRunningError.invalidOutputEncoding
+            }
             return MacroOutput(data: outData, isImage: isImage)
         }.value
     }
@@ -119,14 +99,14 @@ enum MacroRunner {
         let executableScriptPath: String
         if let body = script.inlineScript, let inlineScriptURL {
             guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw MacroError.emptyInlineScript
+                throw MacroRunningError.emptyInlineScript
             }
             if verifyFingerprint {
                 guard let stored = script.lastFingerprint else {
-                    throw MacroError.fingerprintUnavailable
+                    throw MacroRunningError.fingerprintUnavailable
                 }
                 let actual = HashUtil.sha256Hex(of: Data(body.utf8))
-                if actual != stored { throw MacroError.fingerprintMismatch }
+                if actual != stored { throw MacroRunningError.fingerprintMismatch }
             }
             guard fm.createFile(
                 atPath: inlineScriptURL.path,
@@ -142,17 +122,17 @@ enum MacroRunner {
         } else {
             // remaining-features #5, #14: validate using the normalized real path.
             let validation = MacroScriptPathValidator.validate(path: script.scriptPath)
-            guard validation.fileExists else { throw MacroError.missingScript }
-            guard validation.isInsideHome else { throw MacroError.scriptPathOutsideHome }
+            guard validation.fileExists else { throw MacroRunningError.missingScript }
+            guard validation.isInsideHome else { throw MacroRunningError.scriptPathOutsideHome }
             if verifyFingerprint {
                 // Fail-closed: refuse execution when neither stored nor actual file fingerprints are available (remaining-features #5).
                 guard let stored = script.lastFingerprint else {
-                    throw MacroError.fingerprintUnavailable
+                    throw MacroRunningError.fingerprintUnavailable
                 }
                 guard let actual = validation.fingerprint else {
-                    throw MacroError.fingerprintUnavailable
+                    throw MacroRunningError.fingerprintUnavailable
                 }
-                if actual != stored { throw MacroError.fingerprintMismatch }
+                if actual != stored { throw MacroRunningError.fingerprintMismatch }
             }
             executableScriptPath = validation.resolvedPath
         }
@@ -186,7 +166,7 @@ enum MacroRunner {
     ///
     /// Does NOT block the cooperative thread pool: uses `terminationHandler` +
     /// `withTaskGroup` instead of `RunLoop.current.run` polling. On timeout,
-    /// sends SIGINT → SIGTERM and waits for actual exit so that
+    /// sends SIGINT -> SIGTERM and waits for actual exit so that
     /// `terminationStatus` / `terminationReason` are well-defined (review #3).
     /// - Returns: `true` if timed out, `false` if the process exited normally.
     private static func waitForProcess(_ proc: Process, timeout: TimeInterval) async -> Bool {
@@ -215,7 +195,7 @@ enum MacroRunner {
             }
 
             // Wait for the remaining task to complete.
-            // On timeout: proc.terminate() triggers terminationHandler → Task 1 resumes.
+            // On timeout: proc.terminate() triggers terminationHandler -> Task 1 resumes.
             // On normal exit: group.cancelAll() cancels Task 2's sleep.
             group.cancelAll()
             _ = await group.next()

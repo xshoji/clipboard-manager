@@ -30,6 +30,26 @@ actor ClipboardDataActor {
         }
     }
 
+    /// Single-row DTO lookup by id, mirroring `fetchAll`'s entity -> DTO mapping
+    /// so the ApplicationServices layer never touches `ClipboardEntity`.
+    func fetch(id: UUID) -> ClipboardItem? {
+        entity(id: id).map { entity in
+            ClipboardItem(
+                id: entity.id,
+                createdAt: entity.createdAt,
+                kind: entity.kind,
+                textPreview: entity.textPreview,
+                textPreviewLowercased: entity.textPreviewLowercased,
+                isTextPreviewTruncated: entity.isTextPreviewTruncated ?? false,
+                textCharacterCount: entity.textCharacterCount,
+                thumbnail: entity.thumbnail,
+                isHtml: entity.html != nil,
+                sourceBundleID: entity.sourceBundleID,
+                contentHash: entity.contentHash
+            )
+        }
+    }
+
     func fetchImageData(id: UUID) -> Data? { entity(id: id)?.imageData }
     func fetchFullText(id: UUID) -> String? { entity(id: id)?.text }
 
@@ -37,9 +57,9 @@ actor ClipboardDataActor {
     /// (RTFD) and `html` are included; when false, only plain `text` is returned.
     /// The name `includeRich` (not `includeRichText`) reflects that it gates both rich
     /// text and HTML (review #4).
-    func fetchTextContent(id: UUID, includeRich: Bool) -> ClipboardRepository.TextContent? {
+    func fetchTextContent(id: UUID, includeRich: Bool) -> ClipboardTextContent? {
         guard let entity = entity(id: id) else { return nil }
-        return ClipboardRepository.TextContent(
+        return ClipboardTextContent(
             text: entity.text,
             richText: includeRich ? entity.richText : nil,
             html: includeRich ? entity.html : nil

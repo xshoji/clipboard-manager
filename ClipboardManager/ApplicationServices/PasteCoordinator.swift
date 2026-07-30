@@ -64,7 +64,7 @@ final class PasteCoordinator {
 
     @discardableResult
     func runMacro(macro: MacroScript, item: ClipboardItem) async -> Bool {
-        let input: MacroRunner.MacroInput
+        let input: MacroInput
         if item.isImage {
             guard let imageData = await repository.fetchImageData(id: item.id) else { return false }
             input = .init(isImage: true, imageData: imageData, text: nil, sourceBundleID: item.sourceBundleID)
@@ -75,9 +75,6 @@ final class PasteCoordinator {
         do {
             let output = try await macroRunner.runAsync(script: macro, input: input,
                 verifyFingerprint: settings.macroSameDirectoryFingerprint)
-            if !output.isImage, String(data: output.data, encoding: .utf8) == nil, !output.data.isEmpty {
-                throw MacroError.invalidOutputEncoding
-            }
             suppressedWrite { pb in
                 pb.clearContents()
                 if output.isImage { pb.setData(output.data, forType: .png) }
@@ -85,7 +82,7 @@ final class PasteCoordinator {
             }
             activatePreviousApp(); return true
         } catch {
-            let message = (error as? MacroError)?.description ?? error.localizedDescription
+            let message = (error as? MacroRunningError)?.description ?? error.localizedDescription
             switch settings.macroFailureBehavior {
             case "restoreOriginalAndNotify":
                 if await pasteOriginal(item) { activatePreviousApp() }
@@ -98,7 +95,7 @@ final class PasteCoordinator {
         }
     }
 
-    private func writeText(_ content: ClipboardRepository.TextContent, rich: Bool) {
+    private func writeText(_ content: ClipboardTextContent, rich: Bool) {
         suppressedWrite { pb in
             pb.clearContents()
             if rich, let html = content.html, !html.isEmpty {

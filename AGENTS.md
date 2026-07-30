@@ -57,10 +57,11 @@ ClipboardManager/
 │   ├── HistoryViewModel.swift      # observable history list state
 │   └── SettingsViewModel.swift     # observable settings state
 ├── ApplicationServices/            # persistence boundary + paste orchestration
-│   ├── ClipboardRepository.swift   # SwiftData history fetch/insert/delete
+│   ├── ClipboardRepository.swift   # port-mediated persistence boundary (DI)
 │   ├── PasteCoordinator.swift      # standard / Macro / OCR pasteboard writes
 │   ├── ClipboardRepositoryPort.swift   # port protocols (ClipboardRepositoryPort, ClipboardHistoryWriting)
-│   └── PasteCoordinatorPorts.swift     # port protocols (PasteboardSuppressing, OcrRecognizing, MacroRunning, AppActivating, AppNotifying)
+│   ├── ClipboardPersistencePort.swift # port protocol abstracting PersistenceController + ClipboardDataActor
+│   └── PasteCoordinatorPorts.swift     # port protocols (PasteboardSuppressing, OcrRecognizing, MacroRunning, AppActivating, AppNotifying) + MacroInput/MacroOutput/MacroRunningError
 ├── UI/
 │   ├── MainView.swift              # main UI
 │   ├── HeaderBar.swift             # header controls
@@ -76,6 +77,7 @@ ClipboardManager/
 ├── Domain/
 │   ├── ClipboardEntity.swift       # SwiftData @Model
 │   ├── ClipboardItem.swift         # UI DTO (no full image payload)
+│   ├── ClipboardPersistenceDTO.swift # cross-boundary DTOs (ClipboardTextContent, NewClipboardItem)
 │   ├── MacroScript.swift            # transform script setting
 │   ├── MacroScriptPathValidator.swift # macro script path validation rule
 │   ├── AppSettings.swift           # UserDefaults wrapper
@@ -87,6 +89,8 @@ ClipboardManager/
 │   ├── MacroRunnerAdapter.swift     # MacroRunning port adapter
 │   ├── PreviewImageEditor.swift    # Preview.app image editing integration
 │   ├── PersistenceController.swift # SwiftData container management
+│   ├── ClipboardPersistenceAdapter.swift # ClipboardPersistencePort adapter (owns PersistenceController + ClipboardDataActor)
+│   ├── ClipboardDataActor.swift        # @ModelActor performing off-main reads
 │   ├── PersistenceSchema.swift    # SwiftData VersionedSchema + MigrationPlan
 │   ├── AppIconResolver.swift       # source app icon lookup
 │   ├── AppActivator.swift          # bring previous app to front (AppActivating)

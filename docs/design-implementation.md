@@ -33,6 +33,25 @@ rest of the app, mapping records to image-payload-free `ClipboardItem` values.
 `PasteCoordinator` owns standard, Macro, and OCR pasteboard writes. Views observe
 `HistoryViewModel` repository refreshes rather than SwiftData `@Query`.
 
+### 2.1 Persistence Boundary & Dependency Direction
+
+`ClipboardRepository` (ApplicationServices) depends on `ClipboardPersistencePort`
+(an ApplicationServices port protocol) and is injected with a concrete adapter
+at composition time (`AppContainer`). The concrete adapter
+`ClipboardPersistenceAdapter` lives in Infrastructure and bundles
+`PersistenceController` (main-context IO, limits enforcement,
+backup-on-corruption) with `ClipboardDataActor` (off-main reads via
+`@ModelActor`). This keeps the dependency direction strictly inward:
+
+- ApplicationServices -> ApplicationServices port (`ClipboardPersistencePort`)
+- Infrastructure -> ApplicationServices port (the adapter conforms to it)
+- No ApplicationServices -> Infrastructure dependency exists.
+- No Infrastructure -> ApplicationServices concrete-type dependency exists.
+
+DTOs that cross this boundary (`ClipboardItem`, `ClipboardTextContent`,
+`NewClipboardItem`) all live in Domain so neither layer needs to reference the
+other to return/accept them.
+
 ```
 ClipboardManager/
 ├── App/
@@ -42,6 +61,10 @@ ClipboardManager/
 │   └── Info.plist                     # LSUIElement=YES
 ├── Presentation/                      # HistoryViewModel, SettingsViewModel
 ├── ApplicationServices/               # ClipboardRepository, PasteCoordinator
+│   ├── ClipboardRepositoryPort.swift     # ClipboardRepositoryPort + ClipboardHistoryWriting (Presentation/Infrastructure-facing)
+│   ├── ClipboardRepository.swift         # Port-mediated persistence boundary (DI)
+│   ├── ClipboardPersistencePort.swift    # Port protocol abstracting PersistenceController + ClipboardDataActor
+│   └── PasteCoordinatorPorts.swift       # Paste-side port protocols
 ├── UI/                                # SwiftUI views
 │   ├── MainView.swift                # 2-pane layout
 │   ├── HeaderBar.swift                # Header controls
@@ -57,6 +80,7 @@ ClipboardManager/
 ├── Domain/                            # Models
 │   ├── ClipboardEntity.swift         # SwiftData @Model
 │   ├── ClipboardItem.swift           # UI DTO (no full image payload)
+│   ├── ClipboardPersistenceDTO.swift # Cross-boundary DTOs (ClipboardTextContent, NewClipboardItem)
 │   ├── MacroScript.swift             # Macro script settings model
 │   ├── AppSettings.swift            # UserDefaults wrapper
 │   └── DedupCache.swift              # [deprecated] Recent hash cache for dedup (unused; see §4.1)
@@ -66,6 +90,8 @@ ClipboardManager/
 │   ├── PreviewImageEditor.swift      # Preview.app integration for image editing
 │   ├── MacroRunner.swift              # Launch scripts via Process
 │   ├── PersistenceController.swift  # SwiftData ModelContainer + cleanup
+│   ├── ClipboardPersistenceAdapter.swift  # ClipboardPersistencePort adapter (owns PersistenceController + ClipboardDataActor)
+│   ├── ClipboardDataActor.swift        # @ModelActor performing off-main reads
 │   ├── AppIconResolver.swift         # Resolve app icon from bundleID
 │   ├── ThumbnailGenerator.swift     # Image thumbnail generation
 │   ├── InputPermission.swift         # Accessibility permission check/prompt
@@ -105,6 +131,8 @@ ClipboardManager/
 | Macro script execution | `MacroRunner` | Launches scripts via `Process`, passes IO file paths via env vars (§4.2) |
 | Preview.app image editing | `PreviewImageEditor` | Launches Preview.app as an external process, detects edit completion, saves edited image (§4.3) |
 | SwiftData persistence | `PersistenceController` | Builds `ModelContainer`, save + cleanup |
+| SwiftData persistence adapter | `ClipboardPersistenceAdapter` | Concretions of `ClipboardPersistencePort`; owns `PersistenceController` + `ClipboardDataActor`, performs entity<->DTO conversion. Injected into `ClipboardRepository` by `AppContainer` so ApplicationServices never references Infrastructure persistence types directly. |
+| SwiftData off-main reads | `ClipboardDataActor` | `@ModelActor` performing fetches (list, text payload, image bytes, full text, HTML) off the main actor. Referenced only by `ClipboardPersistenceAdapter`. |
 | App icon resolution | `AppIconResolver` | Gets `NSImage` via `NSWorkspace.shared.icon(forFile:)` from `sourceBundleID`, supplies to `HistoryRowView` |
 | Image thumbnail | `ThumbnailGenerator` | Generates list-display thumbnails from image Entity |
 | Accessibility permission | `InputPermission` | Prompts for permission when enabling synthetic `Cmd+V` or when Preview editing needs faster detection (see §5.2) |

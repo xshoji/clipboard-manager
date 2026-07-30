@@ -79,6 +79,7 @@ struct FooterBar: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.visible)
         .help("More")
+        .accessibilityIdentifier("moreMenu")
         .alert("Item info", isPresented: .init(get: { showInfo != nil }, set: { _ in showInfo = nil })) {
             Button("OK") { showInfo = nil }
         } message: { Text(showInfo ?? "") }

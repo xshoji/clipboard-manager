@@ -487,32 +487,26 @@ final class SmokeUITests: XCTestCase {
     /// the test runner process. The host app's `ClipboardMonitor` polls the
     /// same system-wide pasteboard on a utility queue, so a write from the UI
     /// test process is observable by the app under test. We then poll the main
-    /// window's history list until at least `expectedCount` rows appear.
+    /// window's history list until the exact seeded text appears.
     ///
-    /// Each call advances `NSPasteboard.general.changeCount` once, so the
-    /// monitor records exactly one new history entry per call. Strings are
-    /// unique-ified with a UUID suffix so successive seeds do not deduplicate
-    /// into a single history row.
+    /// Strings are unique-ified with a UUID suffix so successive seeds do not
+    /// deduplicate into a single history row.
     private func seedClipboardHistory(app: XCUIApplication,
                                       text: String,
-                                      expectedCount: Int,
                                       timeout: TimeInterval = 15) throws {
         let pb = NSPasteboard.general
         pb.clearContents()
         let unique = "\(text)-\(UUID().uuidString.prefix(8))"
         pb.setString(unique, forType: .string)
         // Wait for the host app's poller to pick the write up and render a row.
-        // The poll interval defaults to ~500ms, so ~15s covers cold runs.
+        // Counting staticTexts is not equivalent to counting rows because each
+        // row exposes both its preview and timestamp as separate text elements.
         let list = app.scrollViews["historyList"]
         XCTAssertTrue(exists(list, timeout: 5), "historyList not found")
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            let rows = list.staticTexts.count
-            if rows >= expectedCount { return }
-            Thread.sleep(forTimeInterval: 0.25)
-        }
-        let rows = list.staticTexts.count
-        XCTFail("historyList did not reach expected row count \(expectedCount) within \(timeout)s (got \(rows)); dumping tree:\n\(app.debugDescription)")
+        let predicate = NSPredicate(format: "label == %@ OR value == %@", unique, unique)
+        let seededText = list.staticTexts.matching(predicate).firstMatch
+        XCTAssertTrue(exists(seededText, timeout: timeout),
+                      "Seeded clipboard text did not appear within \(timeout)s; dumping tree:\n\(app.debugDescription)")
     }
 
     // MARK: - Tests: Keyboard Navigation & Macro Execution
@@ -545,7 +539,7 @@ final class SmokeUITests: XCTestCase {
 
         // Seed a single clipboard entry so the history list is non-empty and
         // the moveSelection(.up) "already at top" branch is reachable.
-        try seedClipboardHistory(app: app, text: "E2EFocusSeed", expectedCount: 1)
+        try seedClipboardHistory(app: app, text: "E2EFocusSeed")
 
         let searchField = app.textFields["searchField"]
         XCTAssertTrue(exists(searchField, timeout: 5), "searchField not found")
@@ -607,6 +601,191 @@ final class SmokeUITests: XCTestCase {
         Thread.sleep(forTimeInterval: Self.uiPump)
         XCTAssertTrue(historyList.exists, "historyList should still exist after ↓ navigation")
         XCTAssertTrue(mainWindow.exists, "Main window should remain open after list navigation")
+    }
+
+    /// Verifies incremental search filters the history list to only matching
+    /// entries. Flow:
+    ///   1. Close Settings so the main window is key.
+    ///   2. Clear any leftover history from previous test runs via More >
+    ///      Clear All History.
+    ///   3. Seed three distinct text entries on the system pasteboard.
+    ///   4. Select the search field and type a query matching only the second
+    ///      seed.
+    ///   5. Poll until only the matching marker remains visible and the other
+    ///      two markers disappear from the history list.
+    ///   6. Clear the query and verify all three markers reappear.
+    ///
+    /// This is a purely UI-state assertion because the sandboxed test runner
+    /// cannot read the host view model directly (SmokeTests philosophy).
+    func testSearchFiltersHistoryList() throws {
+        let app = makeApp()
+        app.launch()
+
+        // Close Settings so the main window is key.
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        if settingsWindow.exists {
+            settingsWindow.buttons.element(boundBy: 0).click()
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+
+        let mainWindow = app.windows.firstMatch
+        XCTAssertTrue(exists(mainWindow, timeout: 10), "Main window did not appear")
+
+        // E2E launches reuse the same SwiftData store, so stale history from
+        // earlier runs can accumulate. Clear it once at the start of this test
+        // so the assertions below depend only on the seeds we control.
+        try clearHistory(app: app)
+
+        // Seed three unique entries so we can verify filtering reduces the list
+        // to exactly the matching one. Use hard-coded prefixes that cannot match
+        // each other or the UUID suffixes.
+        let alphaMarker = "E2ESearchAlpha-"
+        let bravoMarker = "E2ESearchBravo-"
+        let charlieMarker = "E2ESearchCharlie-"
+        try seedClipboardHistory(app: app, text: alphaMarker)
+        try seedClipboardHistory(app: app, text: bravoMarker)
+        try seedClipboardHistory(app: app, text: charlieMarker)
+
+        let searchField = app.textFields["searchField"]
+        XCTAssertTrue(exists(searchField, timeout: 5), "searchField not found")
+        let historyList = app.scrollViews["historyList"]
+        XCTAssertTrue(exists(historyList, timeout: 5), "historyList not found")
+
+        // Wait until all three seeded rows have materialised in the UI.
+        let seededDeadline = Date().addingTimeInterval(10)
+        while Date() < seededDeadline {
+            if countRows(in: app, containing: alphaMarker) == 1,
+               countRows(in: app, containing: bravoMarker) == 1,
+               countRows(in: app, containing: charlieMarker) == 1 {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+
+        // Focus the search field and type a query that only matches the bravo entry.
+        searchField.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        searchField.typeText("Bravo")
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        // Diagnostic: fail fast if the synthetic typing did not reach the field.
+        let typedQuery = searchField.value as? String ?? ""
+        XCTAssertEqual(typedQuery, "Bravo",
+                       "Search field value should be 'Bravo', got '\(typedQuery)'")
+
+        // Wait for the debounced filter to drop alpha/charlie rows.
+        let filterDeadline = Date().addingTimeInterval(10)
+        var bravoVisible = 0
+        var alphaVisible = 1
+        var charlieVisible = 1
+        while Date() < filterDeadline {
+            bravoVisible = countRows(in: app, containing: bravoMarker)
+            alphaVisible = countRows(in: app, containing: alphaMarker)
+            charlieVisible = countRows(in: app, containing: charlieMarker)
+            if bravoVisible == 1 && alphaVisible == 0 && charlieVisible == 0 { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertEqual(bravoVisible, 1,
+                       "Search should keep exactly 1 'Bravo' row, got \(bravoVisible); dumping history list tree:\n\(app.scrollViews["historyList"].debugDescription)")
+        XCTAssertEqual(alphaVisible, 0,
+                       "Search should filter out 'Alpha' rows, got \(alphaVisible)")
+        XCTAssertEqual(charlieVisible, 0,
+                       "Search should filter out 'Charlie' rows, got \(charlieVisible)")
+
+        // Clearing the query should restore all three seeds.
+        // Filtering can rebuild the SwiftUI field, so send keys through the app
+        // to the current first responder rather than the pre-filter snapshot.
+        app.typeKey("a", modifierFlags: .command)
+        app.typeKey(.delete, modifierFlags: [])
+
+        let clearDeadline = Date().addingTimeInterval(10)
+        var alphaRestored = 0
+        var bravoRestored = 0
+        var charlieRestored = 0
+        while Date() < clearDeadline {
+            alphaRestored = countRows(in: app, containing: alphaMarker)
+            bravoRestored = countRows(in: app, containing: bravoMarker)
+            charlieRestored = countRows(in: app, containing: charlieMarker)
+            if alphaRestored == 1 && bravoRestored == 1 && charlieRestored == 1 { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertEqual(alphaRestored, 1,
+                       "Clearing search should restore 'Alpha' row, got \(alphaRestored)")
+        XCTAssertEqual(bravoRestored, 1,
+                       "Clearing search should restore 'Bravo' row, got \(bravoRestored)")
+        XCTAssertEqual(charlieRestored, 1,
+                       "Clearing search should restore 'Charlie' row, got \(charlieRestored)")
+    }
+
+    /// Drives the main-window More menu to clear all history. Used before
+    /// seeding controlled clipboard entries so the test is isolated from
+    /// history left over by earlier E2E runs.
+    private func clearHistory(app: XCUIApplication) throws {
+        let moreMenu = app.menuButtons["moreMenu"]
+        XCTAssertTrue(exists(moreMenu, timeout: 5), "More menu button not found")
+        moreMenu.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        let clearItem = app.menuItems["Clear All History"]
+        XCTAssertTrue(exists(clearItem, timeout: 5), "Clear All History menu item not found")
+        clearItem.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        // AppDelegate presents this confirmation with NSAlert.runModal(). XCUITest
+        // exposes it as the only dialog, with the generic label "alert"; the
+        // message text is only a child value and cannot identify the dialog.
+        let dialog = app.dialogs.firstMatch
+        XCTAssertTrue(exists(dialog, timeout: 5), "Clear-history confirmation dialog not found")
+        let clearButton = dialog.buttons["Clear"]
+        XCTAssertTrue(exists(clearButton, timeout: 5), "Clear button not found in clear-history dialog")
+        clearButton.click()
+
+        let historyList = app.scrollViews["historyList"]
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            if historyList.staticTexts.count == 0, historyList.images.count == 0 { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertEqual(historyList.staticTexts.count, 0,
+                       "History list staticTexts should be empty after Clear All; dumping tree:\n\(historyList.debugDescription)")
+        XCTAssertEqual(historyList.images.count, 0,
+                       "History list images should be empty after Clear All; dumping tree:\n\(historyList.debugDescription)")
+    }
+
+    /// Counts descendant rows in the current history list whose contained static
+    /// text matches `substring`. Counts container rows (cells/otherElements) rather than
+    /// individual staticTexts so a row that exposes title + subtitle as two
+    /// AX staticTexts is only counted once (AGENTS.md: avoid brittle per-text
+    /// counting when one row can have multiple AX text elements).
+    private func countRows(in app: XCUIApplication, containing substring: String) -> Int {
+        // SwiftUI can replace the scroll view when filtering. Re-query it on each
+        // poll instead of retaining a stale XCUIElement snapshot.
+        let list = app.scrollViews["historyList"]
+        let predicateFormat = "label CONTAINS[c] %@ OR value CONTAINS[c] %@"
+        // `cells` covers SwiftUI List rows surfaced as AX cells. Fall back to
+        // `otherElements.matching` for list containers that don't expose cells
+        // but do expose row-like otherElements. We dedupe by identifier so the
+        // same row is never counted twice across the two queries.
+        var seen = Set<String>()
+        let cellsPredicate = NSPredicate(format: predicateFormat, substring, substring)
+        for element in list.cells.matching(cellsPredicate).allElementsBoundByAccessibilityElement {
+            let id = element.identifier
+            if !id.isEmpty { seen.insert(id) }
+        }
+        let otherElementsPredicate = NSPredicate(format: predicateFormat, substring, substring)
+        for element in list.otherElements.matching(otherElementsPredicate).allElementsBoundByAccessibilityElement {
+            let id = element.identifier
+            if !id.isEmpty { seen.insert(id) }
+        }
+        // If neither cells nor otherElements yielded matches, fall back to
+        // staticTexts so the test still surfaces a non-zero count when the AX
+        // tree surfaces text only (some SwiftUI versions do this for List
+        // rows that are not wrapped in a native cell).
+        if seen.isEmpty {
+            let staticTextsPredicate = NSPredicate(format: predicateFormat, substring, substring)
+            return list.staticTexts.matching(staticTextsPredicate).count
+        }
+        return seen.count
     }
 
     /// Verifies the FooterBar "Run Macro" pull-down menu can launch a
@@ -699,7 +878,7 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(exists(mainWindow, timeout: 5), "Main window did not appear after Settings closed")
 
         // --- Step 3: Seed a clipboard entry so there is a selected item ---
-        try seedClipboardHistory(app: app, text: "E2EMacroTarget", expectedCount: 1)
+        try seedClipboardHistory(app: app, text: "E2EMacroTarget")
 
         // --- Step 4: Open the "Run Macro" pull-down and click EchoMacro ---
         let runMacroMenu = app.menuButtons["runMacroMenu"]
