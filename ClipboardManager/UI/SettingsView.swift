@@ -83,6 +83,9 @@ struct SettingsView: View {
                     onRecordingStart: {
                         NotificationCenter.default.post(name: .globalHotkeyRecordingStarted, object: nil)
                     },
+                    onRecordingCancel: {
+                        NotificationCenter.default.post(name: .globalHotkeyRecordingCancelled, object: nil)
+                    },
                     onChange: { NotificationCenter.default.post(name: .globalMacroPickerHotkeyChanged, object: nil) },
                     title: "Direct macro picker",
                     systemImage: "command.square",

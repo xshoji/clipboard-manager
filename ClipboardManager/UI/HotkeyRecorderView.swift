@@ -1,10 +1,12 @@
 import SwiftUI
 import AppKit
+import Carbon.HIToolbox
 
 struct HotkeyRecorderView: View {
     @Binding var keyCode: Int
     @Binding var modifiers: Int
     let onRecordingStart: () -> Void
+    let onRecordingCancel: () -> Void
     let onChange: () -> Void
     let title: String
     let systemImage: String
@@ -20,6 +22,7 @@ struct HotkeyRecorderView: View {
         keyCode: Binding<Int>,
         modifiers: Binding<Int>,
         onRecordingStart: @escaping () -> Void = {},
+        onRecordingCancel: @escaping () -> Void = {},
         onChange: @escaping () -> Void,
         title: String,
         systemImage: String,
@@ -32,6 +35,7 @@ struct HotkeyRecorderView: View {
         self._keyCode = keyCode
         self._modifiers = modifiers
         self.onRecordingStart = onRecordingStart
+        self.onRecordingCancel = onRecordingCancel
         self.onChange = onChange
         self.title = title
         self.systemImage = systemImage
@@ -56,6 +60,9 @@ struct HotkeyRecorderView: View {
             onRecordingStart: {
                 NotificationCenter.default.post(name: .globalHotkeyRecordingStarted, object: nil)
             },
+            onRecordingCancel: {
+                NotificationCenter.default.post(name: .globalHotkeyRecordingCancelled, object: nil)
+            },
             onChange: { NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil) },
             title: "Hotkey",
             systemImage: "command",
@@ -77,11 +84,14 @@ struct HotkeyRecorderView: View {
                 .padding(4)
                 .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.separatorLine))
                 .accessibilityIdentifier("\(accessibilityIDPrefix).display")
-            Button(recording ? "Press keys…" : "Record") {
-                onRecordingStart()
-                recording = true
+            Button(recording ? "Cancel" : "Record") {
+                if recording {
+                    cancelRecording()
+                } else {
+                    onRecordingStart()
+                    recording = true
+                }
             }
-            .disabled(recording)
             .accessibilityIdentifier("\(accessibilityIDPrefix).record")
             if showClear, keyCode != 0 || modifiers != 0 {
                 Button("Clear") {
@@ -110,6 +120,10 @@ struct HotkeyRecorderView: View {
         .overlay {
             if recording {
                 ListenerView { capturedKeyCode, capturedModifiers in
+                    if capturedKeyCode == Int(kVK_Escape) {
+                        cancelRecording()
+                        return
+                    }
                     keyCode = capturedKeyCode
                     modifiers = capturedModifiers
                     refresh()
@@ -118,6 +132,11 @@ struct HotkeyRecorderView: View {
                 }
             }
         }
+    }
+
+    private func cancelRecording() {
+        recording = false
+        onRecordingCancel()
     }
 
     private func refresh() {

@@ -211,10 +211,22 @@ final class SmokeUITests: XCTestCase {
         XCTAssertEqual(display.value as? String ?? "", "(none)",
                        "Global macro picker hotkey should default to '(none)', got '\(display.value as? String ?? "")'")
 
-        // Record ⇧⌘A; unlikely to collide with the E2E main-hotkey defaults.
+        // Escape cancels recording without changing the current shortcut.
         let recordButton = app.buttons["globalMacroPickerHotkey.record"]
         XCTAssertTrue(exists(recordButton, timeout: 5), "Record button not found")
         recordButton.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        XCTAssertEqual(app.buttons["globalMacroPickerHotkey.record"].label, "Cancel",
+                       "Record button should become Cancel while recording")
+        app.typeKey(.escape, modifierFlags: [])
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        XCTAssertEqual(app.buttons["globalMacroPickerHotkey.record"].label, "Record",
+                       "Escape should cancel hotkey recording")
+        XCTAssertEqual(app.staticTexts["globalMacroPickerHotkey.display"].value as? String ?? "", "(none)",
+                       "Cancelling should preserve the current hotkey")
+
+        // Record ⇧⌘A; unlikely to collide with the E2E main-hotkey defaults.
+        app.buttons["globalMacroPickerHotkey.record"].click()
         Thread.sleep(forTimeInterval: 0.3)
         app.typeKey("a", modifierFlags: [.command, .shift])
         Thread.sleep(forTimeInterval: Self.uiPump)

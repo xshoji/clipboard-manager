@@ -54,6 +54,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .globalHotkeyRecordingStarted,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(globalHotkeyRecordingCancelled),
+            name: .globalHotkeyRecordingCancelled,
+            object: nil
+        )
         hotkeyManager.register { [weak self] in
             self?.container.coordinator.showMainWindow(focusSearch: true)
         }
@@ -232,6 +238,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func globalHotkeyRecordingStarted() {
         hotkeyManager.suspendGlobalHotkeysForRecording()
+    }
+
+    @objc private func globalHotkeyRecordingCancelled() {
+        let mainSucceeded = hotkeyManager.reinstall()
+        let macroModalSucceeded = hotkeyManager.reinstallMacroModalHotkey()
+        postHotkeyRegistrationResult(mainSucceeded && macroModalSucceeded)
     }
 
     private func postHotkeyRegistrationResult(_ succeeded: Bool) {
@@ -707,6 +719,7 @@ extension Notification.Name {
     static let mainHotkeyChanged = Notification.Name("mainHotkeyChanged")
     static let mainHotkeyRegistrationResult = Notification.Name("mainHotkeyRegistrationResult")
     static let globalHotkeyRecordingStarted = Notification.Name("globalHotkeyRecordingStarted")
+    static let globalHotkeyRecordingCancelled = Notification.Name("globalHotkeyRecordingCancelled")
     static let globalMacroPickerHotkeyChanged = Notification.Name("globalMacroPickerHotkeyChanged")
     static let macroScriptsChanged = Notification.Name("macroScriptsChanged")
     static let actionHotkeysChanged = Notification.Name("actionHotkeysChanged")
