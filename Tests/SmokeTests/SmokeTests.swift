@@ -651,6 +651,43 @@ final class SmokeUITests: XCTestCase {
                       "Seeded clipboard image did not appear within \(timeout)s; dumping tree:\n\(app.debugDescription)")
     }
 
+    /// Generates a high-contrast PNG containing a short OCR marker, writes it
+    /// to the system pasteboard, and waits for the image history row. Keeping
+    /// the rendered payload short and large makes Vision recognition reliable
+    /// without lengthening the test with a complex fixture.
+    private func seedOcrImageClipboardHistory(app: XCUIApplication,
+                                              marker: String,
+                                              timeout: TimeInterval = 15) throws {
+        let size = NSSize(width: 720, height: 180)
+        let uniqueSuffix = Int.random(in: 1000...9999)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSColor.white.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        ("\(marker) \(uniqueSuffix)" as NSString).draw(
+            in: NSRect(x: 28, y: 42, width: 664, height: 100),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 72, weight: .bold),
+                .foregroundColor: NSColor.black
+            ]
+        )
+        image.unlockFocus()
+
+        let tiffData = try XCTUnwrap(image.tiffRepresentation)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: tiffData))
+        let pngData = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setData(pngData, forType: .png),
+                      "Failed to seed OCR PNG on pasteboard")
+
+        let list = app.scrollViews["historyList"]
+        XCTAssertTrue(exists(list, timeout: 5), "historyList not found")
+        XCTAssertTrue(exists(imageHistoryRow(in: app), timeout: timeout),
+                      "Seeded OCR image did not appear within \(timeout)s; dumping tree:\n\(app.debugDescription)")
+    }
+
     // MARK: - Tests: Keyboard Navigation & Macro Execution
 
     /// Opens the history window, seeds one entry via the system pasteboard,
@@ -857,6 +894,92 @@ final class SmokeUITests: XCTestCase {
                        "Clearing search should restore 'Bravo' row, got \(bravoRestored)")
         XCTAssertEqual(charlieRestored, 1,
                        "Clearing search should restore 'Charlie' row, got \(charlieRestored)")
+    }
+
+    /// Verifies the opt-in automatic image OCR workflow end-to-end:
+    ///   1. Enable automatic OCR in Settings.
+    ///   2. Copy a unique generated image containing an OCR-friendly marker.
+    ///   3. Find the image by searching for text that exists only inside it.
+    ///   4. Press Cmd+P and verify the persisted OCR text is pasted without
+    ///      showing the interactive OCR progress overlay again.
+    func testAutomaticImageOcrSearchAndCachedPaste() throws {
+        let app = makeApp()
+        app.launch()
+
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
+
+        let automaticOcrToggle = app.switches["automaticImageOcr"]
+        let settingsScrollView = settingsWindow.scrollViews.firstMatch
+        XCTAssertTrue(exists(settingsScrollView, timeout: 5), "Settings scroll view not found")
+        for _ in 0..<6 where !automaticOcrToggle.exists || !automaticOcrToggle.isHittable {
+            settingsScrollView.scroll(byDeltaX: 0, deltaY: -300)
+        }
+        XCTAssertTrue(exists(automaticOcrToggle, timeout: 5),
+                      "Automatic OCR toggle not found; dumping Settings tree:\n\(settingsWindow.debugDescription)")
+        XCTAssertTrue(automaticOcrToggle.isHittable, "Automatic OCR toggle is not hittable")
+        automaticOcrToggle.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        XCTAssertEqual((automaticOcrToggle.value as? NSNumber)?.intValue, 1,
+                       "Automatic OCR toggle should be enabled")
+
+        settingsWindow.buttons.element(boundBy: 0).click()
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertFalse(settingsWindow.exists, "Settings window should be closed")
+        XCTAssertTrue(exists(app.windows.firstMatch, timeout: 5), "Main window did not appear")
+
+        try clearHistory(app: app)
+        let marker = "INDEXABLE"
+        try seedOcrImageClipboardHistory(app: app, marker: marker)
+
+        let searchField = app.textFields["searchField"]
+        XCTAssertTrue(exists(searchField, timeout: 5), "searchField not found")
+        searchField.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        searchField.typeText(marker)
+
+        // The row initially disappears because its OCR result is still pending,
+        // then reappears when the persisted result refreshes the search index.
+        let ocrTimeout: TimeInterval = 60
+        let searchDeadline = Date().addingTimeInterval(ocrTimeout)
+        var imageFoundByOcr = false
+        var visibleSince: Date?
+        while Date() < searchDeadline {
+            if imageHistoryRow(in: app).exists {
+                visibleSince = visibleSince ?? Date()
+                if Date().timeIntervalSince(visibleSince ?? Date()) >= 0.6 {
+                    imageFoundByOcr = true
+                    break
+                }
+            } else {
+                visibleSince = nil
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertTrue(imageFoundByOcr,
+                      "Image was not found by OCR marker '\(marker)' within \(Int(ocrTimeout))s; dumping history tree:\n\(app.scrollViews["historyList"].debugDescription)")
+
+        // Filtering selects the sole matching row. Keep the search field focused
+        // and invoke the window-scoped Carbon hotkey through the key application;
+        // clicking a SwiftUI row snapshot here would race a list rebuild.
+        app.typeKey("p", modifierFlags: .command)
+        let pasteDeadline = Date().addingTimeInterval(5)
+        var pastedCachedText = false
+        var showedOcrProgress = false
+        while Date() < pasteDeadline {
+            if app.staticTexts["Running OCR…"].exists {
+                showedOcrProgress = true
+            }
+            if NSPasteboard.general.string(forType: .string)?.contains(marker) == true {
+                pastedCachedText = true
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTAssertTrue(pastedCachedText,
+                      "Cmd+P did not paste the cached OCR marker '\(marker)' within 5s")
+        XCTAssertFalse(showedOcrProgress,
+                       "Cmd+P should reuse persisted OCR text without showing the OCR progress overlay")
     }
 
     /// Verifies the image-only filter keeps image history visible while hiding
