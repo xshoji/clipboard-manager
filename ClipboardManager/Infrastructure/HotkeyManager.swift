@@ -14,6 +14,13 @@ final class HotkeyManager {
     private var registeredMainKeyCode: Int?
     private var registeredMainModifiers: Int?
 
+    /// Second global hotkey: opens the history window and shows the Macro Picker.
+    private let macroModalRegistryID = UInt32(0xABCD_0005)
+    private var macroModalHotkeyRef: EventHotKeyRef?
+    private var macroModalCallback: (@MainActor () -> Void)?
+    private var registeredMacroModalKeyCode: Int?
+    private var registeredMacroModalModifiers: Int?
+
     /// Registration table for per-Macro shortcuts.
     /// The key is EventHotKeyID.id (a unique internal sequence number).
     private struct MacroRegistration {
@@ -97,8 +104,68 @@ final class HotkeyManager {
         registeredMainModifiers = nil
     }
 
+    // MARK: - Second global hotkey (open manager + Macro Picker)
+
+    @discardableResult
+    func registerMacroModalHotkey(callback: @escaping @MainActor () -> Void) -> Bool {
+        self.macroModalCallback = callback
+        return reinstallMacroModalHotkey()
+    }
+
+    @discardableResult
+    func reinstallMacroModalHotkey() -> Bool {
+        ensureEventHandlerInstalled()
+        let cocoaModifiers = settings.globalMacroPickerHotkeyModifiers
+        let cocoaKeyCode = settings.globalMacroPickerHotkeyKeyCode
+        let mods = carbonModifiers(for: cocoaModifiers)
+        let keyCode = UInt32(cocoaKeyCode)
+
+        if registeredMacroModalKeyCode == cocoaKeyCode,
+           registeredMacroModalModifiers == cocoaModifiers,
+           macroModalHotkeyRef != nil {
+            return true
+        }
+        guard mods != 0 || keyCode != 0 else {
+            unregisterMacroModalHotkey()
+            return true
+        }
+
+        var newHotkeyRef: EventHotKeyRef?
+        let reg = RegisterEventHotKey(
+            keyCode, mods,
+            EventHotKeyID(signature: OSType(0x4342_4D47), id: macroModalRegistryID),
+            GetApplicationEventTarget(), 0, &newHotkeyRef
+        )
+        guard reg == noErr, let newHotkeyRef else {
+            Self.logger.error("RegisterEventHotKey (macro modal) failed: \(reg)")
+            if let registeredMacroModalKeyCode, let registeredMacroModalModifiers {
+                settings.globalMacroPickerHotkeyKeyCode = registeredMacroModalKeyCode
+                settings.globalMacroPickerHotkeyModifiers = registeredMacroModalModifiers
+            }
+            return false
+        }
+
+        if let macroModalHotkeyRef {
+            UnregisterEventHotKey(macroModalHotkeyRef)
+        }
+        macroModalHotkeyRef = newHotkeyRef
+        registeredMacroModalKeyCode = cocoaKeyCode
+        registeredMacroModalModifiers = cocoaModifiers
+        return true
+    }
+
+    func unregisterMacroModalHotkey() {
+        if let ref = macroModalHotkeyRef {
+            UnregisterEventHotKey(ref)
+            macroModalHotkeyRef = nil
+        }
+        registeredMacroModalKeyCode = nil
+        registeredMacroModalModifiers = nil
+    }
+
     func unregister() {
         unregisterMain()
+        unregisterMacroModalHotkey()
         unregisterAllMacroHotkeys()
         unregisterAllActionHotkeys()
         if let h = eventHandler {
@@ -236,6 +303,10 @@ final class HotkeyManager {
     private func dispatchHotkey(eventID: UInt32) {
         if eventID == mainRegistryID {
             mainCallback?()
+            return
+        }
+        if eventID == macroModalRegistryID {
+            macroModalCallback?()
             return
         }
         if let reg = actionRegistrations[eventID] {

@@ -46,7 +46,30 @@ struct SettingsView: View {
 
             Section("Global Hotkey") {
                 HotkeyRecorderView()
-                    .environment(settings)
+            }
+
+            Section("Global Macro Picker Hotkey") {
+                HotkeyRecorderView(
+                    keyCode: Binding(
+                        get: { settings.globalMacroPickerHotkeyKeyCode },
+                        set: { settings.globalMacroPickerHotkeyKeyCode = $0 }
+                    ),
+                    modifiers: Binding(
+                        get: { settings.globalMacroPickerHotkeyModifiers },
+                        set: { settings.globalMacroPickerHotkeyModifiers = $0 }
+                    ),
+                    onChange: { NotificationCenter.default.post(name: .globalMacroPickerHotkeyChanged, object: nil) },
+                    title: "Direct macro picker",
+                    systemImage: "command.square",
+                    accessibilityIDPrefix: "globalMacroPickerHotkey",
+                    defaultKeyCode: AppSettings.defaultGlobalMacroPickerHotkeyKeyCode,
+                    defaultModifiers: AppSettings.defaultGlobalMacroPickerHotkeyModifiers,
+                    showReset: false,
+                    showClear: true
+                )
+                Text("Set an optional shortcut that opens ClipboardManager and immediately shows the Macro Picker.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Action Hotkeys") {

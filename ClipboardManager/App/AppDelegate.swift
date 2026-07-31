@@ -51,6 +51,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager.register { [weak self] in
             self?.container.coordinator.showMainWindow(focusSearch: true)
         }
+        // Optional second global hotkey: open the history window and immediately show the Macro Picker.
+        hotkeyManager.registerMacroModalHotkey { [weak self] in
+            self?.container.coordinator.showMainWindow(focusSearch: true)
+            // Defer the Macro Picker open until the next run-loop turn so SwiftUI
+            // has finished moving focus to the search field. This lets the overlay
+            // restore focus back to the search field when it is dismissed, matching
+            // the behavior of manually invoking the main hotkey followed by Cmd+M.
+            DispatchQueue.main.async {
+                self?.runMacroPickerAction()
+            }
+        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(globalMacroPickerHotkeyChanged),
+            name: .globalMacroPickerHotkeyChanged,
+            object: nil
+        )
         // Per-Macro and per-action hotkeys are window-scoped: registered when the history window is shown,
         // and unregistered when it is hidden ( design: only effective while ClipboardManager's history UI is visible ).
         startObservingMacroScriptsChanges()
@@ -123,6 +140,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func forceE2EDefaultSettings() {
         settings.hotkeyKeyCode = AppSettings.defaultHotkeyKeyCode
         settings.hotkeyModifiers = AppSettings.testHotkeyModifiers
+        settings.globalMacroPickerHotkeyKeyCode = AppSettings.defaultGlobalMacroPickerHotkeyKeyCode
+        settings.globalMacroPickerHotkeyModifiers = AppSettings.defaultGlobalMacroPickerHotkeyModifiers
         settings.editHotkeyCode = AppSettings.defaultEditHotkeyCode
         settings.editHotkeyModifiers = AppSettings.defaultActionHotkeyModifiers
         settings.pastePlainHotkeyCode = AppSettings.defaultPastePlainHotkeyCode
@@ -142,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.macroScripts = []
         NotificationCenter.default.post(name: .actionHotkeysChanged, object: nil)
         NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil)
+        NotificationCenter.default.post(name: .globalMacroPickerHotkeyChanged, object: nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -169,6 +189,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func mainHotkeyChanged() {
         let succeeded = hotkeyManager.reinstall()
+        NotificationCenter.default.post(
+            name: .mainHotkeyRegistrationResult,
+            object: nil,
+            userInfo: ["succeeded": succeeded]
+        )
+    }
+
+    @objc private func globalMacroPickerHotkeyChanged() {
+        let succeeded = hotkeyManager.reinstallMacroModalHotkey()
         NotificationCenter.default.post(
             name: .mainHotkeyRegistrationResult,
             object: nil,
@@ -636,6 +665,7 @@ extension Notification.Name {
     static let pollingIntervalChanged = Notification.Name("pollingIntervalChanged")
     static let mainHotkeyChanged = Notification.Name("mainHotkeyChanged")
     static let mainHotkeyRegistrationResult = Notification.Name("mainHotkeyRegistrationResult")
+    static let globalMacroPickerHotkeyChanged = Notification.Name("globalMacroPickerHotkeyChanged")
     static let macroScriptsChanged = Notification.Name("macroScriptsChanged")
     static let actionHotkeysChanged = Notification.Name("actionHotkeysChanged")
     static let resetSelectionToTop = Notification.Name("resetSelectionToTop")

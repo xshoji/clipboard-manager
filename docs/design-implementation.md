@@ -183,6 +183,8 @@ final class ClipboardEntity {
 
 - `hotkeyKeyCode: Int`
 - `hotkeyModifiers: Int`
+- `globalMacroPickerHotkeyKeyCode: Int` (optional second global hotkey; 0 = unset)
+- `globalMacroPickerHotkeyModifiers: Int`
 - `retentionDays: Int` (0=unlimited)
 - `maxHistoryCount: Int`
 - `maxItemSizeMB: Int`

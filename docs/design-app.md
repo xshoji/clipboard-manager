@@ -17,6 +17,7 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 
 - Any hotkey can invoke the UI from any application.
 - The hotkey is user-configurable.
+- An optional second global hotkey can open the UI and immediately show the Macro Picker overlay (equivalent to pressing the main hotkey followed by the Macro Picker action hotkey).
 
 #### 2.1.2 History Search
 

@@ -99,6 +99,7 @@ A separate standard-style window (not the menu bar popup) launched from the menu
 
 1. **General**
    - Global hotkey configuration
+   - Optional second global hotkey to open the UI and immediately show the Macro Picker
    - Theme (System / Light / Dark)
    - Previous-app auto-activation after paste (on/off)
 2. **History**

@@ -45,6 +45,11 @@ final class AppSettings: @unchecked Sendable {
         NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.control.rawValue
     )
 
+    /// Second global hotkey default: unset (optional shortcut that opens the
+    /// history window and immediately shows the Macro Picker overlay).
+    static let defaultGlobalMacroPickerHotkeyKeyCode = 0
+    static let defaultGlobalMacroPickerHotkeyModifiers = 0
+
     /// Edit action hotkey default: Cmd+E (keycode 14 = E).
     static let defaultEditHotkeyCode = 14
     /// Paste Plain action hotkey default: Cmd+P (keycode 35 = P).
@@ -66,6 +71,11 @@ final class AppSettings: @unchecked Sendable {
 
     @ObservationIgnored @Setting("hotkeyKeyCode", default: AppSettings.defaultHotkeyKeyCode)        var hotkeyKeyCode: Int
     @ObservationIgnored @Setting("hotkeyModifiers", default: AppSettings.defaultHotkeyModifiers)    var hotkeyModifiers: Int
+
+    /// Optional second global hotkey that opens the history window and immediately
+    /// shows the Macro Picker overlay. Defaults to unset (0,0).
+    @ObservationIgnored @Setting("globalMacroPickerHotkeyKeyCode", default: AppSettings.defaultGlobalMacroPickerHotkeyKeyCode) var globalMacroPickerHotkeyKeyCode: Int
+    @ObservationIgnored @Setting("globalMacroPickerHotkeyModifiers", default: AppSettings.defaultGlobalMacroPickerHotkeyModifiers) var globalMacroPickerHotkeyModifiers: Int
 
     /// Per-action hotkeys. Effective only while the history window is visible ( AppDelegate.installActionHotkeys / uninstallActionHotkeys ).
     /// Defaults: Edit = Cmd+E ( keycode 14 ), Paste Plain = Cmd+P ( keycode 35 ).
