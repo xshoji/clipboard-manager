@@ -37,11 +37,19 @@ protocol ClipboardPersistencePort: AnyObject {
     /// Raw HTML bytes for paste when only HTML is requested.
     func fetchHtmlContent(id: UUID) async -> Data?
 
+    /// Persisted OCR text and processing status for cache-aware image text paste.
+    func fetchOcrResult(id: UUID) async -> ClipboardOcrResult?
+
     /// Inserts a new entity and deletes older entities sharing the same
     /// `contentHash` when `removingDuplicates` is true. Persists immediately.
     /// Returns `true` on successful save.
     @discardableResult
     func insert(_ item: NewClipboardItem, removingDuplicates: Bool, purpose: String) -> Bool
+
+    /// Stores the terminal automatic-OCR result for an existing image row.
+    /// A nil text value records that recognition completed without searchable text.
+    @discardableResult
+    func updateOcrResult(id: UUID, text: String?) -> Bool
 
     /// Deletes the entity with the given id. Returns `true` on success.
     @discardableResult

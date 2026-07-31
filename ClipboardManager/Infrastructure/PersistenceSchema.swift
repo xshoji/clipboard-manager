@@ -20,16 +20,24 @@ enum SchemaV2: VersionedSchema {
     static var versionIdentifier: Schema.Version { Schema.Version(2, 0, 0) }
 
     static var models: [any PersistentModel.Type] {
-        [ClipboardEntity.self]
+        [ClipboardEntitySchemaV2.ClipboardEntity.self]
+    }
+}
+
+enum SchemaV3: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(3, 0, 0) }
+
+    static var models: [any PersistentModel.Type] {
+        [ClipboardEntitySchemaV3.ClipboardEntity.self]
     }
 }
 
 /// Migration plan describing every schema version this app understands and the
-/// stages to move between them. A lightweight migration from V1 to V2 adds the
-/// `html` attribute and leaves existing rows with `html == nil`.
+/// stages to move between them. Lightweight migrations add optional fields and
+/// leave existing rows with nil values.
 enum PersistenceMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [SchemaV1.self, SchemaV2.self]
+        [SchemaV1.self, SchemaV2.self, SchemaV3.self]
     }
 
     static var stages: [MigrationStage] {
@@ -37,6 +45,10 @@ enum PersistenceMigrationPlan: SchemaMigrationPlan {
             MigrationStage.lightweight(
                 fromVersion: SchemaV1.self,
                 toVersion: SchemaV2.self
+            ),
+            MigrationStage.lightweight(
+                fromVersion: SchemaV2.self,
+                toVersion: SchemaV3.self
             )
         ]
     }

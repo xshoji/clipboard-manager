@@ -20,7 +20,11 @@ final class AppContainer {
         // ApplicationServices port.
         let persistenceAdapter = ClipboardPersistenceAdapter(settings: settings)
         repository = ClipboardRepository(persistence: persistenceAdapter)
-        monitor = ClipboardMonitor(repository: repository, settings: settings)
+        monitor = ClipboardMonitor(
+            repository: repository,
+            settings: settings,
+            automaticOcr: AutomaticOcrProcessor(repository: repository)
+        )
         pasteCoordinator = PasteCoordinator(
             repository: repository,
             settings: settings,

@@ -13,6 +13,14 @@ struct ClipboardTextContent: Sendable {
     let html: Data?
 }
 
+/// Persisted OCR state fetched independently from the lightweight history DTO.
+/// The original text casing is retained for paste, while list search uses its
+/// separately mapped lowercase value.
+struct ClipboardOcrResult: Sendable {
+    let status: String?
+    let text: String?
+}
+
 /// Write payload used to insert a new clipboard history entry. Image and text
 /// payloads share one DTO; nullable fields carry only the relevant subset per
 /// `kind`.
@@ -22,6 +30,7 @@ struct ClipboardTextContent: Sendable {
 /// (`ClipboardMonitor`, `PreviewImageEditor`) reference it without creating a
 /// reverse dependency on ApplicationServices.
 struct NewClipboardItem: Sendable {
+    var id: UUID = UUID()
     let kind: String
     var text: String? = nil
     var richText: Data? = nil
@@ -30,4 +39,5 @@ struct NewClipboardItem: Sendable {
     var thumbnail: Data? = nil
     var sourceBundleID: String? = nil
     var contentHash: String? = nil
+    var ocrStatus: String? = nil
 }

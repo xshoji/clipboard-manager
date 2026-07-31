@@ -14,6 +14,7 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
     let isHtml: Bool
     let sourceBundleID: String?
     let contentHash: String?
+    let ocrTextLowercased: String?
 
     var isImage: Bool { kind == "image" }
     var displayTextPreview: String {

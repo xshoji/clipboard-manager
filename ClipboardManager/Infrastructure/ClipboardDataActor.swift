@@ -22,7 +22,8 @@ actor ClipboardDataActor {
                     thumbnail: entity.thumbnail,
                     isHtml: entity.html != nil,
                     sourceBundleID: entity.sourceBundleID,
-                    contentHash: entity.contentHash
+                    contentHash: entity.contentHash,
+                    ocrTextLowercased: entity.ocrText?.lowercased()
                 )
             }
         } catch {
@@ -45,7 +46,8 @@ actor ClipboardDataActor {
                 thumbnail: entity.thumbnail,
                 isHtml: entity.html != nil,
                 sourceBundleID: entity.sourceBundleID,
-                contentHash: entity.contentHash
+                contentHash: entity.contentHash,
+                ocrTextLowercased: entity.ocrText?.lowercased()
             )
         }
     }
@@ -67,6 +69,11 @@ actor ClipboardDataActor {
     }
 
     func fetchHtmlContent(id: UUID) -> Data? { entity(id: id)?.html }
+
+    func fetchOcrResult(id: UUID) -> ClipboardOcrResult? {
+        guard let entity = entity(id: id) else { return nil }
+        return ClipboardOcrResult(status: entity.ocrStatus, text: entity.ocrText)
+    }
 
     private func entity(id: UUID) -> ClipboardEntity? {
         let descriptor = FetchDescriptor<ClipboardEntity>(predicate: #Predicate { $0.id == id })

@@ -54,11 +54,22 @@ final class ClipboardRepository: ClipboardRepositoryPort, ClipboardHistoryWritin
         await persistence.fetchHtmlContent(id: id)
     }
 
+    func fetchOcrResult(id: UUID) async -> ClipboardOcrResult? {
+        await persistence.fetchOcrResult(id: id)
+    }
+
     @discardableResult
     func insert(_ item: NewClipboardItem, removingDuplicates: Bool, purpose: String) -> Bool {
         guard persistence.insert(item, removingDuplicates: removingDuplicates, purpose: purpose) else {
             return false
         }
+        notifyChange()
+        return true
+    }
+
+    @discardableResult
+    func updateOcrResult(id: UUID, text: String?) -> Bool {
+        guard persistence.updateOcrResult(id: id, text: text) else { return false }
         notifyChange()
         return true
     }

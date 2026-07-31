@@ -41,6 +41,7 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
 
     private let repository: ClipboardHistoryWriting
     private let settings: AppSettings
+    private let automaticOcr: AutomaticOcrProcessor
     private var timer: DispatchSourceTimer?
     /// Only mutated on the timer queue (serial). Read/written from the single timer
     /// handler, so no lock is required.
@@ -79,9 +80,14 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
     /// keeps the main actor responsive (review #6).
     private let pollQueue = DispatchQueue(label: "com.xshoji.ClipboardManager.clipboardPoll", qos: .utility)
 
-    init(repository: ClipboardHistoryWriting, settings: AppSettings) {
+    init(
+        repository: ClipboardHistoryWriting,
+        settings: AppSettings,
+        automaticOcr: AutomaticOcrProcessor
+    ) {
         self.repository = repository
         self.settings = settings
+        self.automaticOcr = automaticOcr
     }
 
     func start() {
@@ -379,10 +385,14 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
         contentHash: String,
         purpose: String
     ) {
+        let id = UUID()
+        let shouldRunAutomaticOcr = kind == "image" && settings.automaticImageOcrEnabled
+        let ocrLanguages = settings.ocrLanguages
         Task { @MainActor [weak self] in
             guard let self else { return }
             let saved = self.repository.insert(
                 .init(
+                id: id,
                 kind: kind,
                 text: text,
                 richText: richText,
@@ -390,7 +400,8 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
                 imageData: imageData,
                 thumbnail: thumbnail,
                 sourceBundleID: sourceBundleID,
-                contentHash: contentHash
+                contentHash: contentHash,
+                ocrStatus: shouldRunAutomaticOcr ? "pending" : nil
                 ),
                 removingDuplicates: true,
                 purpose: purpose
@@ -398,6 +409,13 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
             if saved {
                 self.pollQueue.async { [weak self] in
                     self?.lastSavedContentHash = contentHash
+                }
+                if shouldRunAutomaticOcr, let imageData {
+                    self.automaticOcr.enqueue(
+                        id: id,
+                        imageData: imageData,
+                        languages: ocrLanguages
+                    )
                 }
             }
         }

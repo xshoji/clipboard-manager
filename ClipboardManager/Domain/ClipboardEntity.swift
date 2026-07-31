@@ -24,6 +24,9 @@ private enum TextPreviewBuilder {
     }
 }
 
+/// Current model namespace. Keeping the nested model's short name as
+/// `ClipboardEntity` preserves the persisted entity identity across schema versions.
+enum ClipboardEntitySchemaV3 {
 @Model
 final class ClipboardEntity {
     @Attribute(.unique) var id: UUID
@@ -44,6 +47,8 @@ final class ClipboardEntity {
     @Attribute(.externalStorage) var thumbnail: Data?
     var sourceBundleID: String?
     var contentHash: String?
+    @Attribute(.externalStorage) var ocrText: String?
+    var ocrStatus: String?
 
     init(
         id: UUID = UUID(),
@@ -55,7 +60,9 @@ final class ClipboardEntity {
         imageData: Data? = nil,
         thumbnail: Data? = nil,
         sourceBundleID: String? = nil,
-        contentHash: String? = nil
+        contentHash: String? = nil,
+        ocrText: String? = nil,
+        ocrStatus: String? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -79,6 +86,8 @@ final class ClipboardEntity {
         self.thumbnail = thumbnail
         self.sourceBundleID = sourceBundleID
         self.contentHash = contentHash
+        self.ocrText = ocrText
+        self.ocrStatus = ocrStatus
     }
 
     var isImage: Bool { kind == "image" }
@@ -91,3 +100,6 @@ final class ClipboardEntity {
         return isText ? "Preview is unavailable for this existing item. Choose Edit to load the full text." : ""
     }
 }
+}
+
+typealias ClipboardEntity = ClipboardEntitySchemaV3.ClipboardEntity

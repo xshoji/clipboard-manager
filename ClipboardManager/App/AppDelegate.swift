@@ -182,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.retentionDays = 30
         settings.maxHistoryCount = 1000
         settings.maxItemSizeMB = 10
+        settings.automaticImageOcrEnabled = false
         // Reset macro scripts to a clean state so the E2E tests do not depend
         // on macro scripts persisted by a prior production run in the same
         // UserDefaults domain ("ClipboardManager"). Without this, the host

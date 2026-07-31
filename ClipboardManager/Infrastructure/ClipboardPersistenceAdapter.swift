@@ -70,6 +70,10 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
         await dataActor.fetchHtmlContent(id: id)
     }
 
+    func fetchOcrResult(id: UUID) async -> ClipboardOcrResult? {
+        await dataActor.fetchOcrResult(id: id)
+    }
+
     // MARK: - Writes (main actor via ModelContext)
 
     @discardableResult
@@ -86,6 +90,7 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
             }
         }
         context.insert(ClipboardEntity(
+            id: item.id,
             kind: item.kind,
             text: item.text,
             richText: item.richText,
@@ -93,13 +98,32 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
             imageData: item.imageData,
             thumbnail: item.thumbnail,
             sourceBundleID: item.sourceBundleID,
-            contentHash: item.contentHash
+            contentHash: item.contentHash,
+            ocrStatus: item.ocrStatus
         ))
         guard persistence.saveContext(context, purpose: purpose) else {
             context.rollback()
             return false
         }
         persistence.scheduleEnforceWithDebounce()
+        return true
+    }
+
+    @discardableResult
+    func updateOcrResult(id: UUID, text: String?) -> Bool {
+        let context = persistence.container.mainContext
+        let descriptor = FetchDescriptor<ClipboardEntity>(predicate: #Predicate { $0.id == id })
+        guard let entity = persistence.fetchEntities(
+            descriptor, context: context, purpose: "repository.fetchForOcrUpdate"
+        )?.first else {
+            return false
+        }
+        entity.ocrText = text
+        entity.ocrStatus = "completed"
+        guard persistence.saveContext(context, purpose: "repository.updateOcrResult") else {
+            context.rollback()
+            return false
+        }
         return true
     }
 

@@ -49,14 +49,35 @@ final class PasteCoordinator {
     }
 
     func runOcr(item: ClipboardItem) async {
+        if let cached = await repository.fetchOcrResult(id: item.id) {
+            if cached.status == "completed" {
+                pasteOcrTextOrNotify(cached.text)
+                return
+            }
+            if cached.status == "pending" {
+                notifier.notify(
+                    title: "OCR",
+                    body: "Text recognition is still running. Try again shortly.",
+                    deduplicationKey: "ocr-still-running"
+                )
+                return
+            }
+        }
         guard let data = await repository.fetchImageData(id: item.id), !data.isEmpty else {
             notifier.notify(title: "OCR", body: "No image data is available for this history item.", deduplicationKey: nil); return
         }
         NotificationCenter.default.post(name: .ocrProgressDidChange, object: nil, userInfo: ["inProgress": true])
         defer { NotificationCenter.default.post(name: .ocrProgressDidChange, object: nil, userInfo: ["inProgress": false]) }
         let text = await ocr.recognizeText(in: data, languages: settings.ocrLanguages)
-        guard !(text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty else {
-            notifier.notify(title: "OCR", body: "No text was recognized in the image.", deduplicationKey: nil); return
+        repository.updateOcrResult(id: item.id, text: text)
+        pasteOcrTextOrNotify(text)
+    }
+
+    private func pasteOcrTextOrNotify(_ text: String?) {
+        let recognized = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !recognized.isEmpty else {
+            notifier.notify(title: "OCR", body: "No text was recognized in the image.", deduplicationKey: nil)
+            return
         }
         suppressedWrite { pb in pb.clearContents(); pb.setString(text ?? "", forType: .string) }
         activatePreviousApp()
