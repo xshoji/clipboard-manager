@@ -8,13 +8,13 @@ import AppKit
 ///   domain via `defaults read/write`, so all assertions are made against the
 ///   app's GUI state (XCUIElement labels / staticTexts / popUpButton values)
 ///   instead of reading `defaults`. The host app is launched with
-///   `CM_E2E_OPEN_WINDOW=1` so AppDelegate forces action hotkeys to known
-///   defaults and opens the main + Settings windows immediately.
+///   `CM_E2E_OPEN_WINDOW=1` so the launch configuration applies known action
+///   hotkeys and AppDelegate opens the main + Settings windows immediately.
 ///
 /// Test flow per case:
-///   1. setUpWithError terminates any stale instances and (re)launches the
-///      E2E app. AppDelegate writes the action hotkey defaults before any
-///      window appears, so each test starts from a clean state.
+///   1. setUpWithError refuses to run while the production app is active,
+///      terminates only stale E2E instances, and creates a case-specific
+///      SwiftData store and named pasteboard.
 ///   2. Interact with UI elements via XCUIElement (click Clear/Reset/Record,
 ///      or call `typeKey(_:modifierFlags:)` to synthesize a key event).
 ///   3. Verify the resulting UI state (e.g. the Edit hotkey display label
@@ -33,11 +33,10 @@ import AppKit
 ///   "com.xshoji.ClipboardManager.E2E". Because `UserDefaults.standard` keys
 ///   on the bundle identifier (not the executable name), the E2E app's
 ///   defaults domain is isolated from the production app. SmokeTests rely on
-///   AppDelegate's `forceE2EDefaultSettings` (triggered by the
-///   `CM_E2E_OPEN_WINDOW=1` launch environment) to seed a known state at
-///   launch — they never read `defaults` directly. SwiftData uses a separate
-///   store path guarded by the launch environment so clipboard history does
-///   not collide with the production app either.
+///   the E2E launch path to reset that domain before `AppSettings.shared` is
+///   initialized. SwiftData and pasteboard traffic are isolated per test case
+///   by required launch environment values, so neither clipboard history nor
+///   the system pasteboard collides with production.
 ///
 /// Performance notes (review follow-up):
 ///   Related cases were folded into single workflow tests so the app is
@@ -60,23 +59,69 @@ final class SmokeUITests: XCTestCase {
     /// (review #6: "launched app as test case property, tearDownWithError to always
     /// terminate, wait for PID death with timeout, force terminate fallback").
     private var launchedApp: XCUIApplication?
+    private var storeDirectory: URL?
+    private var testPasteboard: NSPasteboard?
 
     // MARK: - Setup / Teardown
 
     override func setUpWithError() throws {
         try super.setUpWithError()
         continueAfterFailure = false
-        Self.terminateRunningApps()
+        let productionApps = NSWorkspace.shared.runningApplications.filter { app in
+            guard app.bundleIdentifier != Self.e2eBundleID else { return false }
+            return app.bundleIdentifier == Self.productionBundleID
+                || app.executableURL?.lastPathComponent == "ClipboardManager"
+        }
+        guard productionApps.isEmpty else {
+            let pids = productionApps.map(\.processIdentifier)
+            throw NSError(
+                domain: "SmokeUITests.Preflight",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Production ClipboardManager is running (PIDs: \(pids)). Quit it before running E2E tests."
+                ]
+            )
+        }
+        guard Self.terminateStaleE2EApps() else {
+            throw NSError(
+                domain: "SmokeUITests.Preflight",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "A stale E2E app could not be terminated"]
+            )
+        }
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("com.xshoji.ClipboardManager.E2E", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        storeDirectory = directory
+        let pasteboardName = NSPasteboard.Name(
+            "com.xshoji.ClipboardManager.E2E.\(UUID().uuidString)"
+        )
+        testPasteboard = NSPasteboard(name: pasteboardName)
     }
 
     override func tearDownWithError() throws {
         // Always terminate the launched app, even when a test failed mid-assertion
         // and never reached the end-of-test `app.terminate()` call.
+        var appStopped = true
         if let app = launchedApp, app.state != .notRunning {
             app.terminate()
-            Self.waitForProcessDeath(app: app, timeout: 5)
+            appStopped = Self.waitForProcessDeath(app: app, timeout: 5)
         }
         launchedApp = nil
+
+        if appStopped {
+            testPasteboard?.releaseGlobally()
+            testPasteboard = nil
+            if let storeDirectory {
+                try? FileManager.default.removeItem(at: storeDirectory)
+            }
+            storeDirectory = nil
+        } else {
+            XCTFail("E2E app did not terminate; temporary test resources were preserved")
+        }
         try super.tearDownWithError()
     }
 
@@ -113,12 +158,12 @@ final class SmokeUITests: XCTestCase {
 
         // SwiftUI Form Pickers render as NSPopUpButton on macOS; the selected
         // item's label is exposed via the popUpButton's `value`.
-        let retentionPopUp = app.popUpButtons.element(boundBy: 0)
+        let retentionPopUp = app.popUpButtons["history.retention"]
         XCTAssertTrue(exists(retentionPopUp, timeout: 5), "Retention picker not found")
         XCTAssertEqual(try XCTUnwrap(retentionPopUp.value as? String), "30 days",
                        "Retention picker did not show '30 days'")
 
-        let maxItemsPopUp = app.popUpButtons.element(boundBy: 1)
+        let maxItemsPopUp = app.popUpButtons["history.maxItems"]
         XCTAssertTrue(exists(maxItemsPopUp, timeout: 5), "Max items picker not found")
         XCTAssertEqual(try XCTUnwrap(maxItemsPopUp.value as? String), "1,000",
                        "Max items picker did not show '1,000'")
@@ -133,11 +178,7 @@ final class SmokeUITests: XCTestCase {
         // SwiftUI populates. We wait for the staticText to exist (failing the
         // test if it never shows up) instead of silently skipping — a missing
         // label means the Stepper is gone or renamed, which is a regression.
-        let maxItemText = app.staticTexts.matching(
-            NSPredicate(
-                format: "(label CONTAINS 'Max item size' OR label CONTAINS '10 MB' OR value CONTAINS 'Max item size' OR value CONTAINS '10 MB')"
-            )
-        ).firstMatch
+        let maxItemText = app.staticTexts["history.maxItemSize"]
         XCTAssertTrue(
             exists(maxItemText, timeout: 5),
             "Max item size staticText not found; dumping app tree:\n\(app.debugDescription)"
@@ -187,11 +228,8 @@ final class SmokeUITests: XCTestCase {
         let recordButton = app.buttons["action.edit.record"]
         XCTAssertTrue(exists(recordButton, timeout: 5), "Edit Record button not found")
         recordButton.click()
-        // CaptureKeyView needs to become first responder before the synthetic
-        // key event lands. 0.3s is enough on local runners; the previous 1.0s
-        // was overcautious. If Record intermittently fails on a slow machine
-        // this is the knob to bump first.
-        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertTrue(waitForValue(recordButton, equals: "Recording", timeout: 5),
+                      "Edit hotkey recorder did not enter recording state")
         app.typeKey("a", modifierFlags: [.command, .shift])
         Thread.sleep(forTimeInterval: Self.uiPump)
         XCTAssertEqual(display.value as? String ?? "", "⇧⌘A",
@@ -226,8 +264,10 @@ final class SmokeUITests: XCTestCase {
                        "Cancelling should preserve the current hotkey")
 
         // Record ⇧⌘A; unlikely to collide with the E2E main-hotkey defaults.
-        app.buttons["globalMacroPickerHotkey.record"].click()
-        Thread.sleep(forTimeInterval: 0.3)
+        let rerecordedButton = app.buttons["globalMacroPickerHotkey.record"]
+        rerecordedButton.click()
+        XCTAssertTrue(waitForValue(rerecordedButton, equals: "Recording", timeout: 5),
+                      "Global macro picker recorder did not enter recording state")
         app.typeKey("a", modifierFlags: [.command, .shift])
         Thread.sleep(forTimeInterval: Self.uiPump)
         XCTAssertEqual(display.value as? String ?? "", "⇧⌘A",
@@ -311,7 +351,7 @@ final class SmokeUITests: XCTestCase {
         let settingsWindow = app.windows["ClipboardManager Settings"]
         XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
 
-        // Sanity: no macros on launch (forceE2EDefaultSettings clears them).
+        // Sanity: no macros on launch (the E2E defaults domain is reset).
         let emptyLabel = app.staticTexts["macro.empty"]
         XCTAssertTrue(exists(emptyLabel, timeout: 5), "Macro empty-state label not found")
 
@@ -566,14 +606,28 @@ final class SmokeUITests: XCTestCase {
     // MARK: - App Launcher
 
     /// Builds an XCUIApplication preconfigured with the E2E bundle id and the
-    /// `CM_E2E_OPEN_WINDOW=1` launch environment so AppDelegate forces the
-    /// action hotkey defaults, prompts for Accessibility, and opens the main
-    /// window and the Settings window immediately on launch.
+    /// `CM_E2E_OPEN_WINDOW=1` launch environment plus isolated resources so the
+    /// launch configuration applies action hotkey defaults, prompts for
+    /// Accessibility, and opens the main and Settings windows immediately.
     private func makeApp() -> XCUIApplication {
+        guard let storeDirectory, let testPasteboard else {
+            fatalError("E2E resources were not prepared by setUpWithError")
+        }
         let app = XCUIApplication(bundleIdentifier: Self.e2eBundleID)
         app.launchEnvironment["CM_E2E_OPEN_WINDOW"] = "1"
+        app.launchEnvironment["CM_E2E_STORE_PATH"] = storeDirectory
+            .appendingPathComponent("Clipboard.store")
+            .path
+        app.launchEnvironment["CM_E2E_PASTEBOARD_NAME"] = testPasteboard.name.rawValue
         launchedApp = app
         return app
+    }
+
+    private var pasteboard: NSPasteboard {
+        guard let testPasteboard else {
+            fatalError("E2E pasteboard was not prepared by setUpWithError")
+        }
+        return testPasteboard
     }
 
     /// Avoids XCTest's one-second initial polling delay when the element is
@@ -582,12 +636,21 @@ final class SmokeUITests: XCTestCase {
         element.exists || element.waitForExistence(timeout: timeout)
     }
 
+    private func waitForValue(_ element: XCUIElement, equals expected: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if element.value as? String == expected { return true }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return false
+    }
+
     // MARK: - Clipboard Seeding Helper
 
-    /// Writes a string to the system pasteboard (`NSPasteboard.general`) from
-    /// the test runner process. The host app's `ClipboardMonitor` polls the
-    /// same system-wide pasteboard on a utility queue, so a write from the UI
-    /// test process is observable by the app under test. We then poll the main
+    /// Writes a string to the case-specific named pasteboard from the test
+    /// runner process. The host app's `ClipboardMonitor` polls the same named
+    /// pasteboard, so a write from the UI test process is observable by the
+    /// app under test without replacing the user's clipboard. We then poll the main
     /// window's history list until the exact seeded text appears.
     ///
     /// Strings are unique-ified with a UUID suffix so successive seeds do not
@@ -595,7 +658,7 @@ final class SmokeUITests: XCTestCase {
     private func seedClipboardHistory(app: XCUIApplication,
                                       text: String,
                                       timeout: TimeInterval = 15) throws {
-        let pb = NSPasteboard.general
+        let pb = pasteboard
         pb.clearContents()
         let unique = "\(text)-\(UUID().uuidString.prefix(8))"
         pb.setString(unique, forType: .string)
@@ -610,7 +673,7 @@ final class SmokeUITests: XCTestCase {
                       "Seeded clipboard text did not appear within \(timeout)s; dumping tree:\n\(app.debugDescription)")
     }
 
-    /// Writes a unique 4x4 PNG to the system pasteboard and waits until the
+    /// Writes a unique 4x4 PNG to the case-specific pasteboard and waits until the
     /// host app renders the corresponding image history row. UUID bytes are
     /// encoded into the pixels so repeated test runs cannot be deduplicated.
     private func seedImageClipboardHistory(app: XCUIApplication,
@@ -639,7 +702,7 @@ final class SmokeUITests: XCTestCase {
         }
         let pngData = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
 
-        let pasteboard = NSPasteboard.general
+        let pasteboard = pasteboard
         pasteboard.clearContents()
         XCTAssertTrue(pasteboard.setData(pngData, forType: .png), "Failed to seed PNG on pasteboard")
 
@@ -652,7 +715,7 @@ final class SmokeUITests: XCTestCase {
     }
 
     /// Generates a high-contrast PNG containing a short OCR marker, writes it
-    /// to the system pasteboard, and waits for the image history row. Keeping
+    /// to the case-specific pasteboard, and waits for the image history row. Keeping
     /// the rendered payload short and large makes Vision recognition reliable
     /// without lengthening the test with a complex fixture.
     private func seedOcrImageClipboardHistory(app: XCUIApplication,
@@ -677,7 +740,7 @@ final class SmokeUITests: XCTestCase {
         let bitmap = try XCTUnwrap(NSBitmapImageRep(data: tiffData))
         let pngData = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
 
-        let pasteboard = NSPasteboard.general
+        let pasteboard = pasteboard
         pasteboard.clearContents()
         XCTAssertTrue(pasteboard.setData(pngData, forType: .png),
                       "Failed to seed OCR PNG on pasteboard")
@@ -690,7 +753,7 @@ final class SmokeUITests: XCTestCase {
 
     // MARK: - Tests: Keyboard Navigation & Macro Execution
 
-    /// Opens the history window, seeds one entry via the system pasteboard,
+    /// Opens the history window, seeds one entry via the case-specific pasteboard,
     /// then verifies two keyboard-navigation behaviors:
     ///   1. With list focus, pressing ↑ at the top of the list moves focus
     ///      back to the search field (HistoryListPane.moveSelection(.up) with
@@ -785,14 +848,12 @@ final class SmokeUITests: XCTestCase {
     /// Verifies incremental search filters the history list to only matching
     /// entries. Flow:
     ///   1. Close Settings so the main window is key.
-    ///   2. Clear any leftover history from previous test runs via More >
-    ///      Clear All History.
-    ///   3. Seed three distinct text entries on the system pasteboard.
-    ///   4. Select the search field and type a query matching only the second
+    ///   2. Seed three distinct text entries on the case-specific pasteboard.
+    ///   3. Select the search field and type a query matching only the second
     ///      seed.
-    ///   5. Poll until only the matching marker remains visible and the other
+    ///   4. Poll until only the matching marker remains visible and the other
     ///      two markers disappear from the history list.
-    ///   6. Clear the query and verify all three markers reappear.
+    ///   5. Clear the query and verify all three markers reappear.
     ///
     /// This is a purely UI-state assertion because the sandboxed test runner
     /// cannot read the host view model directly (SmokeTests philosophy).
@@ -809,11 +870,6 @@ final class SmokeUITests: XCTestCase {
 
         let mainWindow = app.windows.firstMatch
         XCTAssertTrue(exists(mainWindow, timeout: 10), "Main window did not appear")
-
-        // E2E launches reuse the same SwiftData store, so stale history from
-        // earlier runs can accumulate. Clear it once at the start of this test
-        // so the assertions below depend only on the seeds we control.
-        try clearHistory(app: app)
 
         // Seed three unique entries so we can verify filtering reduces the list
         // to exactly the matching one. Use hard-coded prefixes that cannot match
@@ -928,7 +984,6 @@ final class SmokeUITests: XCTestCase {
         XCTAssertFalse(settingsWindow.exists, "Settings window should be closed")
         XCTAssertTrue(exists(app.windows.firstMatch, timeout: 5), "Main window did not appear")
 
-        try clearHistory(app: app)
         let marker = "INDEXABLE"
         try seedOcrImageClipboardHistory(app: app, marker: marker)
 
@@ -967,10 +1022,10 @@ final class SmokeUITests: XCTestCase {
         var pastedCachedText = false
         var showedOcrProgress = false
         while Date() < pasteDeadline {
-            if app.staticTexts["Running OCR…"].exists {
+            if app.staticTexts["ocrProgress"].exists {
                 showedOcrProgress = true
             }
-            if NSPasteboard.general.string(forType: .string)?.contains(marker) == true {
+            if pasteboard.string(forType: .string)?.contains(marker) == true {
                 pastedCachedText = true
                 break
             }
@@ -995,8 +1050,6 @@ final class SmokeUITests: XCTestCase {
         }
 
         XCTAssertTrue(exists(app.windows.firstMatch, timeout: 10), "Main window did not appear")
-        try clearHistory(app: app)
-
         let textMarker = "E2EImageFilterText-"
         try seedClipboardHistory(app: app, text: textMarker)
         try seedImageClipboardHistory(app: app)
@@ -1045,41 +1098,6 @@ final class SmokeUITests: XCTestCase {
     private func imageHistoryRow(in app: XCUIApplication) -> XCUIElement {
         let predicate = NSPredicate(format: "label == 'Image' OR value == 'Image'")
         return app.scrollViews["historyList"].staticTexts.matching(predicate).firstMatch
-    }
-
-    /// Drives the main-window More menu to clear all history. Used before
-    /// seeding controlled clipboard entries so the test is isolated from
-    /// history left over by earlier E2E runs.
-    private func clearHistory(app: XCUIApplication) throws {
-        let moreMenu = app.menuButtons["moreMenu"]
-        XCTAssertTrue(exists(moreMenu, timeout: 5), "More menu button not found")
-        moreMenu.click()
-        Thread.sleep(forTimeInterval: Self.uiPump)
-
-        let clearItem = app.menuItems["Clear All History"]
-        XCTAssertTrue(exists(clearItem, timeout: 5), "Clear All History menu item not found")
-        clearItem.click()
-        Thread.sleep(forTimeInterval: Self.uiPump)
-
-        // AppDelegate presents this confirmation with NSAlert.runModal(). XCUITest
-        // exposes it as the only dialog, with the generic label "alert"; the
-        // message text is only a child value and cannot identify the dialog.
-        let dialog = app.dialogs.firstMatch
-        XCTAssertTrue(exists(dialog, timeout: 5), "Clear-history confirmation dialog not found")
-        let clearButton = dialog.buttons["Clear"]
-        XCTAssertTrue(exists(clearButton, timeout: 5), "Clear button not found in clear-history dialog")
-        clearButton.click()
-
-        let historyList = app.scrollViews["historyList"]
-        let deadline = Date().addingTimeInterval(10)
-        while Date() < deadline {
-            if historyList.staticTexts.count == 0, historyList.images.count == 0 { break }
-            Thread.sleep(forTimeInterval: 0.1)
-        }
-        XCTAssertEqual(historyList.staticTexts.count, 0,
-                       "History list staticTexts should be empty after Clear All; dumping tree:\n\(historyList.debugDescription)")
-        XCTAssertEqual(historyList.images.count, 0,
-                       "History list images should be empty after Clear All; dumping tree:\n\(historyList.debugDescription)")
     }
 
     /// Counts descendant rows in the current history list whose contained static
@@ -1138,7 +1156,7 @@ final class SmokeUITests: XCTestCase {
         let settingsWindow = app.windows["ClipboardManager Settings"]
         XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
 
-        // Sanity: no macros on launch (forceE2EDefaultSettings clears them).
+        // Sanity: no macros on launch (the E2E defaults domain is reset).
         let emptyLabel = app.staticTexts["macro.empty"]
         XCTAssertTrue(exists(emptyLabel, timeout: 5), "Macro empty-state label not found")
 
@@ -1159,7 +1177,7 @@ final class SmokeUITests: XCTestCase {
 
         // Edit the inline script body so the macro writes a unique marker to
         // its normal output file. PasteCoordinator then places that output on
-        // the system pasteboard, which the test process can observe directly.
+        // the case-specific pasteboard, which the test process can observe directly.
         // ShellScriptEditor is an NSViewRepresentable that wraps NSScrollView
         // + NSTextView. The accessibilityIdentifier("macro.0.inlineScript") is
         // applied to the SwiftUI view, which surfaces on the underlying
@@ -1223,13 +1241,13 @@ final class SmokeUITests: XCTestCase {
         macroMenuItem.click()
 
         // --- Step 5: Poll the pasteboard for the transformed output ---
-        // PasteCoordinator writes the macro output to the system pasteboard.
+        // PasteCoordinator writes the macro output to the case-specific pasteboard.
         // MacroRunner runs on a background queue and Process.run() is async,
         // so the transformed value may take a moment to land.
         var found = false
         let pollDeadline = Date().addingTimeInterval(10)
         while Date() < pollDeadline {
-            if NSPasteboard.general.string(forType: .string) == marker {
+            if pasteboard.string(forType: .string) == marker {
                 found = true
                 break
             }
@@ -1251,25 +1269,27 @@ final class SmokeUITests: XCTestCase {
 
     // MARK: - App Launcher (original location preserved below)
 
-    private static func terminateRunningApps() {
-        for bid in [productionBundleID, e2eBundleID] {
-            let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bid)
-            guard !apps.isEmpty else { continue }
-            Self.log("Terminating \(apps.count) running app instance(s) for \(bid)")
-            for app in apps {
-                app.terminate()
-                waitForProcessDeath(runningApp: app, timeout: 5)
+    private static func terminateStaleE2EApps() -> Bool {
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: e2eBundleID)
+        guard !apps.isEmpty else { return true }
+        Self.log("Terminating \(apps.count) stale E2E app instance(s)")
+        var allStopped = true
+        for app in apps {
+            app.terminate()
+            if !waitForProcessDeath(runningApp: app, timeout: 5) {
+                allStopped = false
             }
         }
+        return allStopped
     }
 
     /// Waits for the launched XCUIApplication to reach `.notRunning` state, with
     /// a timeout. If the app does not exit gracefully within the timeout, forces
     /// termination via `NSRunningApplication.forceTerminate()` (SIGKILL equivalent).
-    private static func waitForProcessDeath(app: XCUIApplication, timeout: TimeInterval) {
+    private static func waitForProcessDeath(app: XCUIApplication, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if app.state == .notRunning { return }
+            if app.state == .notRunning { return true }
             Thread.sleep(forTimeInterval: 0.1)
         }
         // Graceful terminate did not work; force-kill all running instances of
@@ -1279,20 +1299,32 @@ final class SmokeUITests: XCTestCase {
         for runningApp in NSRunningApplication.runningApplications(withBundleIdentifier: e2eBundleID) {
             runningApp.forceTerminate()
         }
+        let forceDeadline = Date().addingTimeInterval(timeout)
+        while Date() < forceDeadline {
+            if app.state == .notRunning { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return false
     }
 
     /// Waits for an NSRunningApplication to terminate, with timeout and SIGKILL
-    /// fallback. Used by `terminateRunningApps()` in `setUpWithError` to ensure
+    /// fallback. Used by `terminateStaleE2EApps()` in `setUpWithError` to ensure
     /// stale instances from a previous failed test run are dead before launching
     /// a new instance.
-    private static func waitForProcessDeath(runningApp: NSRunningApplication, timeout: TimeInterval) {
+    private static func waitForProcessDeath(runningApp: NSRunningApplication, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if runningApp.isTerminated { return }
+            if runningApp.isTerminated { return true }
             Thread.sleep(forTimeInterval: 0.1)
         }
         Self.log("Running app did not terminate within \(timeout)s, force-terminating (pid=\(runningApp.processIdentifier))")
         runningApp.forceTerminate()
+        let forceDeadline = Date().addingTimeInterval(timeout)
+        while Date() < forceDeadline {
+            if runningApp.isTerminated { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return false
     }
 
     // MARK: - Logging

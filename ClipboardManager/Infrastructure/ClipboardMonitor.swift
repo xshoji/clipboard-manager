@@ -3,14 +3,14 @@ import CryptoKit
 import os
 import os.lock
 
-/// Monitors the system pasteboard and records new entries to history.
+/// Monitors the injected pasteboard and records new entries to history.
 ///
 /// Threading model (review #6):
 /// - The poll runs on a background utility queue (`.global(qos: .utility)`) so heavy
 ///   pasteboard reads (`pb.data(forType: .png)`, etc.), SHA256 hashing, and thumbnail
 ///   generation do not block the main actor. Large image copies no longer cause UI stalls.
 /// - `changeCount` is read on the utility queue at the start of each poll. This is safe:
-///   `NSPasteboard.general.changeCount` is documented as thread-safe and is a simple
+///   `NSPasteboard.changeCount` is documented as thread-safe and is a simple
 ///   integer read. The previous `lastChangeCount` comparison still happens first, so when
 ///   nothing changed the heavy path is skipped entirely.
 /// - SwiftData `ModelContext` is `@MainActor`, so the final insert+save hops back to the
@@ -42,13 +42,14 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
     private let repository: ClipboardHistoryWriting
     private let settings: AppSettings
     private let automaticOcr: AutomaticOcrProcessor
+    private let pasteboard: NSPasteboard
     private var timer: DispatchSourceTimer?
     /// Only mutated on the timer queue (serial). Read/written from the single timer
     /// handler, so no lock is required.
     private var lastChangeCount: Int = 0
     /// Only mutated on the timer queue (serial). Holds the SHA256 hash of the most
     /// recently saved entry. Used to skip the immediately-following identical copy so
-    /// `NSPasteboard.general` repeats (e.g. from app-internal pasteboard writes or
+    /// Pasteboard repeats (e.g. from app-internal pasteboard writes or
     /// re-copying the same selection) do not pile up as duplicate history entries.
     ///
     /// Dedup strategy (two layers, see also `removeDuplicates`):
@@ -83,11 +84,13 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
     init(
         repository: ClipboardHistoryWriting,
         settings: AppSettings,
-        automaticOcr: AutomaticOcrProcessor
+        automaticOcr: AutomaticOcrProcessor,
+        pasteboard: NSPasteboard
     ) {
         self.repository = repository
         self.settings = settings
         self.automaticOcr = automaticOcr
+        self.pasteboard = pasteboard
     }
 
     func start() {
@@ -100,7 +103,7 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
             // Read the initial changeCount. The poll handler performs a fresh read anyway,
             // so even if the first poll fires before this assignment, the only consequence
             // is treating the launch state as "new" and skipping via `suppressedChangeCounts`.
-            self.lastChangeCount = NSPasteboard.general.changeCount
+            self.lastChangeCount = self.pasteboard.changeCount
             self.restartTimer()
         }
 
@@ -164,7 +167,7 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
         }
     }
 
-    /// Finalizes suppression after the app writes to `NSPasteboard.general`.
+    /// Finalizes suppression after the app writes to the injected pasteboard.
     ///
     /// `suppressChangeCountRange((pre + 1)..<(pre + 3))` pre-registers a conservative
     /// range to cover the race where the utility-queue poll fires mid-write. However,
@@ -184,7 +187,7 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
         // Uses an unfair lock instead of `pollQueue.sync` so the main actor is never
         // blocked by heavy poll-queue work (image hashing, thumbnail generation).
         suppressedChangeCountsLock.withLock { set in
-            let post = NSPasteboard.general.changeCount
+            let post = pasteboard.changeCount
             // Ensure the actual post-write changeCount is suppressed even if the
             // write produced more bumps than the pre-registered range covered.
             set.insert(post)
@@ -230,15 +233,15 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
     /// ```
     @discardableResult
     func performSuppressedPasteboardWrite(_ write: (NSPasteboard) -> Void) -> Int {
-        let pre = NSPasteboard.general.changeCount
+        let pre = pasteboard.changeCount
         suppressChangeCountRange((pre + 1)..<(pre + 3))
-        write(.general)
+        write(pasteboard)
         finalizeSuppressionAfterWrite(preChangeCount: pre)
         return pre
     }
 
     private func poll() {
-        let pb = NSPasteboard.general
+        let pb = pasteboard
         let count = pb.changeCount
         guard count != lastChangeCount else { return }
         lastChangeCount = count

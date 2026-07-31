@@ -1,5 +1,6 @@
 #!/bin/bash
 # Run XCUITest-based smoke tests locally.
+# Full prerequisites and isolation contract: docs/testing.md
 #
 # Prerequisites:
 #   - `brew install xcodegen` (project.yml → .xcodeproj generation)
@@ -11,7 +12,7 @@
 #
 # Usage:
 #   Scripts/run-e2e-tests.sh                 # run all tests
-#   Scripts/run-e2e-tests.sh SmokeUITests/testActionHotkeyReset
+#   Scripts/run-e2e-tests.sh SmokeUITests/testActionHotkeyWorkflow
 #
 # Optional environment variables:
 #   DEVELOPMENT_TEAM   - Personal Team ID (e.g. "ABCD1234") forced on both the
@@ -53,6 +54,7 @@ XCODEBUILD_ARGS=(
     -scheme SmokeUITests
     -configuration "$CONFIG"
     -destination "$DESTINATION"
+    -parallel-testing-enabled NO
 )
 
 # Optional Personal Team ID. When set, both the host app and the test bundle are

@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let logger = Logger(subsystem: "com.xshoji.ClipboardManager", category: "AppDelegate")
 
     let container: AppContainer
+    private let launchConfiguration: AppLaunchConfiguration
     var settings: AppSettings { container.settings }
     var monitor: ClipboardMonitor { container.monitor }
     var hotkeyManager: HotkeyManager { container.hotkeyManager }
@@ -22,11 +23,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     override init() {
-        self.container = AppContainer()
+        let launchConfiguration = AppLaunchConfiguration.resolve()
+        launchConfiguration.prepareUserDefaults()
+        self.launchConfiguration = launchConfiguration
+        self.container = AppContainer(configuration: launchConfiguration)
         super.init()
         container.coordinator.mainWindow.onInstallHotkeys = { [weak self] in self?.installWindowScopedHotkeys() }
         container.coordinator.mainWindow.onUninstallHotkeys = { [weak self] in self?.uninstallWindowScopedHotkeys() }
         container.coordinator.mainWindow.onClearHistory = { [weak self] in self?.confirmClearHistory() }
+        if launchConfiguration.isE2E {
+            container.coordinator.mainWindow.onEditImage = { _ in }
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -34,7 +41,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         AppActivator.shared.startObservingActivatedApplications()
         ClipboardMonitor.shared = monitor
-        PreviewImageEditor.shared.configure(repository: container.repository)
+        if !launchConfiguration.isE2E {
+            PreviewImageEditor.shared.configure(repository: container.repository)
+        }
         container.repository.start()
         monitor.start()
         // Start the history view model at launch so its change observer stays active
@@ -122,35 +131,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        PreviewImageEditor.shared.cleanupOrphanedEditFiles()
-        // Periodically sweep orphaned working files so crashed-session files do not sit in
-        // Downloads between launches (review #7).
-        PreviewImageEditor.shared.startOrphanCleanupTimer()
+        if !launchConfiguration.isE2E {
+            PreviewImageEditor.shared.cleanupOrphanedEditFiles()
+            // Periodically sweep orphaned working files so crashed-session files do not sit in
+            // Downloads between launches (review #7).
+            PreviewImageEditor.shared.startOrphanCleanupTimer()
+        }
 
         // Design-app.md §3: menu bar resident app. At launch we stay in the menu bar only,
         // matching Maccy/Paste behavior. The main window is shown later via the global hotkey,
         // menu bar item, or selection-from-menu. Do NOT steal focus from the user's current app
         // at launch (review #8).
 
-        // E2E smoke tests: when launched with the environment variable
-        // CM_E2E_OPEN_WINDOW=1, force the history / action hotkey settings to
-        // known default values (so each test starts from a clean state — the
-        // sandboxed UI test runner cannot reach the host app's defaults
-        // domain via `defaults write`), prompt for Accessibility permission
-        // so the XCUITest harness can introspect the app, and open the main +
-        // Settings windows immediately so the test can drive them via
-        // XCUIElement.
+        // E2E smoke tests reset their isolated defaults domain before AppSettings
+        // is initialized and inject a temporary store plus a named pasteboard.
+        // Once that fail-closed configuration has been validated, prompt for
+        // Accessibility permission and open the main + Settings windows so the
+        // XCUITest harness can drive them via XCUIElement.
         //
-        // Guarded by BOTH the E2E bundle identifier AND the launch environment
-        // variable (review #4). The previous `#if DEBUG` guard made Release
-        // builds of the E2E host unusable even though `Scripts/run-e2e-tests.sh`
-        // advertises `XCODE_CONFIG=Release`; gating on the bundle id keeps the
-        // production app (which has a different bundle id) safe even if the
-        // environment variable is ever set by mistake, while letting the E2E
-        // host exercise the test launch path in any configuration.
-        if ProcessInfo.processInfo.environment["CM_E2E_OPEN_WINDOW"] == "1",
-           Bundle.main.bundleIdentifier == "com.xshoji.ClipboardManager.E2E" {
-            forceE2EDefaultSettings()
+        // AppLaunchConfiguration requires both the E2E bundle identifier and
+        // all isolation environment values in every build configuration.
+        if launchConfiguration.isE2E {
             // Ask the system to prompt for Accessibility permission so the
             // XCUITest harness can introspect the app; no-op when the
             // permission is already granted. Uses the raw key literal to stay
@@ -160,40 +161,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             container.coordinator.showMainWindow(focusSearch: false)
             container.coordinator.showSettings()
         }
-    }
-
-    /// Resets all action hotkeys and the history limit settings to their
-    /// built-in defaults. Only invoked when the app is launched with
-    /// `CM_E2E_OPEN_WINDOW=1` (E2E smoke test mode).
-    ///
-    /// Defaults are sourced from `AppSettings`'s single source of truth so
-    /// the E2E harness and the production Reset buttons cannot drift.
-    private func forceE2EDefaultSettings() {
-        settings.hotkeyKeyCode = AppSettings.defaultHotkeyKeyCode
-        settings.hotkeyModifiers = AppSettings.testHotkeyModifiers
-        settings.globalMacroPickerHotkeyKeyCode = AppSettings.defaultGlobalMacroPickerHotkeyKeyCode
-        settings.globalMacroPickerHotkeyModifiers = AppSettings.defaultGlobalMacroPickerHotkeyModifiers
-        settings.editHotkeyCode = AppSettings.defaultEditHotkeyCode
-        settings.editHotkeyModifiers = AppSettings.defaultActionHotkeyModifiers
-        settings.pastePlainHotkeyCode = AppSettings.defaultPastePlainHotkeyCode
-        settings.pastePlainHotkeyModifiers = AppSettings.defaultActionHotkeyModifiers
-        settings.macroPickerHotkeyCode = AppSettings.defaultMacroPickerHotkeyCode
-        settings.macroPickerHotkeyModifiers = AppSettings.defaultActionHotkeyModifiers
-        settings.retentionDays = 30
-        settings.maxHistoryCount = 1000
-        settings.maxItemSizeMB = 10
-        settings.automaticImageOcrEnabled = false
-        // Reset macro scripts to a clean state so the E2E tests do not depend
-        // on macro scripts persisted by a prior production run in the same
-        // UserDefaults domain ("ClipboardManager"). Without this, the host
-        // app would inherit the user's existing macros and tests that count
-        // rows / drive the Add button would be order-dependent on the host
-        // machine's defaults. This mirrors how each other test assertion above
-        // starts from the baked-in defaults instead of dumped-in state.
-        settings.macroScripts = []
-        NotificationCenter.default.post(name: .actionHotkeysChanged, object: nil)
-        NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil)
-        NotificationCenter.default.post(name: .globalMacroPickerHotkeyChanged, object: nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

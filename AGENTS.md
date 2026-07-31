@@ -13,6 +13,7 @@ Maintain ClipboardManager: a macOS 14+ SwiftUI clipboard-history app.
 ## Source of Truth
 
 - Product/UI/technical design: `docs/design-app.md`, `docs/design-ui.md`, `docs/design-implementation.md`.
+- Test architecture, execution, and E2E isolation: `docs/testing.md`.
 - Deferred or undecided work: `docs/open-questions.md`; do not silently choose it.
 - `Package.swift` defines supported platform, target, resources, and frameworks.
 
@@ -24,6 +25,7 @@ docs/
 ├── design-app.md                # functional requirements
 ├── design-ui.md                 # UI requirements
 ├── design-implementation.md     # technical design
+├── testing.md                   # test architecture, execution, and isolation
 ├── open-questions.md            # deferred / undecided items
 └── remaining-features.md        # implementation status
 ```
@@ -137,67 +139,19 @@ ClipboardManager/
 
 ## Build / Test Pipeline (two-track)
 
-- **Production build**: `Package.swift` → `swift build` / `Scripts/build-app.sh`.
-  Used for local runs and GitHub Releases (un-signed or ad-hoc). Do **not**
-  introduce Xcode-only config here. `swift test` is a **no-op** here on
-  purpose: `Package.swift` no longer declares a `testTarget` because the
-  smoke tests are XCUITests, which SPM cannot host. Use the E2E track below
-  to run tests.
-- **E2E (XCUITest) build**: `project.yml` → `Scripts/run-e2e-tests.sh`
-  (wraps `xcodegen` + `xcodebuild test`). The generated `*.xcodeproj` /
-  `*.xcworkspace` are gitignored and recreated on every run.
-- The XCUITest host app reuses the same sources but ships with
-  `ClipboardManager/App/Info.E2E.plist` (bundle id
-  `com.xshoji.ClipboardManager.E2E`) so TCC entries are isolated from the
-  production app. The executable name stays `ClipboardManager` so
-  `UserDefaults.standard` resolves to the same defaults domain as production.
-- UI elements exposed to XCUITest must keep their `accessibilityIdentifier`
-  stable (e.g. `settingsButton`, `globalHotkey.record`, `action.edit.reset`).
-  When adding a new hotkey row, pass a stable `accessibilityIDPrefix` to
-  `MacroHotkeyRecorderView`.
-- Running the tests locally requires:
-  1. `brew install xcodegen`
-  2. Accessibility permission for the terminal/IDE invoking the script, and
-     (once) for the E2E app bundle id.
-  3. Optional `DEVELOPMENT_TEAM=...` (Personal Team ID) for stable TCC.
+- **Source of truth**: `docs/testing.md`. Read it before changing or running
+  tests, E2E launch configuration, persistence paths, pasteboard wiring,
+  test-host packaging, or test process management.
+- Production uses the Swift package track; E2E uses `project.yml` and
+  `Scripts/run-e2e-tests.sh`. Do not introduce Xcode-only production behavior.
+- Never weaken the E2E isolation contract or terminate a production process.
+- Keep XCUITest accessibility identifiers stable and semantic.
 
 ### Smoke UI Test Rules
 
-- Keep smoke tests in `Tests/SmokeTests/SmokeTests.swift` focused on observable
-  user workflows. Assert the documented product contract, not an incidental UI
-  condition. For example, a successful paste or Macro intentionally activates
-  the previous app, so the ClipboardManager window is not expected to remain key.
-- Reuse the test file's `exists(_:timeout:)` helper instead of calling
-  `waitForExistence(timeout:)` directly. The helper avoids XCTest's roughly
-  one-second initial polling delay when an element is already present while
-  retaining the full timeout for cold or slow runs.
-- Prefer condition-based waiting for asynchronous work. Poll the observable
-  result with a short interval and a bounded deadline; do not sleep for the
-  whole worst-case duration. Keep fixed sleeps limited to the established
-  `uiPump` when SwiftUI needs a brief state-propagation turn. Do not globally
-  reduce `uiPump` without repeated focused runs because 0.1 seconds has caused
-  dirty-state/save-dialog flakes on this app.
-- Avoid long `XCUIElement.typeText` payloads: XCUITest enters them character by
-  character and SwiftUI may recompute state for every character. Use the
-  shortest input that proves the behavior, keep generated paths compact, and
-  verify the real externally observable result (for example, Macro output on
-  `NSPasteboard`) instead of adding a longer test-only script or side channel.
-- Treat SwiftUI accessibility elements as snapshots. After an action that can
-  rebuild a list or filtered view, query the element again rather than reusing
-  a potentially stale `XCUIElement`. For keyboard-focus workflows, send keys
-  through `XCUIApplication` so they reach the current first responder; do not
-  target the element that is merely expected to have focus.
-- Keep `accessibilityIdentifier` values stable and semantic. Query by identifier
-  rather than element index except for native controls with no stable identity,
-  such as a window's traffic-light close button.
-- Clipboard-seeding data, macro names, and temporary filenames must be unique
-  enough to avoid deduplication or collision. Remove only files created by the
-  current test; never clear user directories or production clipboard history.
-- During iteration, run the smallest relevant case:
-  `DEVELOPMENT_TEAM=... Scripts/run-e2e-tests.sh SmokeUITests/testMethodName`.
-  Redirect verbose output to `/tmp` and inspect only failures or the final test
-  summary. Run the full E2E suite only when the combined workflow needs final
-  verification.
+- Follow `docs/testing.md#ui-smoke-test-rules`.
+- During iteration, run the smallest relevant case and redirect verbose build
+  output to `/tmp`; inspect only failures or the final summary.
 
 ## Safety Rules
 

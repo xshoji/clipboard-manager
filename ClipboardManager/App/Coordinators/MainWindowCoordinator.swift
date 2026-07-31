@@ -19,6 +19,9 @@ final class MainWindowCoordinator: MainWindowLifecycle {
     var onUninstallHotkeys: () -> Void = {}
     var onClearHistory: () -> Void = {}
     var onShowSettings: () -> Void = {}
+    var onEditImage: (ClipboardItem) -> Void = { item in
+        PreviewImageEditor.shared.editImage(item: item)
+    }
 
     init(settings: AppSettings, viewModel: HistoryViewModel) {
         self.settings = settings
@@ -63,14 +66,11 @@ final class MainWindowCoordinator: MainWindowLifecycle {
         let activatePreviousApp: () -> Void = {
             AppActivator.shared.activatePreviousApp()
         }
-        let editImage: (ClipboardItem) -> Void = { item in
-            PreviewImageEditor.shared.editImage(item: item)
-        }
         let content = MainView(focusSearch: focusSearch, viewModel: viewModel,
             onClearHistory: { [weak self] in self?.confirmClearHistory() },
             onShowSettings: { [weak self] in self?.onShowSettings() },
             onActivatePreviousApp: activatePreviousApp,
-            onEditImage: editImage).environment(settings)
+            onEditImage: onEditImage).environment(settings)
         panel.contentView = NSHostingView(rootView: content)
         let controller = MainWindowController(window: panel, settings: settings)
         controller.lifecycle = self

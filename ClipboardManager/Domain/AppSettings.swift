@@ -34,7 +34,7 @@ final class AppSettings: @unchecked Sendable {
     //
     // Single source of truth for all hotkey default values. Both the
     // production UI (Reset buttons in HotkeyRecorderView / SettingsView)
-    // and the E2E smoke-test harness (AppDelegate.forceE2EDefaultSettings)
+    // and the E2E smoke-test launch configuration
     // MUST reference these constants so the two paths cannot drift.
     //
     // Key codes are Carbon virtual-key codes (exposed via NSEvent.keyCode).
@@ -61,7 +61,7 @@ final class AppSettings: @unchecked Sendable {
 
     /// Test-only hotkey modifiers: Cmd+Ctrl+Opt+Shift (4 modifiers).
     /// Guaranteed not to collide with the production default of Cmd+Ctrl.
-    /// Used by the E2E smoke test harness via `AppDelegate.forceE2EDefaultSettings`.
+    /// Used by the E2E smoke-test launch configuration.
     static let testHotkeyModifiers = Int(
         NSEvent.ModifierFlags.command.rawValue
         | NSEvent.ModifierFlags.control.rawValue

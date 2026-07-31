@@ -34,16 +34,6 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
         )
     }
 
-    /// Convenience entry point that builds the whole persistence stack from
-    /// settings. Kept for symmetry with the previous `AppContainer` wiring.
-    convenience init(settings: AppSettingsStore) {
-        let persistence = PersistenceController(settings: settings)
-        self.init(
-            persistence: persistence,
-            dataActor: ClipboardDataActor(modelContainer: persistence.container)
-        )
-    }
-
     // MARK: - Reads (off-main via @ModelActor)
 
     func fetchAll(limit: Int) async -> [ClipboardItem] {
