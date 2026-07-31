@@ -462,7 +462,7 @@ Carbon `RegisterEventHotKey` does not require Input Monitoring permission. There
 1. ~~Paste method: UI only or also synthetic Cmd+V~~ → **UI-only by default, synthetic Cmd+V as optional `AppSettings` toggle** (decided)
 2. Macro extensions: fixed `.txt` / `.png` or user-configurable
 3. Distribution: developer signing / notarization necessity
-4. Test policy: XCTest unit tests (`ClipboardMonitor`, `PersistenceController`, `MacroRunner`, `PreviewImageEditor` prioritized) + XCUITest automation later
+4. Test policy: XCUITest smoke coverage currently exists for representative UI workflows. Unit and infrastructure integration test targets remain future work. See `docs/testing.md` for the test architecture and E2E isolation contract.
 5. Localization: Japanese-first, use `String(localized:)` from the start to keep i18n-ready (English resources later)
 6. Unimplemented UI items (`design-ui.md §10`) priority
 7. Search optimization for 100,000+ items: SQLite FTS5 / N-gram index (v2+)
