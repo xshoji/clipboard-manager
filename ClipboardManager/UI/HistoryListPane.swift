@@ -12,6 +12,7 @@ struct HistoryListPane: View {
 
     @State private var filteredItems: [ClipboardItem] = []
     @State private var indexByID: [ClipboardItem.ID: Int] = [:]
+    @State private var showsImagesOnly = false
     @State private var debounceWorkItem: DispatchWorkItem? = nil
     @State private var showDeleteConfirmation = false
     /// Background filtering task token. Cancelling the previous task when a new query
@@ -60,6 +61,10 @@ struct HistoryListPane: View {
         .onChange(of: query) { _, _ in
             debounceWorkItem?.cancel()
             scheduleRecompute()
+        }
+        .onChange(of: showsImagesOnly) { _, _ in
+            debounceWorkItem?.cancel()
+            recomputeIndex()
         }
         // Repository notifications reflect inserts/deletes, but item count alone misses
         // the case where `removeDuplicates` deletes an old entity and inserts a new
@@ -118,6 +123,22 @@ struct HistoryListPane: View {
                         recomputeIndex()
                     }
                 }
+            Button {
+                showsImagesOnly.toggle()
+            } label: {
+                Image(systemName: showsImagesOnly ? "photo.fill" : "photo")
+                    .frame(width: 20, height: 20)
+                    .foregroundStyle(showsImagesOnly ? Color.accentColor : .secondary)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(showsImagesOnly ? Color.accentColor.opacity(0.14) : .clear)
+                    )
+            }
+            .buttonStyle(.borderless)
+            .help(showsImagesOnly ? "Show all history" : "Show images only")
+            .accessibilityLabel("Show images only")
+            .accessibilityValue(showsImagesOnly ? "On" : "Off")
+            .accessibilityIdentifier("imageFilterButton")
         }
         .padding(8)
         .padding(.horizontal, 6)
@@ -199,9 +220,11 @@ struct HistoryListPane: View {
         // bound to the main actor's ModelContext), then run the O(n) filter on a
         // background task so the main actor is not blocked for 100k rows (review #22).
         let needle = query.lowercased()
+        let imagesOnly = showsImagesOnly
         let index = viewModel.items.map { entity in
             SearchRow(
                 id: entity.id,
+                isImage: entity.isImage,
                 textPreviewLower: entity.textPreviewLowercased ?? entity.textPreview?.lowercased() ?? "",
                 sourceBundleIDLower: entity.sourceBundleID?.lowercased(),
                 contentHashLower: entity.contentHash?.lowercased()
@@ -209,17 +232,15 @@ struct HistoryListPane: View {
         }
         filterTask?.cancel()
         filterTask = Task.detached(priority: .userInitiated) {
-            let filteredIDs: [UUID]
-            if needle.isEmpty {
-                filteredIDs = index.map(\.id)
-            } else {
-                filteredIDs = index.compactMap { row in
-                    if row.textPreviewLower.contains(needle) { return row.id }
-                    if let b = row.sourceBundleIDLower, b.contains(needle) { return row.id }
-                    if let h = row.contentHashLower, h.contains(needle) { return row.id }
-                    return nil
-                }
+            let filteredIDs = index.compactMap { row -> UUID? in
+                guard !imagesOnly || row.isImage else { return nil }
+                if needle.isEmpty { return row.id }
+                if row.textPreviewLower.contains(needle) { return row.id }
+                if let b = row.sourceBundleIDLower, b.contains(needle) { return row.id }
+                if let h = row.contentHashLower, h.contains(needle) { return row.id }
+                return nil
             }
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 let idSet = Set(filteredIDs)
                 let ordered = viewModel.items.filter { idSet.contains($0.id) }
@@ -247,6 +268,7 @@ struct HistoryListPane: View {
     /// run off the main actor without touching the `@Model` (review #22).
     private struct SearchRow: Sendable {
         let id: UUID
+        let isImage: Bool
         let textPreviewLower: String
         let sourceBundleIDLower: String?
         let contentHashLower: String?

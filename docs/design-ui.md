@@ -39,6 +39,7 @@ The window is resizable; the list pane grows/shrinks while the search bar and fo
 
 - Single-line text field with a magnifying-glass icon.
 - **Incremental search**: filters the list in real time as the user types.
+- An image filter button shows only image history entries when active. It can be combined with incremental search.
 - Placeholder text describes the search target (text content, image source app, etc.).
 - `Esc` clears the search and closes the window.
 

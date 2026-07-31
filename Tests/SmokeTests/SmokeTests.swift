@@ -610,6 +610,47 @@ final class SmokeUITests: XCTestCase {
                       "Seeded clipboard text did not appear within \(timeout)s; dumping tree:\n\(app.debugDescription)")
     }
 
+    /// Writes a unique 4x4 PNG to the system pasteboard and waits until the
+    /// host app renders the corresponding image history row. UUID bytes are
+    /// encoded into the pixels so repeated test runs cannot be deduplicated.
+    private func seedImageClipboardHistory(app: XCUIApplication,
+                                           timeout: TimeInterval = 15) throws {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 4,
+            pixelsHigh: 4,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 16,
+            bitsPerPixel: 32
+        ))
+        let pixels = try XCTUnwrap(bitmap.bitmapData)
+        var uuid = UUID().uuid
+        let uniqueBytes = withUnsafeBytes(of: &uuid) { Array($0) }
+        for pixel in 0..<16 {
+            let offset = pixel * 4
+            pixels[offset] = uniqueBytes[pixel]
+            pixels[offset + 1] = uniqueBytes[(pixel + 5) % uniqueBytes.count]
+            pixels[offset + 2] = uniqueBytes[(pixel + 11) % uniqueBytes.count]
+            pixels[offset + 3] = 255
+        }
+        let pngData = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setData(pngData, forType: .png), "Failed to seed PNG on pasteboard")
+
+        let list = app.scrollViews["historyList"]
+        XCTAssertTrue(exists(list, timeout: 5), "historyList not found")
+        let predicate = NSPredicate(format: "label == 'Image' OR value == 'Image'")
+        let imageRowText = list.staticTexts.matching(predicate).firstMatch
+        XCTAssertTrue(exists(imageRowText, timeout: timeout),
+                      "Seeded clipboard image did not appear within \(timeout)s; dumping tree:\n\(app.debugDescription)")
+    }
+
     // MARK: - Tests: Keyboard Navigation & Macro Execution
 
     /// Opens the history window, seeds one entry via the system pasteboard,
@@ -816,6 +857,71 @@ final class SmokeUITests: XCTestCase {
                        "Clearing search should restore 'Bravo' row, got \(bravoRestored)")
         XCTAssertEqual(charlieRestored, 1,
                        "Clearing search should restore 'Charlie' row, got \(charlieRestored)")
+    }
+
+    /// Verifies the image-only filter keeps image history visible while hiding
+    /// text history, then restores the text row when toggled off.
+    func testImageFilterShowsOnlyImages() throws {
+        let app = makeApp()
+        app.launch()
+
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        if settingsWindow.exists {
+            settingsWindow.buttons.element(boundBy: 0).click()
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+
+        XCTAssertTrue(exists(app.windows.firstMatch, timeout: 10), "Main window did not appear")
+        try clearHistory(app: app)
+
+        let textMarker = "E2EImageFilterText-"
+        try seedClipboardHistory(app: app, text: textMarker)
+        try seedImageClipboardHistory(app: app)
+
+        XCTAssertEqual(countRows(in: app, containing: textMarker), 1,
+                       "Seeded text row should be visible before filtering")
+        XCTAssertTrue(imageHistoryRow(in: app).exists,
+                      "Seeded image row should be visible before filtering")
+
+        let imageFilterButton = app.buttons["imageFilterButton"]
+        XCTAssertTrue(exists(imageFilterButton, timeout: 5), "Image filter button not found")
+        XCTAssertEqual(imageFilterButton.value as? String, "Off",
+                       "Image filter should initially be off")
+        imageFilterButton.click()
+
+        let filterDeadline = Date().addingTimeInterval(10)
+        var textRows = 1
+        var imageVisible = false
+        while Date() < filterDeadline {
+            textRows = countRows(in: app, containing: textMarker)
+            imageVisible = imageHistoryRow(in: app).exists
+            if textRows == 0 && imageVisible { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertEqual(textRows, 0, "Image filter should hide text history rows")
+        XCTAssertTrue(imageVisible, "Image filter should keep the image history row visible")
+        XCTAssertEqual(app.buttons["imageFilterButton"].value as? String, "On",
+                       "Image filter should expose its active accessibility value")
+
+        app.buttons["imageFilterButton"].click()
+        let restoreDeadline = Date().addingTimeInterval(10)
+        var restoredTextRows = 0
+        while Date() < restoreDeadline {
+            restoredTextRows = countRows(in: app, containing: textMarker)
+            if restoredTextRows == 1 { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertEqual(restoredTextRows, 1,
+                       "Turning off the image filter should restore the text history row")
+        XCTAssertEqual(app.buttons["imageFilterButton"].value as? String, "Off",
+                       "Image filter should expose its inactive accessibility value")
+    }
+
+    /// Re-queries the image row because SwiftUI can rebuild the accessibility
+    /// tree whenever filtering changes.
+    private func imageHistoryRow(in app: XCUIApplication) -> XCUIElement {
+        let predicate = NSPredicate(format: "label == 'Image' OR value == 'Image'")
+        return app.scrollViews["historyList"].staticTexts.matching(predicate).firstMatch
     }
 
     /// Drives the main-window More menu to clear all history. Used before

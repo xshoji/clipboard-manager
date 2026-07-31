@@ -24,6 +24,7 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 - Incremental search (real-time filtering).
 - Search target is the full text of history entries.
 - Image history is searchable via metadata such as the source app name.
+- An image-only filter can be toggled independently and combined with the search query.
 
 #### 2.1.3 History Deletion
 
