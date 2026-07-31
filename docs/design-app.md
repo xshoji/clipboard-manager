@@ -23,7 +23,8 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 
 - Incremental search (real-time filtering).
 - Search target is the full text of history entries.
-- Image history is searchable via metadata such as the source app name.
+- Image history is searchable via metadata such as the source app name and, when
+  automatic image OCR is enabled, recognized text.
 - An image-only filter can be toggled independently and combined with the search query.
 
 #### 2.1.3 History Deletion
@@ -42,6 +43,8 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 #### 2.1.5 Image History
 
 - Image copies can be saved to history.
+- An opt-in setting runs on-device OCR for newly saved images in the background
+  and stores recognized text for keyword search. Existing images are not backfilled.
 - An image history entry can be edited in macOS standard Preview.app (annotations, cropping, etc.).
 - Editing is performed by launching Preview.app as an external process with a pre-prepared working file. When the user saves (Cmd+S) and closes the Preview window, the edited result is saved as **a new history entry** (the original image is preserved). If there are no changes, no new entry is created.
 - Image editing is also invoked via the **Edit button in the footer**. Text/image is auto-dispatched by the selected item's kind.

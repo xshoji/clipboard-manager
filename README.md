@@ -51,7 +51,9 @@ be out of date — please file an issue if something's changed.)
 
 ### Clipboard monitoring & search
 Automatically saves text and image copies (rich text supported), with
-real-time incremental search across history.
+real-time incremental search across history. Optional background OCR indexes
+text in newly saved images entirely on-device, so screenshots can be found by
+the words they contain as well as their source app.
 
 ### Macro scripts
 Most clipboard managers that support scripting (CopyQ, for example) use
@@ -75,7 +77,10 @@ Select an image entry, run "Paste Plain", and the text in it is
 recognized on-device with the Vision framework and pasted directly —
 no cloud, no separate OCR app. Recognition language is configurable
 (English / Japanese / Japanese + English / Chinese / Korean; default
-English).
+English). Settings can also enable background OCR for newly saved images,
+making recognized text searchable; this is off by default and does not process
+existing history. "Paste Plain" reuses a saved OCR result when available instead
+of analyzing the same image again.
 
 ### Rich / plain paste
 Choose whether to paste with formatting intact or stripped, per entry.

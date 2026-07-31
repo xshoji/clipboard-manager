@@ -156,6 +156,8 @@ final class ClipboardEntity {
     var thumbnail: Data?       // For fast list display
     var sourceBundleID: String?
     var contentHash: String?   // SHA256 (for dedup)
+    var ocrText: String?       // Persisted automatic OCR result
+    var ocrStatus: String?     // "pending" / "completed"
 
     init(...) { ... }
 }
@@ -173,6 +175,8 @@ final class ClipboardEntity {
 | thumbnail | Data? | For fast list display |
 | sourceBundleID | String? | Source app identifier |
 | contentHash | String? | SHA256 for dedup (text or imageData) |
+| ocrText | String? | On-device OCR text used for image keyword search. Stored with `@Attribute(.externalStorage)` |
+| ocrStatus | String? | Automatic OCR state (`pending` or `completed`); nil for entries not scheduled for automatic OCR |
 
 > **Edit handling**: Results edited in `TextEditView` are **saved as a new Entity with `kind = "text"` and `richText = nil`** (per `design-app.md §2.1.4`). The original rich text history remains as a separate Entity.
 > **HTML format handling**: When a clipboard entry provides HTML (via `public.html` pasteboard type) without RTF/RTFD, the raw HTML `Data` is stored in the `html` attribute and the plain-text representation (extracted from the HTML) is stored in `text`. This covers apps that expose HTML but not RTF (e.g. web browsers, some email clients). At paste time, if `html` is present it is written to the pasteboard as `public.html` alongside the plain text, so the target app can pick up the styled content. The preview pane renders HTML via `NSTextView` + `NSAttributedString(html:)`.
@@ -226,6 +230,9 @@ final class ClipboardEntity {
   → Insert new Entity into SwiftData ModelContext
       ※ If consecutive copies occur within the same changeCount,
         only the last observed content is saved (spec).
+  → If automatic image OCR is enabled and the insert succeeds:
+      AutomaticOcrProcessor serial utility queue
+      → Vision OCR → update ocrText/ocrStatus → refresh search DTOs
   → PersistenceController.enforceLimits() asynchronously
       (does not block the save flow)
 ```
@@ -238,6 +245,20 @@ final class ClipboardEntity {
    Before each insert, deletes any existing entities with the same `contentHash` so the newly copied item bubbles up to the top without stacking duplicates. Guarantees at most one entry per `contentHash` in the database.
 
 > **Note**: The previous ring-buffer approach (`DedupCache`, `dedupCacheSize` default 100) skipped any duplicate within the last `dedupCacheSize` entries and prevented the same content from re-entering history until the ring evicted it. It was removed because users expect the same content to re-enter history once anything else has been copied in between; the two-layer approach above preserves "don't save the same copy twice in a row" (Layer 1) while allowing re-entry after intervening copies (Layer 2 only dedupes within the database, not across an in-memory window).
+
+#### Automatic image OCR
+
+- Disabled by default and applies only to images saved after the setting is enabled.
+- Uses the configured OCR language set and runs entirely on-device.
+- `AutomaticOcrProcessor` uses one serial utility-QoS queue, preventing concurrent
+  Vision requests during bursts and keeping the main actor responsive.
+- The image row is inserted with `ocrStatus = "pending"`. After recognition,
+  `ocrText` is stored (or left nil when no text is found), status becomes
+  `"completed"`, and the repository change notification refreshes keyword search.
+- Paste Plain / its action hotkey reuses a completed persisted result without
+  running Vision again. It reports pending background work instead of starting a
+  duplicate request; an unanalysed image is recognized on demand and cached.
+- Existing history is not automatically backfilled.
 
 
 > **`enforceLimits` execution policy**:

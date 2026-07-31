@@ -40,7 +40,8 @@ The window is resizable; the list pane grows/shrinks while the search bar and fo
 - Single-line text field with a magnifying-glass icon.
 - **Incremental search**: filters the list in real time as the user types.
 - An image filter button shows only image history entries when active. It can be combined with incremental search.
-- Placeholder text describes the search target (text content, image source app, etc.).
+- Search targets text content, image source app metadata, and persisted OCR text
+  for images analyzed by the opt-in automatic OCR setting.
 - `Esc` clears the search and closes the window.
 
 ## 4. History List
@@ -110,6 +111,8 @@ A separate standard-style window (not the menu bar popup) launched from the menu
 3. **Paste**
    - Default paste mode (Rich / Plain)
    - Paste macro script registration (file paths, with confirmation dialog and fingerprint warning)
+   - Automatic OCR indexing for newly saved images (off by default)
+   - OCR recognition language set
 4. **Permissions**
    - Accessibility permission status and a button to open System Settings
    - Explanation of what the permission is used for (Preview window monitoring for image editing)
