@@ -6,6 +6,7 @@ final class HistoryViewModel {
     private let repository: ClipboardRepositoryPort
     private let pasteCoordinator: PasteCoordinator
     private var changeObserver: NSObjectProtocol?
+    private var reloadTask: Task<Void, Never>?
     private var isActive = false
     var items: [ClipboardItem] = []
     var selectedItem: ClipboardItem?
@@ -17,14 +18,16 @@ final class HistoryViewModel {
     func start() {
         guard !isActive else { return }
         isActive = true
-        Task { await reload() }
+        requestReload()
         changeObserver = NotificationCenter.default.addObserver(forName: .clipboardRepositoryDidChange, object: repository, queue: .main) { [weak self] _ in
-            Task { await self?.reload() }
+            self?.requestReload()
         }
     }
 
     func stop() {
         isActive = false
+        reloadTask?.cancel()
+        reloadTask = nil
         if let changeObserver { NotificationCenter.default.removeObserver(changeObserver) }
         changeObserver = nil
     }
@@ -33,6 +36,18 @@ final class HistoryViewModel {
         let selectedID = selectedItem?.id
         items = await repository.fetchAll()
         selectedItem = selectedID.flatMap { id in items.first { $0.id == id } } ?? items.first
+    }
+
+    private func requestReload() {
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self] in
+            guard let self else { return }
+            let selectedID = selectedItem?.id
+            let fetchedItems = await repository.fetchAll()
+            guard !Task.isCancelled else { return }
+            items = fetchedItems
+            selectedItem = selectedID.flatMap { id in fetchedItems.first { $0.id == id } } ?? fetchedItems.first
+        }
     }
     func select(_ item: ClipboardItem?) { selectedItem = item }
     func delete(id: UUID) { repository.delete(id: id) }
