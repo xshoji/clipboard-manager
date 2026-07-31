@@ -4,6 +4,7 @@ import AppKit
 struct HotkeyRecorderView: View {
     @Binding var keyCode: Int
     @Binding var modifiers: Int
+    let onRecordingStart: () -> Void
     let onChange: () -> Void
     let title: String
     let systemImage: String
@@ -18,6 +19,7 @@ struct HotkeyRecorderView: View {
     init(
         keyCode: Binding<Int>,
         modifiers: Binding<Int>,
+        onRecordingStart: @escaping () -> Void = {},
         onChange: @escaping () -> Void,
         title: String,
         systemImage: String,
@@ -29,6 +31,7 @@ struct HotkeyRecorderView: View {
     ) {
         self._keyCode = keyCode
         self._modifiers = modifiers
+        self.onRecordingStart = onRecordingStart
         self.onChange = onChange
         self.title = title
         self.systemImage = systemImage
@@ -50,6 +53,9 @@ struct HotkeyRecorderView: View {
                 get: { AppSettings.shared.hotkeyModifiers },
                 set: { AppSettings.shared.hotkeyModifiers = $0 }
             ),
+            onRecordingStart: {
+                NotificationCenter.default.post(name: .globalHotkeyRecordingStarted, object: nil)
+            },
             onChange: { NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil) },
             title: "Hotkey",
             systemImage: "command",
@@ -72,6 +78,7 @@ struct HotkeyRecorderView: View {
                 .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.separatorLine))
                 .accessibilityIdentifier("\(accessibilityIDPrefix).display")
             Button(recording ? "Press keys…" : "Record") {
+                onRecordingStart()
                 recording = true
             }
             .disabled(recording)

@@ -7,8 +7,30 @@ struct SettingsView: View {
     @State private var retention: Int
     @State private var maxCount: Int
     @State private var maxItem: Int
-    @State private var showHotkeyRegistrationError = false
-    @State private var showActionHotkeyDuplicateError = false
+    @State private var hotkeyAlert: HotkeyAlert?
+
+    private enum HotkeyAlert: Identifiable {
+        case unavailable
+        case actionDuplicate
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .unavailable: "Hotkey unavailable"
+            case .actionDuplicate: "Action hotkey duplicate"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .unavailable:
+                "That shortcut is already registered by another app or Macro. Choose a different shortcut."
+            case .actionDuplicate:
+                "Action hotkeys cannot share the same shortcut. Choose a different shortcut for one of them."
+            }
+        }
+    }
 
     init() {
         let s = AppSettings.shared
@@ -58,6 +80,9 @@ struct SettingsView: View {
                         get: { settings.globalMacroPickerHotkeyModifiers },
                         set: { settings.globalMacroPickerHotkeyModifiers = $0 }
                     ),
+                    onRecordingStart: {
+                        NotificationCenter.default.post(name: .globalHotkeyRecordingStarted, object: nil)
+                    },
                     onChange: { NotificationCenter.default.post(name: .globalMacroPickerHotkeyChanged, object: nil) },
                     title: "Direct macro picker",
                     systemImage: "command.square",
@@ -254,18 +279,15 @@ struct SettingsView: View {
         .frame(minWidth: 560, minHeight: 600)
         .onReceive(NotificationCenter.default.publisher(for: .mainHotkeyRegistrationResult)) { note in
             if note.userInfo?["succeeded"] as? Bool == false {
-                showHotkeyRegistrationError = true
+                hotkeyAlert = .unavailable
             }
         }
-        .alert("Hotkey unavailable", isPresented: $showHotkeyRegistrationError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("That shortcut is already registered by another app or Macro. Choose a different shortcut.")
-        }
-        .alert("Action hotkey duplicate", isPresented: $showActionHotkeyDuplicateError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Action hotkeys cannot share the same shortcut. Choose a different shortcut for one of them.")
+        .alert(item: $hotkeyAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .cancel(Text("OK"))
+            )
         }
     }
 
@@ -370,7 +392,7 @@ struct SettingsView: View {
             // Do NOT write the new value; the Binding-derived display will not
             // move because we never wrote. Surface the duplicate alert so the
             // user knows the shortcut is already taken by another action.
-            showActionHotkeyDuplicateError = true
+            hotkeyAlert = .actionDuplicate
             return
         }
         kind.set((keyCode, modifiers), in: settings)

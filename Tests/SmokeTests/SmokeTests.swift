@@ -198,6 +198,95 @@ final class SmokeUITests: XCTestCase {
                        "Edit hotkey display should be '⇧⌘A' after Record, got '\(display.value as? String ?? "")'")
     }
 
+    /// Exercises the second global hotkey recorder (Record → Clear) and verifies
+    /// the default state is "(none)" because the shortcut is optional.
+    func testGlobalMacroPickerHotkeyRecorder() throws {
+        let app = makeApp()
+        app.launch()
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
+
+        let display = app.staticTexts["globalMacroPickerHotkey.display"]
+        XCTAssertTrue(exists(display, timeout: 5), "Global macro picker hotkey display not found")
+        XCTAssertEqual(display.value as? String ?? "", "(none)",
+                       "Global macro picker hotkey should default to '(none)', got '\(display.value as? String ?? "")'")
+
+        // Record ⇧⌘A; unlikely to collide with the E2E main-hotkey defaults.
+        let recordButton = app.buttons["globalMacroPickerHotkey.record"]
+        XCTAssertTrue(exists(recordButton, timeout: 5), "Record button not found")
+        recordButton.click()
+        Thread.sleep(forTimeInterval: 0.3)
+        app.typeKey("a", modifierFlags: [.command, .shift])
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        XCTAssertEqual(display.value as? String ?? "", "⇧⌘A",
+                       "Display should be '⇧⌘A' after Record, got '\(display.value as? String ?? "")'")
+
+        // Clear → back to "(none)".
+        let clearButton = app.buttons["globalMacroPickerHotkey.clear"]
+        XCTAssertTrue(exists(clearButton, timeout: 5), "Clear button not found")
+        clearButton.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        XCTAssertEqual(display.value as? String ?? "", "(none)",
+                       "Display should be '(none)' after Clear, got '\(display.value as? String ?? "")'")
+    }
+
+    /// Verifies that the Carbon duplicate guard rejects setting the second
+    /// global hotkey to the same shortcut as the main global hotkey.
+    /// The main hotkey is first changed to a single-modifier shortcut (⌘B)
+    /// so XCUITest can reliably synthesize the collision without depending on
+    /// the four-modifier E2E default or on window-scoped action hotkeys.
+    func testGlobalMacroPickerHotkeyCollidesWithMainHotkey() throws {
+        let app = makeApp()
+        app.launch()
+        let settingsWindow = app.windows["ClipboardManager Settings"]
+        XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
+
+        // Step 1: Change the main global hotkey to ⌘B.
+        // ⌘B does not collide with any E2E default action hotkey (Edit ⌘E,
+        // Paste Plain ⌘P, Macro Picker ⌘M).
+        let mainRecord = app.buttons["globalHotkey.record"]
+        XCTAssertTrue(exists(mainRecord, timeout: 5), "Main hotkey Record button not found")
+        mainRecord.click()
+        Thread.sleep(forTimeInterval: 0.3)
+        app.typeKey("b", modifierFlags: .command)
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        let mainDisplay = app.staticTexts["globalHotkey.display"]
+        XCTAssertTrue(exists(mainDisplay, timeout: 5), "Main hotkey display not found")
+        XCTAssertEqual(mainDisplay.value as? String ?? "", "⌘B",
+                       "Main hotkey should be '⌘B', got '\(mainDisplay.value as? String ?? "")'")
+
+        // Step 2: Record the same ⌘B on the second global hotkey.
+        // Carbon should reject it because the main hotkey already owns it.
+        let display = app.staticTexts["globalMacroPickerHotkey.display"]
+        XCTAssertTrue(exists(display, timeout: 5), "Global macro picker hotkey display not found")
+        XCTAssertEqual(display.value as? String ?? "", "(none)",
+                       "Global macro picker hotkey should default to '(none)', got '\(display.value as? String ?? "")'")
+
+        let recordButton = app.buttons["globalMacroPickerHotkey.record"]
+        XCTAssertTrue(exists(recordButton, timeout: 5), "Record button not found")
+        recordButton.click()
+        Thread.sleep(forTimeInterval: 0.3)
+        app.typeKey("b", modifierFlags: .command)
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        // SwiftUI exposes a macOS Alert as a Sheet whose title is a child
+        // StaticText value, not as a titled XCUIElementTypeAlert. Match the
+        // title value exactly so the unrelated action-duplicate alert cannot pass.
+        let alertTitle = app.staticTexts.matching(
+            NSPredicate(format: "value == %@", "Hotkey unavailable")
+        ).firstMatch
+        XCTAssertTrue(exists(alertTitle, timeout: 5), "Hotkey-unavailable alert did not appear")
+        let okButton = app.sheets.firstMatch.buttons["OK"]
+        XCTAssertTrue(exists(okButton, timeout: 5), "OK button not found in alert")
+        okButton.click()
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        let revertedDisplay = app.staticTexts["globalMacroPickerHotkey.display"]
+        XCTAssertEqual(revertedDisplay.value as? String ?? "", "(none)",
+                       "Display should revert to '(none)' after failed registration, got '\(revertedDisplay.value as? String ?? "")'")
+    }
+
     /// Exercises the macro script CRUD pipeline end-to-end in a single session:
     /// Add → Edit name → Discard-close guard (reopen and verify discard) →
     /// Change interpreter preset → Script-file source. The app is launched

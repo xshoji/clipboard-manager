@@ -71,6 +71,15 @@ final class HotkeyManager {
             return true
         }
 
+        if let registeredMacroModalKeyCode, let registeredMacroModalModifiers,
+           registeredMacroModalKeyCode == cocoaKeyCode,
+           registeredMacroModalModifiers == cocoaModifiers {
+            Self.logger.error("Main global hotkey collides with the Macro Picker global hotkey")
+            settings.hotkeyKeyCode = registeredMainKeyCode ?? AppSettings.defaultHotkeyKeyCode
+            settings.hotkeyModifiers = registeredMainModifiers ?? AppSettings.defaultHotkeyModifiers
+            return false
+        }
+
         var newHotkeyRef: EventHotKeyRef?
         let reg = RegisterEventHotKey(
             keyCode, mods,
@@ -130,6 +139,15 @@ final class HotkeyManager {
             return true
         }
 
+        if let registeredMainKeyCode, let registeredMainModifiers,
+           registeredMainKeyCode == cocoaKeyCode,
+           registeredMainModifiers == cocoaModifiers {
+            Self.logger.error("Macro modal hotkey collides with the main global hotkey")
+            settings.globalMacroPickerHotkeyKeyCode = registeredMacroModalKeyCode ?? 0
+            settings.globalMacroPickerHotkeyModifiers = registeredMacroModalModifiers ?? 0
+            return false
+        }
+
         var newHotkeyRef: EventHotKeyRef?
         let reg = RegisterEventHotKey(
             keyCode, mods,
@@ -138,10 +156,8 @@ final class HotkeyManager {
         )
         guard reg == noErr, let newHotkeyRef else {
             Self.logger.error("RegisterEventHotKey (macro modal) failed: \(reg)")
-            if let registeredMacroModalKeyCode, let registeredMacroModalModifiers {
-                settings.globalMacroPickerHotkeyKeyCode = registeredMacroModalKeyCode
-                settings.globalMacroPickerHotkeyModifiers = registeredMacroModalModifiers
-            }
+            settings.globalMacroPickerHotkeyKeyCode = registeredMacroModalKeyCode ?? 0
+            settings.globalMacroPickerHotkeyModifiers = registeredMacroModalModifiers ?? 0
             return false
         }
 
@@ -161,6 +177,20 @@ final class HotkeyManager {
         }
         registeredMacroModalKeyCode = nil
         registeredMacroModalModifiers = nil
+    }
+
+    /// Temporarily releases both global Carbon registrations while the settings
+    /// recorder captures a replacement shortcut. The registered values remain
+    /// available for collision checks and rollback when recording completes.
+    func suspendGlobalHotkeysForRecording() {
+        if let hotkeyRef {
+            UnregisterEventHotKey(hotkeyRef)
+            self.hotkeyRef = nil
+        }
+        if let macroModalHotkeyRef {
+            UnregisterEventHotKey(macroModalHotkeyRef)
+            self.macroModalHotkeyRef = nil
+        }
     }
 
     func unregister() {

@@ -48,19 +48,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .mainHotkeyChanged,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(globalHotkeyRecordingStarted),
+            name: .globalHotkeyRecordingStarted,
+            object: nil
+        )
         hotkeyManager.register { [weak self] in
             self?.container.coordinator.showMainWindow(focusSearch: true)
         }
         // Optional second global hotkey: open the history window and immediately show the Macro Picker.
-        hotkeyManager.registerMacroModalHotkey { [weak self] in
-            self?.container.coordinator.showMainWindow(focusSearch: true)
-            // Defer the Macro Picker open until the next run-loop turn so SwiftUI
-            // has finished moving focus to the search field. This lets the overlay
-            // restore focus back to the search field when it is dismissed, matching
-            // the behavior of manually invoking the main hotkey followed by Cmd+M.
-            DispatchQueue.main.async {
-                self?.runMacroPickerAction()
-            }
+        let macroModalRegistered = hotkeyManager.registerMacroModalHotkey { [weak self] in
+            guard let self else { return }
+            self.container.coordinator.showMainWindow(focusSearch: true)
+            // Open the overlay directly via a dedicated *open-only* notification.
+            // We do NOT route through `runMacroPickerAction()` ( which posts
+            // `.macroPickerTriggered` ) for two reasons:
+            //   1. `runMacroPickerAction()` has an `isKeyWindow` guard. This
+            //      callback just opened the window from another app, and
+            //      `NSApp.activate(ignoringOtherApps:)` completes asynchronously,
+            //      so the panel is not yet key on this run-loop turn and the guard
+            //      would short-circuit ( "window appears but overlay never does" ).
+            //   2. `.macroPickerTriggered` toggles the overlay ( Cmd+M both opens
+            //      and closes ). A global *open* request must not be a toggle,
+            //      otherwise reopening the already-visible window would close it.
+            // `MainView`'s `.onReceive(.macroPickerRequested)` handler guards
+            // `selectedItem != nil` and beeps otherwise, matching the
+            // action-hotkey path. `showMainWindow` re-runs the SwiftUI layout pass
+            // synchronously, so the receiver is attached by the time this is
+            // delivered.
+            NotificationCenter.default.post(name: .macroPickerRequested, object: nil)
+        }
+        if !macroModalRegistered {
+            // Carbon `RegisterEventHotKey` failed at launch ( e.g. another app
+            // already owns the shortcut ). A later `globalMacroPickerHotkeyChanged`
+            // notification re-runs registration and surfaces the result via
+            // `.mainHotkeyRegistrationResult`, but the initial launch failure would
+            // otherwise be silent, so log it here for diagnostics.
+            Self.logger.error("Global Macro Picker hotkey registration failed at launch")
         }
         NotificationCenter.default.addObserver(
             self,
@@ -189,20 +214,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func mainHotkeyChanged() {
         let succeeded = hotkeyManager.reinstall()
-        NotificationCenter.default.post(
-            name: .mainHotkeyRegistrationResult,
-            object: nil,
-            userInfo: ["succeeded": succeeded]
-        )
+        _ = hotkeyManager.reinstallMacroModalHotkey()
+        if !succeeded {
+            _ = hotkeyManager.reinstall()
+        }
+        postHotkeyRegistrationResult(succeeded)
     }
 
     @objc private func globalMacroPickerHotkeyChanged() {
         let succeeded = hotkeyManager.reinstallMacroModalHotkey()
-        NotificationCenter.default.post(
-            name: .mainHotkeyRegistrationResult,
-            object: nil,
-            userInfo: ["succeeded": succeeded]
-        )
+        _ = hotkeyManager.reinstall()
+        if !succeeded {
+            _ = hotkeyManager.reinstallMacroModalHotkey()
+        }
+        postHotkeyRegistrationResult(succeeded)
+    }
+
+    @objc private func globalHotkeyRecordingStarted() {
+        hotkeyManager.suspendGlobalHotkeysForRecording()
+    }
+
+    private func postHotkeyRegistrationResult(_ succeeded: Bool) {
+        // Let the recorder remove its key-capture overlay before SwiftUI updates
+        // the display and presents a registration-failure alert.
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .mainHotkeyRegistrationResult,
+                object: nil,
+                userInfo: ["succeeded": succeeded]
+            )
+        }
     }
 
     /// Called when an NSWindow other than the main window (e.g., settings window) closes.
@@ -665,6 +706,7 @@ extension Notification.Name {
     static let pollingIntervalChanged = Notification.Name("pollingIntervalChanged")
     static let mainHotkeyChanged = Notification.Name("mainHotkeyChanged")
     static let mainHotkeyRegistrationResult = Notification.Name("mainHotkeyRegistrationResult")
+    static let globalHotkeyRecordingStarted = Notification.Name("globalHotkeyRecordingStarted")
     static let globalMacroPickerHotkeyChanged = Notification.Name("globalMacroPickerHotkeyChanged")
     static let macroScriptsChanged = Notification.Name("macroScriptsChanged")
     static let actionHotkeysChanged = Notification.Name("actionHotkeysChanged")
@@ -683,10 +725,20 @@ extension Notification.Name {
     /// `HistoryListPane` performs the actual deletion so the post-delete selection logic
     /// (move to the adjacent entry) stays in one place.
     static let deleteSelectedRequested = Notification.Name("deleteSelectedRequested")
-   /// Posted by AppDelegate when the Macro Picker action hotkey ( default Cmd+M ) fires.
-   /// `MainView` observes this and shows the `MacroPickerView` overlay so the user can
-   /// pick a Macro with the keyboard and run it against the currently selected entity.
-   static let macroPickerTriggered = Notification.Name("macroPickerTriggered")
+    /// Posted by AppDelegate when the Macro Picker action hotkey ( default Cmd+M ) fires.
+    /// `MainView` observes this and shows the `MacroPickerView` overlay so the user can
+    /// pick a Macro with the keyboard and run it against the currently selected entity.
+    /// This hotkey is window-scoped and toggles the overlay ( Cmd+M both opens and closes ).
+    static let macroPickerTriggered = Notification.Name("macroPickerTriggered")
+    /// Posted by AppDelegate when the *global* Macro Picker hotkey ( optional,
+    /// second global hotkey registered as `macroModalRegistryID` ) fires. Unlike
+    /// `macroPickerTriggered`, this is NOT a toggle: it unconditionally opens the
+    /// overlay after showing the history window. Using a dedicated notification
+    /// avoids `runMacroPickerAction()`'s `isKeyWindow` guard ( which short-circuits
+    /// because the just-shown window is not yet key on this run-loop turn ) and
+    /// keeps the request *open-only* so reopening an already-visible window does
+    /// not toggle the overlay closed.
+    static let macroPickerRequested = Notification.Name("macroPickerRequested")
     /// Posted by `SettingsWindowController` when the user chooses "Save" on an
     /// unsaved-changes alert so each `MacroScriptRowView` can persist its edits.
     static let saveAllUnsavedMacros = Notification.Name("saveAllUnsavedMacros")

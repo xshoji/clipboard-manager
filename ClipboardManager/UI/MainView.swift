@@ -120,16 +120,29 @@ struct MainView: View {
             guard let item = note.object as? ClipboardItem else { return }
             edit(item)
         }
-       .onReceive(NotificationCenter.default.publisher(for: .macroPickerTriggered)) { _ in
-           // Cmd+M (default) while the history window is visible. Toggle so Cmd+M both
-           // opens and closes the overlay. Beep if no entity is selected (AppDelegate
-           // already guards this, but double-check here for safety).
+        .onReceive(NotificationCenter.default.publisher(for: .macroPickerTriggered)) { _ in
+            // Cmd+M (default) while the history window is visible. Toggle so Cmd+M both
+            // opens and closes the overlay. Beep if no entity is selected (AppDelegate
+            // already guards this, but double-check here for safety).
             guard viewModel.selectedItem != nil else {
                 NSSound.beep()
                 return
             }
             macroPickerPresented.toggle()
-       }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macroPickerRequested)) { _ in
+            // Fired by the *global* Macro Picker hotkey ( optional second global
+            // hotkey registered as `macroModalRegistryID` ). This is an
+            // *open-only* request: assign `true` directly ( NOT `toggle()` ) so
+            // reopening an already-visible window never closes the overlay.
+            // See AppDelegate for why a dedicated notification is used instead of
+            // `.macroPickerTriggered`.
+            guard viewModel.selectedItem != nil else {
+                NSSound.beep()
+                return
+            }
+            macroPickerPresented = true
+        }
        .onReceive(NotificationCenter.default.publisher(for: .ocrProgressDidChange)) { note in
            if let v = note.userInfo?["inProgress"] as? Bool {
                isOcrInProgress = v
