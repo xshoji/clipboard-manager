@@ -226,6 +226,7 @@ struct HistoryListPane: View {
                 id: entity.id,
                 isImage: entity.isImage,
                 textPreviewLower: entity.textPreviewLowercased ?? entity.textPreview?.lowercased() ?? "",
+                ocrTextLower: entity.ocrTextLowercased,
                 sourceBundleIDLower: entity.sourceBundleID?.lowercased(),
                 contentHashLower: entity.contentHash?.lowercased()
             )
@@ -236,6 +237,7 @@ struct HistoryListPane: View {
                 guard !imagesOnly || row.isImage else { return nil }
                 if needle.isEmpty { return row.id }
                 if row.textPreviewLower.contains(needle) { return row.id }
+                if let ocr = row.ocrTextLower, ocr.contains(needle) { return row.id }
                 if let b = row.sourceBundleIDLower, b.contains(needle) { return row.id }
                 if let h = row.contentHashLower, h.contains(needle) { return row.id }
                 return nil
@@ -270,6 +272,7 @@ struct HistoryListPane: View {
         let id: UUID
         let isImage: Bool
         let textPreviewLower: String
+        let ocrTextLower: String?
         let sourceBundleIDLower: String?
         let contentHashLower: String?
     }

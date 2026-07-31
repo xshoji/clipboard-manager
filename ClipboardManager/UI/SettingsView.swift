@@ -233,6 +233,17 @@ struct SettingsView: View {
                 Text("Plain Text on an image runs OCR and pastes the recognized text. Choose the recognition language set.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Toggle(
+                    "Automatically index text in new images",
+                    isOn: Binding(
+                        get: { settings.automaticImageOcrEnabled },
+                        set: { settings.automaticImageOcrEnabled = $0 }
+                    )
+                )
+                .accessibilityIdentifier("automaticImageOcr")
+                Text("Runs on device in the background. Existing images are not analyzed.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 Picker("OCR languages", selection: Binding(
                     get: { settings.ocrLanguages },
                     set: { settings.ocrLanguages = $0 }

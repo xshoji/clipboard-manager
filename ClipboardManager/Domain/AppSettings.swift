@@ -126,6 +126,12 @@ final class AppSettings: @unchecked Sendable {
     var ocrLanguages: [String] = ["en-US"] {
         didSet { UserDefaults.standard.set(ocrLanguages, forKey: "ocrLanguages") }
     }
+    /// Runs on-device OCR for newly saved image history entries. Existing entries
+    /// are intentionally not backfilled. Defaults off to avoid unexpected energy use
+    /// and searchable storage of text contained in images.
+    var automaticImageOcrEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(automaticImageOcrEnabled, forKey: "automaticImageOcrEnabled") }
+    }
 
     var isAlwaysOnTop: Bool = false {
         didSet { UserDefaults.standard.set(isAlwaysOnTop, forKey: "isAlwaysOnTop") }
@@ -172,6 +178,7 @@ final class AppSettings: @unchecked Sendable {
         previewWrapMode   = UserDefaults.standard.object(forKey: "previewWrapMode")   as? String ?? previewWrapMode
         windowPositionMode = UserDefaults.standard.object(forKey: "windowPositionMode") as? String ?? windowPositionMode
         ocrLanguages      = UserDefaults.standard.object(forKey: "ocrLanguages")      as? [String] ?? ocrLanguages
+        automaticImageOcrEnabled = UserDefaults.standard.object(forKey: "automaticImageOcrEnabled") as? Bool ?? automaticImageOcrEnabled
         needsAccessibilityForSyntheticPaste = UserDefaults.standard.object(forKey: "needsAccessibilityForSyntheticPaste") as? Bool ?? needsAccessibilityForSyntheticPaste
 
         if !macroScriptsData.isEmpty,
