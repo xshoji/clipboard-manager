@@ -49,7 +49,9 @@ struct SettingsView: View {
                     Text("90 days").tag(90)
                     Text("365 days").tag(365)
                     Text("Unlimited").tag(0)
-                }.onChange(of: retention) { _, v in commit(key: \.retentionDays, v); notify(.retentionChanged) }
+                }
+                .accessibilityIdentifier("history.retention")
+                .onChange(of: retention) { _, v in commit(key: \.retentionDays, v); notify(.retentionChanged) }
 
                 Picker("Max items", selection: $maxCount) {
                     Text("100").tag(100)
@@ -59,10 +61,13 @@ struct SettingsView: View {
                     Text("10,000").tag(10000)
                     Text("50,000").tag(50000)
                     Text("100,000").tag(100000)
-                }.onChange(of: maxCount) { _, v in commit(key: \.maxHistoryCount, v); notify(.maxCountChanged) }
+                }
+                .accessibilityIdentifier("history.maxItems")
+                .onChange(of: maxCount) { _, v in commit(key: \.maxHistoryCount, v); notify(.maxCountChanged) }
 
                 Stepper(value: $maxItem, in: 1...100) {
                     Text("Max item size: \(maxItem) MB")
+                        .accessibilityIdentifier("history.maxItemSize")
                 }.onChange(of: maxItem) { _, v in commit(key: \.maxItemSizeMB, v) }
             }
 
@@ -357,7 +362,7 @@ struct SettingsView: View {
 
         /// Default key code for this action. Defaults are owned by `AppSettings`
         /// (single source of truth) so the Reset button in this view and the
-        /// E2E harness in `AppDelegate.forceE2EDefaultSettings` cannot drift.
+        /// E2E launch configuration cannot drift.
         var defaultKeyCode: Int {
             switch self {
             case .edit:        return AppSettings.defaultEditHotkeyCode

@@ -19,6 +19,7 @@ struct OcrProgressOverlay: View {
                     .controlSize(.large)
                 Text("Running OCR…")
                     .font(.headline)
+                    .accessibilityIdentifier("ocrProgress")
                 Text("Extracting text from image")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

@@ -56,14 +56,7 @@ targets:
         DEAD_CODE_STRIPPING: YES
 
   # E2E (XCUITest) variant of the host app.
-  # Uses a separate bundle id (com.xshoji.ClipboardManager.E2E) and Info.plist
-  # so TCC permissions granted to the test runner do not collide with the
-  # production app. Because `UserDefaults.standard` keys on the bundle
-  # identifier (not the executable name), the E2E app's defaults domain is
-  # isolated from the production app — SmokeTests rely on AppDelegate's
-  # `forceE2EDefaultSettings` to seed a known state at launch instead of
-  # reading `defaults`. SwiftData uses a separate store URL guarded by the
-  # launch environment, so history does not collide with production either.
+  # Test architecture and isolation contract: docs/testing.md
   ClipboardManagerE2E:
     type: application
     platform: macOS

@@ -4,6 +4,11 @@ import os
 
 @MainActor
 final class PersistenceController {
+    static let productionStoreURL = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        .first!
+        .appendingPathComponent("ClipboardManager/Clipboard.store", isDirectory: false)
+
     let container: ModelContainer
     private let settings: AppSettings
     private var enforceDebouncer: DispatchWorkItem?
@@ -17,15 +22,12 @@ final class PersistenceController {
     /// All of them must be backed up / removed together when the store is recreated.
     private static let storeFileSuffixes = ["", "-wal", "-shm"]
 
-    init(settings: AppSettings = .shared) {
+    init(settings: AppSettings = .shared, storeURL: URL) {
         self.settings = settings
         // Use a versioned schema so SwiftData records the schema version and can run
         // `PersistenceMigrationPlan` when future model changes are introduced.
         let schema = Schema(versionedSchema: SchemaV3.self)
-        let url = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first!
-            .appendingPathComponent("ClipboardManager/Clipboard.store", isDirectory: false)
+        let url = storeURL
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true

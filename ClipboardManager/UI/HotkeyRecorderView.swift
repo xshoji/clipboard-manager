@@ -93,6 +93,7 @@ struct HotkeyRecorderView: View {
                 }
             }
             .accessibilityIdentifier("\(accessibilityIDPrefix).record")
+            .accessibilityValue(recording ? "Recording" : "Idle")
             if showClear, keyCode != 0 || modifiers != 0 {
                 Button("Clear") {
                     keyCode = 0
@@ -189,6 +190,7 @@ struct MacroHotkeyRecorderView: View {
             Button(recording ? "Press…" : "Record") { recording = true }
                 .disabled(recording)
                 .accessibilityIdentifier("\(accessibilityIDPrefix).record")
+                .accessibilityValue(recording ? "Recording" : "Idle")
             if keyCode.wrappedValue != 0 || modifiers.wrappedValue != 0 {
                 Button("Clear") {
                     // `onShortcutChange` is the single writer path; the host
