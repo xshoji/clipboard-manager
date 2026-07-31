@@ -2,31 +2,98 @@ import SwiftUI
 import AppKit
 
 struct HotkeyRecorderView: View {
-    @Environment(AppSettings.self) private var settings
+    @Binding var keyCode: Int
+    @Binding var modifiers: Int
+    let onChange: () -> Void
+    let title: String
+    let systemImage: String
+    let accessibilityIDPrefix: String
+    let defaultKeyCode: Int
+    let defaultModifiers: Int
+    let showReset: Bool
+    let showClear: Bool
     @State private var recording = false
     @State private var display: String = ""
 
+    init(
+        keyCode: Binding<Int>,
+        modifiers: Binding<Int>,
+        onChange: @escaping () -> Void,
+        title: String,
+        systemImage: String,
+        accessibilityIDPrefix: String,
+        defaultKeyCode: Int,
+        defaultModifiers: Int,
+        showReset: Bool = true,
+        showClear: Bool = false
+    ) {
+        self._keyCode = keyCode
+        self._modifiers = modifiers
+        self.onChange = onChange
+        self.title = title
+        self.systemImage = systemImage
+        self.accessibilityIDPrefix = accessibilityIDPrefix
+        self.defaultKeyCode = defaultKeyCode
+        self.defaultModifiers = defaultModifiers
+        self.showReset = showReset
+        self.showClear = showClear
+    }
+
+    /// Convenience initializer for the main global hotkey.
+    init() {
+        self.init(
+            keyCode: Binding(
+                get: { AppSettings.shared.hotkeyKeyCode },
+                set: { AppSettings.shared.hotkeyKeyCode = $0 }
+            ),
+            modifiers: Binding(
+                get: { AppSettings.shared.hotkeyModifiers },
+                set: { AppSettings.shared.hotkeyModifiers = $0 }
+            ),
+            onChange: { NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil) },
+            title: "Hotkey",
+            systemImage: "command",
+            accessibilityIDPrefix: "globalHotkey",
+            defaultKeyCode: AppSettings.defaultHotkeyKeyCode,
+            defaultModifiers: AppSettings.defaultHotkeyModifiers,
+            showReset: true,
+            showClear: false
+        )
+    }
+
     var body: some View {
         HStack {
-            Label("Hotkey", systemImage: "command")
+            Label(title, systemImage: systemImage)
+                .accessibilityIdentifier("\(accessibilityIDPrefix).label")
             Spacer()
             Text(display)
                 .frame(minWidth: 120)
                 .padding(4)
                 .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.separatorLine))
-                .accessibilityIdentifier("globalHotkey.display")
+                .accessibilityIdentifier("\(accessibilityIDPrefix).display")
             Button(recording ? "Press keys…" : "Record") {
                 recording = true
             }
             .disabled(recording)
-            .accessibilityIdentifier("globalHotkey.record")
-            Button("Reset") {
-                settings.hotkeyKeyCode = AppSettings.defaultHotkeyKeyCode
-                settings.hotkeyModifiers = AppSettings.defaultHotkeyModifiers
-                refresh()
-                NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil)
+            .accessibilityIdentifier("\(accessibilityIDPrefix).record")
+            if showClear, keyCode != 0 || modifiers != 0 {
+                Button("Clear") {
+                    keyCode = 0
+                    modifiers = 0
+                    refresh()
+                    onChange()
+                }
+                .accessibilityIdentifier("\(accessibilityIDPrefix).clear")
             }
-            .accessibilityIdentifier("globalHotkey.reset")
+            if showReset {
+                Button("Reset") {
+                    keyCode = defaultKeyCode
+                    modifiers = defaultModifiers
+                    refresh()
+                    onChange()
+                }
+                .accessibilityIdentifier("\(accessibilityIDPrefix).reset")
+            }
         }
         .onAppear { refresh() }
         .onReceive(NotificationCenter.default.publisher(for: .mainHotkeyRegistrationResult)) { _ in
@@ -35,21 +102,25 @@ struct HotkeyRecorderView: View {
         .background(recording ? Color.red.opacity(0.05) : Color.clear)
         .overlay {
             if recording {
-                ListenerView { keyCode, mods in
-                    settings.hotkeyKeyCode = keyCode
-                    settings.hotkeyModifiers = mods
+                ListenerView { capturedKeyCode, capturedModifiers in
+                    keyCode = capturedKeyCode
+                    modifiers = capturedModifiers
                     refresh()
                     recording = false
-                    NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil)
+                    onChange()
                 }
             }
         }
     }
 
     private func refresh() {
+        if keyCode == 0 && modifiers == 0 {
+            display = "(none)"
+            return
+        }
         display = KeyLabelRenderer.displayString(
-            keyCode: UInt32(settings.hotkeyKeyCode),
-            modifiers: settings.hotkeyModifiers
+            keyCode: UInt32(keyCode),
+            modifiers: modifiers
         )
     }
 }
