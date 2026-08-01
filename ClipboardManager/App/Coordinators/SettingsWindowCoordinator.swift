@@ -25,6 +25,7 @@ final class SettingsWindowCoordinator {
             let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 720),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "ClipboardManager Settings"
+            window.identifier = NSUserInterfaceItemIdentifier("settingsWindow")
             window.isReleasedWhenClosed = false
             window.center()
             window.contentViewController = NSHostingController(rootView: content)
