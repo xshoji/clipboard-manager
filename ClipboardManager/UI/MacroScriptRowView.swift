@@ -14,6 +14,7 @@ struct MacroScriptRowView: View {
     let accessibilityIDPrefix: String
     @Environment(AppSettings.self) private var settings
     @Environment(SettingsViewModel.self) private var viewModel
+    @Environment(HistoryViewModel.self) private var historyViewModel
     @State private var name: String
     @State private var sourceType: String
     @State private var path: String
@@ -24,12 +25,14 @@ struct MacroScriptRowView: View {
     @State private var hotkeyModifiers: Int
     @State private var showFingerprintCaptured: Bool = false
     @State private var validationError: String?
+    @State private var isTestRunning: Bool = false
     @State private var lastNotifiedDirty: Bool = false
     @State private var saveObserverToken: NSObjectProtocol?
     /// Pending edit awaiting the registration/change confirmation dialog (design-implementation.md §5.1-1).
     @State private var pendingConfirm: MacroScript?
     @State private var pendingFileValidation: MacroScriptValidation?
     @State private var isPresentingConfirm: Bool = false
+    @State private var shouldTestAfterSave: Bool = false
     /// `true` when the in-flight `apply()` was triggered by a
     /// `.saveAllUnsavedMacros` broadcast (window-close "Save all"). Set before
     /// `apply()` runs and consumed by every settle path (saved, user-cancelled,
@@ -171,6 +174,19 @@ struct MacroScriptRowView: View {
                 Button("Save") { apply() }
                     .disabled(!canApply)
                     .accessibilityIdentifier("\(accessibilityIDPrefix).save")
+                Button {
+                    testRun()
+                } label: {
+                    if isTestRunning {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text("Test Run")
+                    }
+                }
+                .disabled(!canTestRun)
+                .help(testRunHelp)
+                .accessibilityIdentifier("\(accessibilityIDPrefix).testRun")
                 Spacer()
                 Button("Remove", role: .destructive) { remove() }
                     .accessibilityIdentifier("\(accessibilityIDPrefix).remove")
@@ -263,6 +279,25 @@ struct MacroScriptRowView: View {
         || hotkeyModifiers != macro.hotkeyModifiers
     }
 
+    private var canTestRun: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+        && !interpreter.trimmingCharacters(in: .whitespaces).isEmpty
+        && (sourceType == "inline"
+            ? !inlineScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            : !path.trimmingCharacters(in: .whitespaces).isEmpty)
+        && historyViewModel.selectedItem != nil
+        && !isTestRunning
+        && !isPresentingConfirm
+    }
+
+    private var testRunHelp: String {
+        if historyViewModel.selectedItem == nil { return "Select a clipboard history item before testing this Macro." }
+        if hasContentChanges || macro.lastFingerprint == nil {
+            return "Save and confirm this Macro, then run it against the selected history item."
+        }
+        return "Run this Macro against the selected history item using the normal paste flow."
+    }
+
     private func browse() {
         let panel = NSOpenPanel()
         panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory())
@@ -283,6 +318,7 @@ struct MacroScriptRowView: View {
             let body = inlineScript
             guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 validationError = "Shell script is empty."
+                shouldTestAfterSave = false
                 reportSaveSettlementIfNeeded()
                 return
             }
@@ -310,6 +346,7 @@ struct MacroScriptRowView: View {
                 case .none:
                     validationError = "Validation failed."
                 }
+                shouldTestAfterSave = false
                 reportSaveSettlementIfNeeded()
                 return
             }
@@ -350,8 +387,13 @@ struct MacroScriptRowView: View {
         onUpdate(edited)
         pendingConfirm = nil
         pendingFileValidation = nil
+        let runAfterSave = shouldTestAfterSave
+        shouldTestAfterSave = false
         reportSaveSettlementIfNeeded()
         checkDirty()
+        if runAfterSave {
+            runTest(savedMacro: edited)
+        }
     }
 
     /// Confirmation dialog "Cancel": clears pending state and, if this apply
@@ -360,6 +402,7 @@ struct MacroScriptRowView: View {
     private func cancelConfirm() {
         pendingConfirm = nil
         pendingFileValidation = nil
+        shouldTestAfterSave = false
         reportSaveSettlementIfNeeded()
     }
 
@@ -378,6 +421,25 @@ struct MacroScriptRowView: View {
         edited.hotkeyCode = keyCode
         edited.hotkeyModifiers = modifiers
         onUpdate(edited)
+    }
+
+    private func testRun() {
+        guard canTestRun else { return }
+        if hasContentChanges || macro.lastFingerprint == nil {
+            shouldTestAfterSave = true
+            apply()
+            return
+        }
+        runTest(savedMacro: macro)
+    }
+
+    private func runTest(savedMacro: MacroScript) {
+        guard let item = historyViewModel.selectedItem else { return }
+        isTestRunning = true
+        Task {
+            _ = await historyViewModel.runMacro(macro: savedMacro, item: item)
+            isTestRunning = false
+        }
     }
 
     private func remove() {

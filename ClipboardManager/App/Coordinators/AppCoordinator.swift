@@ -14,7 +14,11 @@ final class AppCoordinator: AppCoordinating {
     let settingsWindow: SettingsWindowCoordinator
 
     init(settings: AppSettings, historyViewModel: HistoryViewModel, settingsViewModel: SettingsViewModel) {
-        settingsWindow = SettingsWindowCoordinator(settings: settings, viewModel: settingsViewModel)
+        settingsWindow = SettingsWindowCoordinator(
+            settings: settings,
+            viewModel: settingsViewModel,
+            historyViewModel: historyViewModel
+        )
         mainWindow = MainWindowCoordinator(settings: settings, viewModel: historyViewModel)
         mainWindow.onShowSettings = { [weak settingsWindow] in settingsWindow?.show() }
     }

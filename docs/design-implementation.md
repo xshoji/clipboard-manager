@@ -297,6 +297,12 @@ final class ClipboardEntity {
 - If the output file is not created, treat as **no transformation** and paste input content as-is.
 - exit != 0 or timeout 5s is treated as "Macro failure" (see §5 response table).
 - Scripts may freely output to stdout/stderr (this app does not consume them).
+- The Settings Macro row's **Test Run** action requires a selected history item.
+  New or edited Macros first pass through the normal registration/change
+  confirmation and fingerprint-save flow. It then calls the same
+  `HistoryViewModel.runMacro → PasteCoordinator.runMacro` flow as the main
+  window, including fingerprint verification, failure behavior, pasteboard
+  output, and previous-app activation.
 
 ### 4.3 Image Editing Flow via Preview.app
 

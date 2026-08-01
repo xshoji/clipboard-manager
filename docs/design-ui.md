@@ -111,6 +111,7 @@ A separate standard-style window (not the menu bar popup) launched from the menu
 3. **Paste**
    - Default paste mode (Rich / Plain)
    - Paste macro script registration (file paths, with confirmation dialog and fingerprint warning)
+   - A saved Macro can be test-run against the currently selected history item through the same execution and paste flow used by the main window
    - Automatic OCR indexing for newly saved images (off by default)
    - OCR recognition language set
 4. **Permissions**
