@@ -7,6 +7,7 @@ struct AppLaunchConfiguration {
     static let e2eDefaultsDomain = "com.xshoji.ClipboardManager.E2E"
     static let e2eTemporaryDirectoryName = "com.xshoji.ClipboardManager.E2E"
     static let e2ePasteboardNamePrefix = "com.xshoji.ClipboardManager.E2E."
+    static let e2eTestRunnerBundleID = "com.xshoji.SmokeUITests.xctrunner"
 
     let isE2E: Bool
     let storeURL: URL
@@ -43,7 +44,13 @@ struct AppLaunchConfiguration {
         }
 
         let fileManager = FileManager.default
-        let allowedRoot = fileManager.temporaryDirectory
+        // The XCUITest runner is containerized even though the E2E host is not.
+        // Resolve its known container Caches path explicitly so host-side
+        // validation does not depend on the two processes sharing TMPDIR.
+        let allowedRoot = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Containers", isDirectory: true)
+            .appendingPathComponent(e2eTestRunnerBundleID, isDirectory: true)
+            .appendingPathComponent("Data/Library/Caches", isDirectory: true)
             .appendingPathComponent(e2eTemporaryDirectoryName, isDirectory: true)
             .standardizedFileURL
             .resolvingSymlinksInPath()
