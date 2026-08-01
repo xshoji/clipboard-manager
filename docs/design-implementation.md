@@ -297,13 +297,18 @@ final class ClipboardEntity {
 
 - If the output file is not created, treat as **no transformation** and paste input content as-is.
 - exit != 0 or timeout 5s is treated as "Macro failure" (see §5 response table).
-- Scripts may freely output to stdout/stderr (this app does not consume them).
+- Normal Macro runs send stdout/stderr to the null device so verbose scripts cannot block on full process pipes and no unused logs are retained.
 - The Settings Macro row's **Test Run** action requires a selected history item.
   New or edited Macros first pass through the normal registration/change
-  confirmation and fingerprint-save flow. It then calls the same
-  `HistoryViewModel.runMacro → PasteCoordinator.runMacro` flow as the main
-  window, including fingerprint verification, failure behavior, pasteboard
-  output, and previous-app activation.
+  confirmation and fingerprint-save flow. Test Run uses the same input-file,
+  environment-variable, interpreter, fingerprint, and timeout setup as a normal
+  Macro run, but it does not write to the pasteboard, activate another app, or
+  apply the configured failure fallback. A debug console shows the command,
+  environment, duration, exit status, stdout, stderr, and transformed output.
+  Captured stdout/stderr is limited to 256 KiB per stream while excess bytes are
+  drained and discarded. Macro output is represented by a metadata-rich preview
+  limited to 256 KiB; the full output file is never loaded by the debug console.
+  Copy Report writes through the injected, monitor-suppressed pasteboard boundary.
 
 ### 4.3 Image Editing Flow via Preview.app
 

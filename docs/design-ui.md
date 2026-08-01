@@ -123,7 +123,7 @@ A separate standard-style window (not the menu bar popup) launched from the menu
 - A dedicated view supports Macro registration, editing, test runs, and confirmed removal.
 - New Macros start as editable inline-shell examples; file-backed scripts can be selected in the editor.
 - Registration and script changes require the existing trust confirmation and fingerprint capture flow.
-- A saved Macro can be test-run against the currently selected history item through the same execution and paste flow used by the main window.
+- A saved Macro can be test-run against the currently selected history item with the same execution environment used by the main window. Test Run opens a debug console with exit status, stdout, stderr, environment variables, and a size-bounded transformed-output preview; it does not update the pasteboard or switch applications. Copy Report uses the app's monitored pasteboard boundary so the report is not re-added to history.
 - Macro failure behavior and fingerprint verification are configured in this view because they apply to script execution rather than general app behavior.
 
 ## 8. Menu Bar Icon Menu
