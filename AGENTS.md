@@ -73,6 +73,7 @@ ClipboardManager/
 │   ├── FooterBar.swift             # action buttons (Paste / Plain Text / Copy / Edit / More)
 │   ├── TextEditView.swift          # text edit sheet
 │   ├── SettingsView.swift          # settings window
+│   ├── MacroManagementView.swift   # dedicated macro CRUD and execution settings
 │   ├── MacroScriptRowView.swift     # macro script settings row (with register/change confirmation dialog)
 │   ├── HotkeyRecorderView.swift    # hotkey registration UI
 │   └── Colors.swift                # color definitions

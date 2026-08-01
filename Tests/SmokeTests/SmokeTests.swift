@@ -315,6 +315,7 @@ final class SmokeUITests: XCTestCase {
         app.launch()
         let settingsWindow = app.windows["ClipboardManager Settings"]
         XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
+        openMacroManagement(app: app)
 
         // Sanity: no macros on launch (the E2E defaults domain is reset).
         let emptyLabel = app.staticTexts["macro.empty"]
@@ -445,6 +446,7 @@ final class SmokeUITests: XCTestCase {
         let reopenedSettingsWindow = app.windows["ClipboardManager Settings"]
         XCTAssertTrue(exists(reopenedSettingsWindow, timeout: 10),
                       "Settings window should reopen after clicking the settings button")
+        openMacroManagement(app: app)
 
         // The macro row should still exist and show the last-saved name, not
         // the discarded "UnsavedEdit" suffix.
@@ -582,6 +584,17 @@ final class SmokeUITests: XCTestCase {
     /// already present, while preserving the original timeout on cold runs.
     private func exists(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
         element.exists || element.waitForExistence(timeout: timeout)
+    }
+
+    /// Opens the dedicated Macro workspace from the Settings sidebar.
+    private func openMacroManagement(app: XCUIApplication) {
+        let macroSection = app.descendants(matching: .any)["settings.macros"]
+        XCTAssertTrue(exists(macroSection, timeout: 5), "Macros Settings section not found")
+        macroSection.click()
+        XCTAssertTrue(
+            exists(app.staticTexts["Macro Management"], timeout: 5),
+            "Macro Management view did not appear"
+        )
     }
 
     private func waitForValue(_ element: XCUIElement, equals expected: String, timeout: TimeInterval) -> Bool {
@@ -1098,6 +1111,7 @@ final class SmokeUITests: XCTestCase {
         app.launch()
         let settingsWindow = app.windows["ClipboardManager Settings"]
         XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
+        openMacroManagement(app: app)
 
         // Sanity: no macros on launch (the E2E defaults domain is reset).
         let emptyLabel = app.staticTexts["macro.empty"]

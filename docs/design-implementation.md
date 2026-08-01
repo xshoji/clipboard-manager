@@ -73,7 +73,8 @@ ClipboardManager/
 │   ├── PreviewPane.swift             # Selected item preview (monospace/image)
 │   ├── FooterBar.swift               # Action buttons
 │   ├── TextEditView.swift            # Plain text edit (modal sheet)
-│   ├── SettingsView.swift            # Retention/count, hotkey, Macro registration
+│   ├── SettingsView.swift            # Settings navigation + application preferences
+│   ├── MacroManagementView.swift     # Dedicated Macro CRUD and execution settings
 │   ├── MacroScriptRowView.swift       # Macro script row editor
 │   ├── HotkeyRecorderView.swift      # Hotkey recorder UI
 │   └── MenuBarView.swift              # Menu bar resident UI (NSStatusItem)

@@ -97,7 +97,9 @@ The footer is a single horizontal bar with the following actions. Actions operat
 
 ## 7. Settings Window
 
-A separate standard-style window (not the menu bar popup) launched from the menu bar icon menu. Sections:
+A separate standard-style window (not the menu bar popup) launched from the menu bar icon menu. A sidebar separates application preferences from Macro management so transform scripts do not share the same form hierarchy as app behavior.
+
+### 7.1 App Settings
 
 1. **General**
    - Global hotkey configuration
@@ -110,13 +112,19 @@ A separate standard-style window (not the menu bar popup) launched from the menu
    - Max item size (if implemented)
 3. **Paste**
    - Default paste mode (Rich / Plain)
-   - Paste macro script registration (file paths, with confirmation dialog and fingerprint warning)
-   - A saved Macro can be test-run against the currently selected history item through the same execution and paste flow used by the main window
    - Automatic OCR indexing for newly saved images (off by default)
    - OCR recognition language set
 4. **Permissions**
    - Accessibility permission status and a button to open System Settings
    - Explanation of what the permission is used for (Preview window monitoring for image editing)
+
+### 7.2 Macro Management
+
+- A dedicated view supports Macro registration, editing, test runs, and confirmed removal.
+- New Macros start as editable inline-shell examples; file-backed scripts can be selected in the editor.
+- Registration and script changes require the existing trust confirmation and fingerprint capture flow.
+- A saved Macro can be test-run against the currently selected history item through the same execution and paste flow used by the main window.
+- Macro failure behavior and fingerprint verification are configured in this view because they apply to script execution rather than general app behavior.
 
 ## 8. Menu Bar Icon Menu
 
