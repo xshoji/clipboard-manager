@@ -111,6 +111,296 @@ final class PasteCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.notifier.notifications.first?.title, "Macro failed")
         XCTAssertEqual(harness.notifier.notifications.first?.body, "Macro script timed out (>5s).")
     }
+
+    func testMacroDebugUsesProductionInputWithoutPasteSideEffects() async throws {
+        let harness = TestHarness()
+        let item = makeClipboardItem(kind: "text", sourceBundleID: "com.example.source")
+        harness.repository.fullText[item.id] = "source text"
+        let expected = MacroDebugReport(
+            command: "/bin/sh /tmp/macro.sh",
+            environment: ["CB_ITEM_KIND": "text"],
+            terminationStatus: 0,
+            timedOut: false,
+            duration: 0.1,
+            standardOutput: "debug output",
+            standardError: "",
+            standardOutputTruncated: false,
+            standardErrorTruncated: false,
+            output: .init(
+                kind: .text,
+                totalByteCount: 11,
+                previewText: "transformed",
+                previewByteCount: 11,
+                truncated: false
+            ),
+            usedInputFallback: false,
+            errorMessage: nil
+        )
+        await harness.macroRunner.setDebugResponse(expected)
+
+        let report = try await harness.coordinator.debugMacro(macro: makeMacro(), item: item)
+
+        XCTAssertTrue(report.succeeded)
+        XCTAssertEqual(report.standardOutput, "debug output")
+        let calls = await harness.macroRunner.debugCalls
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls.first?.input.text, "source text")
+        XCTAssertEqual(calls.first?.input.sourceBundleID, "com.example.source")
+        XCTAssertEqual(calls.first?.verifyFingerprint, true)
+        XCTAssertNil(harness.pasteboard.string)
+        XCTAssertEqual(harness.activator.callCount, 0)
+        XCTAssertTrue(harness.notifier.notifications.isEmpty)
+    }
+
+    func testCopyMacroDebugReportUsesInjectedSuppressedPasteboardWithoutOtherSideEffects() {
+        let harness = TestHarness()
+
+        harness.coordinator.copyMacroDebugReport("debug report")
+
+        XCTAssertEqual(harness.pasteboard.string, "debug report")
+        XCTAssertEqual(harness.pasteboard.suppressedWriteCount, 1)
+        XCTAssertEqual(harness.activator.callCount, 0)
+        XCTAssertTrue(harness.notifier.notifications.isEmpty)
+    }
+}
+
+final class MacroRunnerDebugTests: XCTestCase {
+    func testDebugRunCapturesTerminalStreamsAndMacroOutput() async throws {
+        let script = MacroScript(
+            name: "Debug",
+            scriptPath: "",
+            inlineScript: """
+            printf 'stdout line'
+            printf 'stderr line' >&2
+            cat "$CB_INPUT_FILE" > "$CB_OUTPUT_FILE"
+            """
+        )
+
+        let report = try await MacroRunner.debugRunAsync(
+            script: script,
+            input: .init(isImage: false, imageData: nil, text: "transformed text", sourceBundleID: "com.example.source"),
+            verifyFingerprint: false
+        )
+
+        XCTAssertTrue(report.succeeded)
+        XCTAssertEqual(report.terminationStatus, 0)
+        XCTAssertEqual(report.standardOutput, "stdout line")
+        XCTAssertEqual(report.standardError, "stderr line")
+        XCTAssertEqual(report.output?.kind, .text)
+        XCTAssertEqual(report.output?.previewText, "transformed text")
+        XCTAssertEqual(report.output?.totalByteCount, 16)
+        XCTAssertEqual(report.environment["CB_ITEM_KIND"], "text")
+        XCTAssertEqual(report.environment["CB_ITEM_SOURCE"], "com.example.source")
+        XCTAssertFalse(report.usedInputFallback)
+    }
+
+    func testDebugRunDrainsAndTruncatesVerboseTerminalStreams() async throws {
+        let script = MacroScript(
+            name: "Verbose Debug",
+            scriptPath: "",
+            inlineScript: """
+            head -c 300000 /dev/zero | tr '\\0' x
+            head -c 300000 /dev/zero | tr '\\0' y >&2
+            printf 'done' > "$CB_OUTPUT_FILE"
+            """
+        )
+
+        let report = try await MacroRunner.debugRunAsync(
+            script: script,
+            input: .init(isImage: false, imageData: nil, text: "input", sourceBundleID: nil),
+            verifyFingerprint: false
+        )
+
+        XCTAssertTrue(report.succeeded)
+        XCTAssertTrue(report.standardOutputTruncated)
+        XCTAssertTrue(report.standardErrorTruncated)
+        XCTAssertEqual(report.standardOutput.utf8.count, 256 * 1024)
+        XCTAssertEqual(report.standardError.utf8.count, 256 * 1024)
+    }
+
+    func testDebugRunPreservesFailureStreamsWithoutInputFallback() async throws {
+        let script = MacroScript(
+            name: "Failing Debug",
+            scriptPath: "",
+            inlineScript: """
+            printf 'failure detail' >&2
+            printf 'partial output' > "$CB_OUTPUT_FILE"
+            exit 7
+            """
+        )
+
+        let report = try await MacroRunner.debugRunAsync(
+            script: script,
+            input: .init(isImage: false, imageData: nil, text: "original input", sourceBundleID: nil),
+            verifyFingerprint: false
+        )
+
+        XCTAssertFalse(report.succeeded)
+        XCTAssertEqual(report.terminationStatus, 7)
+        XCTAssertEqual(report.standardError, "failure detail")
+        XCTAssertEqual(report.output?.previewText, "partial output")
+        XCTAssertFalse(report.usedInputFallback)
+        XCTAssertEqual(report.errorMessage, "Macro script exited with status 7.")
+    }
+
+    func testDebugRunDoesNotWaitForBackgroundChildHoldingPipes() async throws {
+        let script = MacroScript(
+            name: "Background Child",
+            scriptPath: "",
+            inlineScript: """
+            sleep 2 &
+            printf 'done' > "$CB_OUTPUT_FILE"
+            """
+        )
+
+        let startedAt = Date()
+        let report = try await MacroRunner.debugRunAsync(
+            script: script,
+            input: .init(isImage: false, imageData: nil, text: "input", sourceBundleID: nil),
+            verifyFingerprint: false
+        )
+
+        XCTAssertTrue(report.succeeded)
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 1)
+    }
+
+    func testDebugRunDoesNotDrainForeverFromBackgroundWriter() async throws {
+        let script = MacroScript(
+            name: "Background Writer",
+            scriptPath: "",
+            inlineScript: """
+            (while :; do printf x; done) &
+            writer=$!
+            (sleep 2; kill "$writer") >/dev/null 2>&1 &
+            """
+        )
+
+        let startedAt = ContinuousClock.now
+        let report = try await MacroRunner.debugRunAsync(
+            script: script,
+            input: .init(isImage: false, imageData: nil, text: "input", sourceBundleID: nil),
+            verifyFingerprint: false
+        )
+
+        XCTAssertTrue(report.succeeded)
+        XCTAssertLessThan(ContinuousClock.now - startedAt, .seconds(1))
+    }
+
+    func testDebugRunCapturesTerminalSuffixesAtProcessExit() async throws {
+        let suffix = "END-OF-STREAM"
+        let script = MacroScript(
+            name: "Suffix Debug",
+            scriptPath: "",
+            inlineScript: """
+            i=0
+            while [ "$i" -lt 100 ]; do printf 'stdout-%s\\n' "$i"; printf 'stderr-%s\\n' "$i" >&2; i=$((i + 1)); done
+            printf '\(suffix)'
+            printf '\(suffix)' >&2
+            """
+        )
+
+        for _ in 0..<10 {
+            let report = try await MacroRunner.debugRunAsync(
+                script: script,
+                input: .init(isImage: false, imageData: nil, text: "input", sourceBundleID: nil),
+                verifyFingerprint: false
+            )
+            XCTAssertTrue(report.standardOutput.hasSuffix(suffix))
+            XCTAssertTrue(report.standardError.hasSuffix(suffix))
+        }
+    }
+
+    func testDebugRunBoundsLargeSuccessfulAndFailedOutputPreviews() async throws {
+        for exitStatus in [0, 9] {
+            let script = MacroScript(
+                name: "Large Output",
+                scriptPath: "",
+                inlineScript: "head -c 300000 /dev/zero | tr '\\0' x > \"$CB_OUTPUT_FILE\"; exit \(exitStatus)"
+            )
+
+            let report = try await MacroRunner.debugRunAsync(
+                script: script,
+                input: .init(isImage: false, imageData: nil, text: "input", sourceBundleID: nil),
+                verifyFingerprint: false
+            )
+
+            XCTAssertEqual(report.output?.totalByteCount, 300_000)
+            XCTAssertEqual(report.output?.previewByteCount, 256 * 1024)
+            XCTAssertEqual(report.output?.previewText?.utf8.count, 256 * 1024)
+            XCTAssertEqual(report.output?.truncated, true)
+        }
+    }
+
+    func testDebugRunBoundsLargeOutputPreviewAfterTimeout() async throws {
+        let script = MacroScript(
+            name: "Large Timed Out Output",
+            scriptPath: "",
+            inlineScript: """
+            head -c 300000 /dev/zero | tr '\\0' x > "$CB_OUTPUT_FILE"
+            trap '' INT TERM
+            sleep 10
+            """
+        )
+
+        let report = try await MacroRunner.debugRunAsync(
+            script: script,
+            input: .init(isImage: false, imageData: nil, text: "input", sourceBundleID: nil),
+            verifyFingerprint: false
+        )
+
+        XCTAssertTrue(report.timedOut)
+        XCTAssertEqual(report.output?.totalByteCount, 300_000)
+        XCTAssertEqual(report.output?.previewByteCount, 256 * 1024)
+        XCTAssertEqual(report.output?.truncated, true)
+    }
+
+    func testProductionRunDiscardsVerboseTerminalStreams() async throws {
+        let script = MacroScript(
+            name: "Verbose Production",
+            scriptPath: "",
+            inlineScript: """
+            head -c 300000 /dev/zero
+            head -c 300000 /dev/zero >&2
+            printf 'done' > "$CB_OUTPUT_FILE"
+            """
+        )
+
+        let output = try await MacroRunner.runAsync(
+            script: script,
+            input: .init(isImage: false, imageData: nil, text: "input", sourceBundleID: nil),
+            verifyFingerprint: false
+        )
+
+        XCTAssertEqual(String(data: output.data, encoding: .utf8), "done")
+    }
+
+    func testDebugRunCancellationStopsProcessPromptly() async {
+        let script = MacroScript(
+            name: "Cancelled Debug",
+            scriptPath: "",
+            inlineScript: "trap '' INT TERM; while :; do :; done"
+        )
+        let task = Task {
+            try await MacroRunner.debugRunAsync(
+                script: script,
+                input: .init(isImage: false, imageData: nil, text: "input", sourceBundleID: nil),
+                verifyFingerprint: false
+            )
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+        let startedAt = ContinuousClock.now
+
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+            XCTAssertLessThan(ContinuousClock.now - startedAt, .seconds(2))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
 }
 
 @MainActor
@@ -316,8 +606,10 @@ private final class PasteboardSpy: PasteboardSuppressing {
     private let pasteboard = NSPasteboard(name: .init("ClipboardManagerTests.\(UUID().uuidString)"))
 
     var string: String? { pasteboard.string(forType: .string) }
+    private(set) var suppressedWriteCount = 0
 
     func performSuppressedPasteboardWrite(_ write: (NSPasteboard) -> Void) -> Int {
+        suppressedWriteCount += 1
         write(pasteboard)
         return pasteboard.changeCount
     }
@@ -355,10 +647,19 @@ private actor MacroRunnerFake: MacroRunning {
     }
 
     private(set) var calls: [Call] = []
+    private(set) var debugCalls: [Call] = []
     private var response: Result<MacroOutput, MacroRunningError> = .failure(.missingScript)
+    private var debugResponse = MacroDebugReport.notLaunched(
+        command: "/bin/sh <test>",
+        errorMessage: "No debug response configured."
+    )
 
     func setResponse(_ response: Result<MacroOutput, MacroRunningError>) {
         self.response = response
+    }
+
+    func setDebugResponse(_ response: MacroDebugReport) {
+        debugResponse = response
     }
 
     func runAsync(
@@ -368,6 +669,15 @@ private actor MacroRunnerFake: MacroRunning {
     ) async throws -> MacroOutput {
         calls.append(.init(script: script, input: input, verifyFingerprint: verifyFingerprint))
         return try response.get()
+    }
+
+    func debugRunAsync(
+        script: MacroScript,
+        input: MacroInput,
+        verifyFingerprint: Bool
+    ) async throws -> MacroDebugReport {
+        debugCalls.append(.init(script: script, input: input, verifyFingerprint: verifyFingerprint))
+        return debugResponse
     }
 }
 
