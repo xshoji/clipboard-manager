@@ -1,6 +1,18 @@
 import AppKit
 import Foundation
 
+/// Read-only settings required by paste orchestration. Keeping this surface
+/// separate from the UserDefaults-backed store allows deterministic tests to
+/// supply values without touching the user's preferences domain.
+protocol PasteCoordinatorSettings: AnyObject {
+    var macroSameDirectoryFingerprint: Bool { get }
+    var needsAccessibilityForSyntheticPaste: Bool { get }
+    var macroFailureBehavior: String { get }
+    var ocrLanguages: [String] { get }
+}
+
+extension AppSettings: PasteCoordinatorSettings {}
+
 /// Port protocol for pasteboard writes that suppress the clipboard-monitor's
 /// change detection so app-owned writes do not echo back into history.
 ///

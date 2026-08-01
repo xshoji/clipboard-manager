@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 final class PasteCoordinator {
     private let repository: ClipboardRepositoryPort
-    private let settings: AppSettingsStore
+    private let settings: PasteCoordinatorSettings
     private let pasteboard: PasteboardSuppressing
     private let ocr: OcrRecognizing
     private let macroRunner: MacroRunning
@@ -13,7 +13,7 @@ final class PasteCoordinator {
 
     init(
         repository: ClipboardRepositoryPort,
-        settings: AppSettingsStore,
+        settings: PasteCoordinatorSettings,
         pasteboard: PasteboardSuppressing,
         ocr: OcrRecognizing,
         macroRunner: MacroRunning,
