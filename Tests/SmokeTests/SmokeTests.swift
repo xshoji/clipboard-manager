@@ -135,7 +135,7 @@ final class SmokeUITests: XCTestCase {
     func testSettingsAndHotkeyWorkflows() throws {
         let app = makeApp()
         app.launch()
-        let settingsWindow = app.windows["ClipboardManager Settings"]
+        let settingsWindow = app.windows["settingsWindow"]
         XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
 
         // SwiftUI Form Pickers render as NSPopUpButton on macOS; the selected
@@ -313,7 +313,7 @@ final class SmokeUITests: XCTestCase {
     func testMacroScriptWorkflow() throws {
         let app = makeApp()
         app.launch()
-        let settingsWindow = app.windows["ClipboardManager Settings"]
+        let settingsWindow = app.windows["settingsWindow"]
         XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
         openMacroManagement(app: app)
 
@@ -342,7 +342,7 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(exists(saveButton, timeout: 3), "Macro Save button not found")
         XCTAssertTrue(waitForEnabled(saveButton, timeout: 3),
                       "Macro Save should be enabled after editing the name")
-        saveButton.click()
+        clickMacroSave(app: app)
 
         // Registration confirmation dialog (per design-implementation.md §5.1-1).
         let confirmSave = app.buttons["macro.0.confirm.save"]
@@ -363,6 +363,32 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(nameAfterSeed.hasSuffix("X"),
                       "Name should reflect seeded edit after registration, got '\(nameAfterSeed)'")
 
+        // Test Run is a side-effect-free debug execution. Seed a selected
+        // history item, run the Macro, and verify the console appears without
+        // replacing the case-specific pasteboard value.
+        try seedClipboardHistory(app: app, text: "MacroDebugInput")
+        let pasteboardBeforeDebug = pasteboard.string(forType: .string)
+        let testRunButton = app.buttons["macro.0.testRun"]
+        XCTAssertTrue(exists(testRunButton, timeout: 5), "Macro Test Run button not found")
+        XCTAssertTrue(waitForEnabled(testRunButton, timeout: 5),
+                      "Macro Test Run should be enabled after selecting a history item")
+        testRunButton.click()
+        XCTAssertTrue(exists(app.staticTexts["Macro Debug Console"], timeout: 10),
+                      "Macro debug console did not appear")
+        XCTAssertEqual(pasteboard.string(forType: .string), pasteboardBeforeDebug,
+                       "Macro Test Run must not replace the pasteboard contents")
+        XCTAssertTrue(exists(app.descendants(matching: .any)["macroDebug.output"], timeout: 5),
+                      "Macro debug output section not found")
+        let copyDebugReportButton = app.buttons["macroDebug.copy"]
+        XCTAssertTrue(exists(copyDebugReportButton, timeout: 5), "Macro debug Copy Report button not found")
+        copyDebugReportButton.click()
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            self.pasteboard.string(forType: .string)?.contains("Macro: New MacroX") == true
+        }, "Copy Report should write to the case-specific pasteboard")
+        let debugDoneButton = app.buttons["macroDebug.done"]
+        XCTAssertTrue(exists(debugDoneButton, timeout: 5), "Macro debug Done button not found")
+        debugDoneButton.click()
+
         // --- Step 2: Edit the macro name in place ---
         nameField.click()
         nameField.typeKey("a", modifierFlags: .command)
@@ -371,7 +397,7 @@ final class SmokeUITests: XCTestCase {
         let saveButtonEdit = app.buttons["macro.0.save"]
         XCTAssertTrue(waitForEnabled(saveButtonEdit, timeout: 3),
                       "Macro Save should be enabled after editing the name")
-        saveButtonEdit.click()
+        clickMacroSave(app: app)
         let confirmSaveEdit = app.buttons["macro.0.confirm.save"]
         XCTAssertTrue(exists(confirmSaveEdit, timeout: 5), "Confirm-Save button not found (edit)")
         confirmSaveEdit.click()
@@ -396,7 +422,7 @@ final class SmokeUITests: XCTestCase {
         // because interpreter now differs from the macro model. Save → confirm.
         XCTAssertTrue(waitForEnabled(saveButtonEdit, timeout: 3),
                       "Macro Save should be enabled after changing interpreter preset")
-        saveButtonEdit.click()
+        clickMacroSave(app: app)
         XCTAssertTrue(exists(confirmSaveEdit, timeout: 5), "Confirm-Save button not found (preset)")
         confirmSaveEdit.click()
 
@@ -443,7 +469,7 @@ final class SmokeUITests: XCTestCase {
                       "Settings button not found on main window")
         settingsButton.click()
 
-        let reopenedSettingsWindow = app.windows["ClipboardManager Settings"]
+        let reopenedSettingsWindow = app.windows["settingsWindow"]
         XCTAssertTrue(exists(reopenedSettingsWindow, timeout: 10),
                       "Settings window should reopen after clicking the settings button")
         openMacroManagement(app: app)
@@ -532,7 +558,7 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(exists(saveButtonEdit, timeout: 3), "Macro Save button not found (file)")
         XCTAssertTrue(waitForEnabled(saveButtonEdit, timeout: 3),
                       "Macro Save should be enabled after entering the path")
-        saveButtonEdit.click()
+        clickMacroSave(app: app)
         XCTAssertTrue(exists(confirmSaveEdit, timeout: 5), "Confirm-Save button not found (file)")
         confirmSaveEdit.click()
 
@@ -595,6 +621,26 @@ final class SmokeUITests: XCTestCase {
             exists(app.staticTexts["Macro Management"], timeout: 5),
             "Macro Management view did not appear"
         )
+    }
+
+    /// Macro rows are taller than the Settings viewport. Letting `XCUIElement.click()`
+    /// auto-scroll can activate Save, present its confirmation dialog, and then fail
+    /// while XCUI continues resolving the now-rebuilt SwiftUI element. Scroll first,
+    /// re-query on every attempt, and click only the current hittable element.
+    private func clickMacroSave(app: XCUIApplication) {
+        let scrollView = app.scrollViews["macro.management.scroll"]
+        XCTAssertTrue(exists(scrollView, timeout: 5), "Macro management scroll view not found")
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            let saveButton = app.buttons["macro.0.save"]
+            if saveButton.exists, saveButton.isEnabled, saveButton.isHittable {
+                saveButton.click()
+                return
+            }
+            scrollView.scroll(byDeltaX: 0, deltaY: -250)
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTFail("Macro Save button did not become hittable")
     }
 
     private func waitForValue(_ element: XCUIElement, equals expected: String, timeout: TimeInterval) -> Bool {
@@ -757,7 +803,7 @@ final class SmokeUITests: XCTestCase {
 
         // Close Settings (opened by AppDelegate on E2E launch) so the main
         // window is the key window driving keyboard focus.
-        let settingsWindow = app.windows["ClipboardManager Settings"]
+        let settingsWindow = app.windows["settingsWindow"]
         if settingsWindow.exists {
             settingsWindow.buttons.element(boundBy: 0).click()
             XCTAssertTrue(waitForNonExistence(settingsWindow, timeout: 5),
@@ -927,11 +973,13 @@ final class SmokeUITests: XCTestCase {
         let app = makeApp()
         app.launch()
 
-        let settingsWindow = app.windows["ClipboardManager Settings"]
+        let settingsWindow = app.windows["settingsWindow"]
         XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
 
         let automaticOcrToggle = app.switches["automaticImageOcr"]
-        let settingsScrollView = settingsWindow.scrollViews.firstMatch
+        let settingsScrollView = settingsWindow.scrollViews
+            .containing(.switch, identifier: "automaticImageOcr")
+            .firstMatch
         XCTAssertTrue(exists(settingsScrollView, timeout: 5), "Settings scroll view not found")
         for _ in 0..<6 where !automaticOcrToggle.exists || !automaticOcrToggle.isHittable {
             settingsScrollView.scroll(byDeltaX: 0, deltaY: -300)
@@ -1109,7 +1157,7 @@ final class SmokeUITests: XCTestCase {
     func testRunMacroFromFooterPullDown() throws {
         let app = makeApp()
         app.launch()
-        let settingsWindow = app.windows["ClipboardManager Settings"]
+        let settingsWindow = app.windows["settingsWindow"]
         XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
         openMacroManagement(app: app)
 
@@ -1156,7 +1204,7 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(exists(saveButton, timeout: 3), "Macro Save button not found")
         XCTAssertTrue(waitForEnabled(saveButton, timeout: 3),
                       "Macro Save should be enabled after editing the inline script")
-        saveButton.click()
+        clickMacroSave(app: app)
         let confirmSave = app.buttons["macro.0.confirm.save"]
         XCTAssertTrue(exists(confirmSave, timeout: 5), "Confirm-Save button not found")
         confirmSave.click()
