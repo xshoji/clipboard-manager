@@ -7,7 +7,7 @@ struct MacroScriptRowView: View {
     let onDirtyChange: ((UUID, Bool) -> Void)?
     /// Stable identifier prefix used for every accessibilityIdentifier on this
     /// row's child elements (name field, save button, remove button, …). The
-    /// SettingsView supplies a positional prefix ("macro.0", "macro.1", …) so
+    /// MacroManagementView supplies a positional prefix ("macro.0", "macro.1", …) so
     /// XCUITest can address a specific row without depending on the macro's
     /// UUID. Defaults to "macro" when unspecified so non-E2E callers keep
     /// working.
@@ -32,6 +32,7 @@ struct MacroScriptRowView: View {
     @State private var pendingConfirm: MacroScript?
     @State private var pendingFileValidation: MacroScriptValidation?
     @State private var isPresentingConfirm: Bool = false
+    @State private var isPresentingRemoveConfirm: Bool = false
     @State private var shouldTestAfterSave: Bool = false
     /// `true` when the in-flight `apply()` was triggered by a
     /// `.saveAllUnsavedMacros` broadcast (window-close "Save all"). Set before
@@ -72,13 +73,13 @@ struct MacroScriptRowView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            LabeledContent("Name") {
+        VStack(alignment: .leading, spacing: 8) {
+            settingsRow("Name") {
                 TextField("", text: $name).textFieldStyle(.roundedBorder)
-                   .multilineTextAlignment(.leading)
-                   .accessibilityIdentifier("\(accessibilityIDPrefix).name")
+                    .multilineTextAlignment(.leading)
+                    .accessibilityIdentifier("\(accessibilityIDPrefix).name")
             }
-            LabeledContent("Interpreter") {
+            settingsRow("Interpreter") {
                 if sourceType == "inline" {
                     HStack {
                         if interpreterPreset == "custom" {
@@ -102,7 +103,7 @@ struct MacroScriptRowView: View {
                         .accessibilityIdentifier("\(accessibilityIDPrefix).interpreter")
                 }
             }
-            LabeledContent("Shortcut") {
+            settingsRow("Shortcut") {
                 MacroHotkeyRecorderView(
                     keyCode: $hotkeyCode,
                     modifiers: $hotkeyModifiers,
@@ -110,10 +111,12 @@ struct MacroScriptRowView: View {
                     accessibilityIDPrefix: "\(accessibilityIDPrefix).hotkey"
                 )
             }
-            Text("Shortcut changes are saved automatically.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            LabeledContent("Source") {
+            settingsRow("") {
+                Text("Shortcut changes are saved automatically.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            settingsRow("Source") {
                 Picker("", selection: $sourceType) {
                     Text("Inline shell").tag("inline")
                     Text("Script file").tag("file")
@@ -123,73 +126,86 @@ struct MacroScriptRowView: View {
                 .accessibilityIdentifier("\(accessibilityIDPrefix).sourceType")
             }
             if sourceType == "file" {
-                HStack {
-                    TextField("Path", text: $path).textFieldStyle(.roundedBorder)
-                        .multilineTextAlignment(.leading)
-                        .accessibilityIdentifier("\(accessibilityIDPrefix).path")
-                    Button("Browse") { browse() }
-                        .accessibilityIdentifier("\(accessibilityIDPrefix).browse")
+                settingsRow("Script path") {
+                    HStack {
+                        TextField("Path", text: $path).textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.leading)
+                            .accessibilityIdentifier("\(accessibilityIDPrefix).path")
+                        Button("Browse") { browse() }
+                            .accessibilityIdentifier("\(accessibilityIDPrefix).browse")
+                    }
                 }
             } else {
+                Text("Script")
                 ShellScriptEditor(text: $inlineScript)
                     .accessibilityIdentifier("\(accessibilityIDPrefix).inlineScript")
-                    .frame(minHeight: 120)
+                    .frame(maxWidth: .infinity, minHeight: 180)
                     .overlay {
                         RoundedRectangle(cornerRadius: 5)
                             .stroke(Color.secondary.opacity(0.25))
                     }
                 if ShellScriptEditor.containsSmartQuotes(in: inlineScript) {
-                    Label(
-                        "Smart quotes detected. Replace \" \" with straight quotes (\").",
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                }
-                Text("Read $CB_INPUT_FILE and write the result to $CB_OUTPUT_FILE.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                Text("$CB_ITEM_KIND is \"text\" or \"image\". $CB_ITEM_SOURCE is the source app bundle id ( may be empty ).")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-            if showFingerprintCaptured {
-                Label(
-                    "Inline script fingerprint captured.",
-                    systemImage: "checkmark.seal.fill"
-                )
-                .foregroundStyle(.green)
-                .font(.caption)
-                .accessibilityIdentifier("\(accessibilityIDPrefix).fingerprintCaptured")
-            }
-            if let error = validationError {
-                Label(error, systemImage: "xmark.octagon.fill")
-                    .foregroundStyle(.red)
-                    .font(.caption)
-                    .accessibilityIdentifier("\(accessibilityIDPrefix).validationError")
-            }
-            HStack {
-                Button("Save") { apply() }
-                    .disabled(!canApply)
-                    .accessibilityIdentifier("\(accessibilityIDPrefix).save")
-                Button {
-                    testRun()
-                } label: {
-                    if isTestRunning {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Text("Test Run")
+                    settingsRow("") {
+                        Label(
+                            "Smart quotes detected. Replace \" \" with straight quotes (\").",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                     }
                 }
-                .disabled(!canTestRun)
-                .help(testRunHelp)
-                .accessibilityIdentifier("\(accessibilityIDPrefix).testRun")
-                Spacer()
-                Button("Remove", role: .destructive) { remove() }
-                    .accessibilityIdentifier("\(accessibilityIDPrefix).remove")
+                settingsRow("") {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Read $CB_INPUT_FILE and write the result to $CB_OUTPUT_FILE.")
+                            .font(.caption)
+                        Text("$CB_ITEM_KIND is \"text\" or \"image\". $CB_ITEM_SOURCE is the source app bundle id ( may be empty ).")
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                }
+            }
+            if showFingerprintCaptured {
+                settingsRow("") {
+                    Label(
+                        "Inline script fingerprint captured.",
+                        systemImage: "checkmark.seal.fill"
+                    )
+                    .foregroundStyle(.green)
+                    .font(.caption)
+                    .accessibilityIdentifier("\(accessibilityIDPrefix).fingerprintCaptured")
+                }
+            }
+            if let error = validationError {
+                settingsRow("") {
+                    Label(error, systemImage: "xmark.octagon.fill")
+                        .foregroundStyle(.red)
+                        .font(.caption)
+                        .accessibilityIdentifier("\(accessibilityIDPrefix).validationError")
+                }
+            }
+            settingsRow("") {
+                HStack {
+                    Button("Save") { apply() }
+                        .disabled(!canApply)
+                        .accessibilityIdentifier("\(accessibilityIDPrefix).save")
+                    Button {
+                        testRun()
+                    } label: {
+                        if isTestRunning {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Text("Test Run")
+                        }
+                    }
+                    .disabled(!canTestRun)
+                    .help(testRunHelp)
+                    .accessibilityIdentifier("\(accessibilityIDPrefix).testRun")
+                    Spacer()
+                    Button("Remove", role: .destructive) { isPresentingRemoveConfirm = true }
+                        .accessibilityIdentifier("\(accessibilityIDPrefix).remove")
+                }
             }
             .padding(.bottom, 6)
         }
@@ -205,6 +221,13 @@ struct MacroScriptRowView: View {
                 .accessibilityIdentifier("\(accessibilityIDPrefix).confirm.cancel")
         } message: {
             Text("This script can access your clipboard contents. Do not specify untrusted scripts.")
+        }
+        .alert("Remove Macro?", isPresented: $isPresentingRemoveConfirm) {
+            Button("Remove", role: .destructive) { remove() }
+                .accessibilityIdentifier("\(accessibilityIDPrefix).remove.confirm")
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The Macro “\(macro.name)” will be removed. This cannot be undone.")
         }
         .onAppear {
             checkDirty()
@@ -258,6 +281,18 @@ struct MacroScriptRowView: View {
         }
         .onChange(of: hotkeyCode) { _, _ in checkDirty() }
         .onChange(of: hotkeyModifiers) { _, _ in checkDirty() }
+    }
+
+    private func settingsRow<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(alignment: .center, spacing: 16) {
+            Text(title)
+                .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
+            content()
+                .frame(minWidth: 320, idealWidth: 400, maxWidth: 440, alignment: .leading)
+        }
     }
 
     private var canApply: Bool {
