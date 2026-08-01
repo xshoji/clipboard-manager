@@ -45,6 +45,57 @@ struct MacroOutput: Sendable {
     let isImage: Bool
 }
 
+struct MacroOutputPreview: Sendable {
+    enum Kind: String, Sendable {
+        case text
+        case image
+        case binary
+    }
+
+    let kind: Kind
+    let totalByteCount: Int64
+    let previewText: String?
+    let previewByteCount: Int
+    let truncated: Bool
+}
+
+struct MacroDebugReport: Identifiable, Sendable {
+    let id = UUID()
+    let command: String
+    let environment: [String: String]
+    let terminationStatus: Int32?
+    let timedOut: Bool
+    let duration: TimeInterval
+    let standardOutput: String
+    let standardError: String
+    let standardOutputTruncated: Bool
+    let standardErrorTruncated: Bool
+    let output: MacroOutputPreview?
+    let usedInputFallback: Bool
+    let errorMessage: String?
+
+    var succeeded: Bool {
+        !timedOut && terminationStatus == 0 && errorMessage == nil
+    }
+
+    static func notLaunched(command: String, errorMessage: String) -> MacroDebugReport {
+        MacroDebugReport(
+            command: command,
+            environment: [:],
+            terminationStatus: nil,
+            timedOut: false,
+            duration: 0,
+            standardOutput: "",
+            standardError: "",
+            standardOutputTruncated: false,
+            standardErrorTruncated: false,
+            output: nil,
+            usedInputFallback: false,
+            errorMessage: errorMessage
+        )
+    }
+}
+
 enum MacroRunningError: Error, CustomStringConvertible {
     case scriptPathOutsideHome
     case fingerprintMismatch
@@ -80,6 +131,12 @@ protocol MacroRunning: Sendable {
         input: MacroInput,
         verifyFingerprint: Bool
     ) async throws -> MacroOutput
+
+    func debugRunAsync(
+        script: MacroScript,
+        input: MacroInput,
+        verifyFingerprint: Bool
+    ) async throws -> MacroDebugReport
 }
 
 /// Port protocol for restoring the previous foreground application after a paste.

@@ -21,4 +21,16 @@ final class MacroRunnerAdapter: MacroRunning {
             verifyFingerprint: verifyFingerprint
         )
     }
+
+    func debugRunAsync(
+        script: MacroScript,
+        input: MacroInput,
+        verifyFingerprint: Bool
+    ) async throws -> MacroDebugReport {
+        try await MacroRunner.debugRunAsync(
+            script: script,
+            input: input,
+            verifyFingerprint: verifyFingerprint
+        )
+    }
 }

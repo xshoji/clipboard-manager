@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Darwin
 
 /// Macro execution infrastructure.
 ///
@@ -16,6 +17,8 @@ import AppKit
 /// `PasteCoordinator` (ApplicationServices), so byte-level encoding validation
 /// stays in the layer that owns the bytes.
 enum MacroRunner {
+    private static let capturedStreamLimit = 256 * 1024
+
     /// Process and temporary file paths, boxed as `@unchecked Sendable` so it can
     /// cross the `Task.detached` boundary. `Process` is reference-typed but is only
     /// accessed from a single logical flow after launch.
@@ -24,58 +27,214 @@ enum MacroRunner {
         let inputURL: URL
         let outputURL: URL
         let inlineScriptURL: URL?
+        let standardOutput: Pipe?
+        let standardError: Pipe?
+        let command: String
+        let debugEnvironment: [String: String]
+    }
+
+    private struct CapturedStream: Sendable {
+        let text: String
+        let truncated: Bool
+    }
+
+    private final class StreamCollector: @unchecked Sendable {
+        private let queue: DispatchQueue
+        private let handle: FileHandle
+        private let source: DispatchSourceRead
+        private var captured = Data()
+        private var totalBytes = 0
+        private var finished = false
+
+        init(pipe: Pipe, label: String) {
+            handle = pipe.fileHandleForReading
+            queue = DispatchQueue(label: label)
+            let descriptor = handle.fileDescriptor
+            let flags = fcntl(descriptor, F_GETFL)
+            if flags >= 0 {
+                _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
+            }
+            source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: queue)
+            source.setEventHandler { [weak self] in self?.readOnce() }
+            source.setCancelHandler { [handle] in try? handle.close() }
+            source.resume()
+        }
+
+        func finish() -> CapturedStream {
+            queue.sync {
+                finished = true
+                source.cancel()
+                finalDrain()
+                return CapturedStream(
+                    text: String(decoding: captured, as: UTF8.self),
+                    truncated: totalBytes > captured.count
+                )
+            }
+        }
+
+        private func readOnce() {
+            guard !finished else { return }
+            var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+            let count = Darwin.read(handle.fileDescriptor, &buffer, buffer.count)
+            if count > 0 { append(buffer, count: count) }
+        }
+
+        private func finalDrain() {
+            // Once the direct process exits, descendants may keep writing forever.
+            // Read only enough buffered data to fill the preview and detect truncation.
+            var bytesRemaining = max(0, MacroRunner.capturedStreamLimit + 1 - totalBytes)
+            var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+            while bytesRemaining > 0 {
+                let requested = min(buffer.count, bytesRemaining)
+                let count = Darwin.read(handle.fileDescriptor, &buffer, requested)
+                if count > 0 {
+                    append(buffer, count: count)
+                    bytesRemaining -= count
+                } else if count == 0 || errno == EAGAIN || errno == EWOULDBLOCK {
+                    return
+                } else if errno != EINTR {
+                    return
+                }
+            }
+        }
+
+        private func append(_ buffer: [UInt8], count: Int) {
+            totalBytes += count
+            let remaining = max(0, MacroRunner.capturedStreamLimit - captured.count)
+            if remaining > 0 {
+                captured.append(contentsOf: buffer.prefix(min(count, remaining)))
+            }
+        }
+    }
+
+    private struct Execution: @unchecked Sendable {
+        let launched: LaunchedProcess
+        let timedOut: Bool
+        let terminationStatus: Int32?
+        let duration: TimeInterval
+        let standardOutput: CapturedStream
+        let standardError: CapturedStream
     }
 
     /// Runs the Macro script asynchronously without blocking the cooperative thread pool.
-    ///
-    /// Previous implementation used `Task.detached` + `RunLoop.current.run` polling inside
-    /// `Process.waitUntilTimeout`, which occupied a cooperative thread-pool worker for up
-    /// to 5 s (+2 s on timeout). This version uses `terminationHandler` + `withTaskGroup`
-    /// so no worker is held during the wait, and the `await` continuation returns to the
-    /// main actor promptly after process exit.
+    /// Process status is polled with cancellable sleeps; stdout and stderr are discarded
+    /// because the production paste path does not display terminal output.
     static func runAsync(
         script: MacroScript,
         input: MacroInput,
         verifyFingerprint: Bool
     ) async throws -> MacroOutput {
-        // Prepare and launch on a background task (file I/O, fingerprint, etc.).
-        let launched = try await Task.detached(priority: .userInitiated) {
-            try prepareAndLaunch(script: script, input: input, verifyFingerprint: verifyFingerprint)
-        }.value
-
-        // Wait for process exit asynchronously (no thread-pool occupation).
-        let timedOut = await waitForProcess(launched.proc, timeout: 5)
-
-        if timedOut {
-            cleanupFiles(launched)
-            throw MacroRunningError.timeout
+        let execution = try await execute(
+            script: script,
+            input: input,
+            verifyFingerprint: verifyFingerprint,
+            captureStreams: false
+        )
+        defer { cleanupFiles(execution.launched) }
+        if execution.timedOut { throw MacroRunningError.timeout }
+        guard let status = execution.terminationStatus else { throw MacroRunningError.timeout }
+        if status != 0 {
+            throw MacroRunningError.exitStatus(status)
         }
-        if launched.proc.terminationStatus != 0 {
-            cleanupFiles(launched)
-            throw MacroRunningError.exitStatus(launched.proc.terminationStatus)
-        }
+        return try resolveOutput(execution.launched).output
+    }
 
-        // Read output and determine kind on a background task (image decode + UTF-8
-        // validation are heavy / pure-byte concerns and belong in Infrastructure,
-        // not in PasteCoordinator).
-        return try await Task.detached(priority: .userInitiated) {
-            defer { cleanupFiles(launched) }
-            let fm = FileManager.default
-            let outData: Data
-            if let out = fm.contents(atPath: launched.outputURL.path), !out.isEmpty {
-                outData = out
+    static func debugRunAsync(
+        script: MacroScript,
+        input: MacroInput,
+        verifyFingerprint: Bool
+    ) async throws -> MacroDebugReport {
+        let fallbackCommand = "\(script.interpreter) \(script.inlineScript == nil ? script.scriptPath : "<inline-script>")"
+        do {
+            let execution = try await execute(
+                script: script,
+                input: input,
+                verifyFingerprint: verifyFingerprint,
+                captureStreams: true
+            )
+            defer { cleanupFiles(execution.launched) }
+            let status = execution.terminationStatus
+            var output: MacroOutputPreview?
+            var usedInputFallback = false
+            var errorMessage: String?
+            if execution.timedOut {
+                errorMessage = MacroRunningError.timeout.description
+                output = try? readOutputPreview(execution.launched, useInputFallback: false)
+            } else if let status, status != 0 {
+                errorMessage = MacroRunningError.exitStatus(status).description
+                output = try? readOutputPreview(execution.launched, useInputFallback: false)
             } else {
-                // If the output file was not created, there was no processing; paste the input as-is.
-                outData = try Data(contentsOf: launched.inputURL)
+                do {
+                    usedInputFallback = try outputFileIsEmpty(execution.launched)
+                    output = try readOutputPreview(execution.launched, useInputFallback: usedInputFallback)
+                } catch {
+                    output = try? readOutputPreview(execution.launched, useInputFallback: false)
+                    errorMessage = (error as? MacroRunningError)?.description ?? error.localizedDescription
+                }
             }
-            let isImage = !outData.isEmpty && NSImage(data: outData)?.isValid == true
-            // Validate UTF-8 for text output here (Infrastructure concern) so the
-            // ApplicationServices layer never has to inspect raw byte encoding.
-            if !isImage, !outData.isEmpty, String(data: outData, encoding: .utf8) == nil {
-                throw MacroRunningError.invalidOutputEncoding
-            }
-            return MacroOutput(data: outData, isImage: isImage)
+            return MacroDebugReport(
+                command: execution.launched.command,
+                environment: execution.launched.debugEnvironment,
+                terminationStatus: status,
+                timedOut: execution.timedOut,
+                duration: execution.duration,
+                standardOutput: execution.standardOutput.text,
+                standardError: execution.standardError.text,
+                standardOutputTruncated: execution.standardOutput.truncated,
+                standardErrorTruncated: execution.standardError.truncated,
+                output: output,
+                usedInputFallback: usedInputFallback,
+                errorMessage: errorMessage
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            let message = (error as? MacroRunningError)?.description ?? error.localizedDescription
+            return .notLaunched(command: fallbackCommand, errorMessage: message)
+        }
+    }
+
+    private static func execute(
+        script: MacroScript,
+        input: MacroInput,
+        verifyFingerprint: Bool,
+        captureStreams: Bool
+    ) async throws -> Execution {
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        let launched = try await Task.detached(priority: .userInitiated) {
+            try prepareAndLaunch(
+                script: script,
+                input: input,
+                verifyFingerprint: verifyFingerprint,
+                captureStreams: captureStreams
+            )
         }.value
+        let stdoutCollector = launched.standardOutput.map {
+            StreamCollector(pipe: $0, label: "ClipboardManager.MacroRunner.stdout")
+        }
+        let stderrCollector = launched.standardError.map {
+            StreamCollector(pipe: $0, label: "ClipboardManager.MacroRunner.stderr")
+        }
+        do {
+            let timedOut = try await waitForProcess(launched.proc, timeout: .seconds(5))
+            let standardOutput = stdoutCollector?.finish() ?? .init(text: "", truncated: false)
+            let standardError = stderrCollector?.finish() ?? .init(text: "", truncated: false)
+            return Execution(
+                launched: launched,
+                timedOut: timedOut,
+                terminationStatus: launched.proc.isRunning ? nil : launched.proc.terminationStatus,
+                duration: timeInterval(clock.now - startedAt),
+                standardOutput: standardOutput,
+                standardError: standardError
+            )
+        } catch {
+            await stopProcess(launched.proc)
+            _ = stdoutCollector?.finish()
+            _ = stderrCollector?.finish()
+            cleanupFiles(launched)
+            throw error
+        }
     }
 
     // MARK: - Preparation
@@ -85,7 +244,8 @@ enum MacroRunner {
     private static func prepareAndLaunch(
         script: MacroScript,
         input: MacroInput,
-        verifyFingerprint: Bool
+        verifyFingerprint: Bool,
+        captureStreams: Bool
     ) throws -> LaunchedProcess {
         let fm = FileManager.default
         let ext = input.isImage ? "png" : "txt"
@@ -152,59 +312,136 @@ enum MacroRunner {
         env["CB_ITEM_SOURCE"] = input.sourceBundleID ?? ""
         proc.environment = env
 
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
+        let standardOutput = captureStreams ? Pipe() : nil
+        let standardError = captureStreams ? Pipe() : nil
+        proc.standardOutput = standardOutput ?? FileHandle.nullDevice
+        proc.standardError = standardError ?? FileHandle.nullDevice
 
         try proc.run()
-        return LaunchedProcess(proc: proc, inputURL: inputURL, outputURL: outputURL, inlineScriptURL: inlineScriptURL)
+        try? standardOutput?.fileHandleForWriting.close()
+        try? standardError?.fileHandleForWriting.close()
+        return LaunchedProcess(
+            proc: proc,
+            inputURL: inputURL,
+            outputURL: outputURL,
+            inlineScriptURL: inlineScriptURL,
+            standardOutput: standardOutput,
+            standardError: standardError,
+            command: "\(shellQuoted(script.interpreter)) \(shellQuoted(executableScriptPath))",
+            debugEnvironment: [
+                "CB_INPUT_FILE": inputURL.path,
+                "CB_OUTPUT_FILE": outputURL.path,
+                "CB_ITEM_KIND": input.isImage ? "image" : "text",
+                "CB_ITEM_SOURCE": input.sourceBundleID ?? "",
+            ]
+        )
     }
 
     // MARK: - Process waiting
 
     /// Waits for the process to exit or times out.
     ///
-    /// Does NOT block the cooperative thread pool: uses `terminationHandler` +
-    /// `withTaskGroup` instead of `RunLoop.current.run` polling. On timeout,
-    /// sends SIGINT -> SIGTERM and waits for actual exit so that
-    /// `terminationStatus` / `terminationReason` are well-defined (review #3).
+    /// Does NOT block the cooperative thread pool. On timeout, sends SIGINT and
+    /// SIGTERM, then escalates to SIGKILL after a short grace period so an
+    /// uncooperative script cannot stall Macro execution indefinitely.
     /// - Returns: `true` if timed out, `false` if the process exited normally.
-    private static func waitForProcess(_ proc: Process, timeout: TimeInterval) async -> Bool {
-        await withTaskGroup(of: Bool.self) { group in
-            // Task 1: wait for process termination via terminationHandler.
-            group.addTask {
-                await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-                    proc.terminationHandler = { _ in
-                        continuation.resume(returning: false)
-                    }
-                }
-            }
-
-            // Task 2: timeout.
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                return true
-            }
-
-            let first = await group.next()!
-
-            if first {
-                // Timeout: SIGINT first, then SIGTERM.
-                proc.interrupt()
-                proc.terminate()
-            }
-
-            // Wait for the remaining task to complete.
-            // On timeout: proc.terminate() triggers terminationHandler -> Task 1 resumes.
-            // On normal exit: group.cancelAll() cancels Task 2's sleep.
-            group.cancelAll()
-            _ = await group.next()
-
-            return first
+    private static func waitForProcess(_ proc: Process, timeout: Duration) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while proc.isRunning, clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
         }
+        guard proc.isRunning else { return false }
+        await stopProcess(proc)
+        return true
+    }
+
+    private static func stopProcess(_ proc: Process) async {
+        await Task.detached(priority: .userInitiated) {
+            guard proc.isRunning else { return }
+            proc.interrupt()
+            proc.terminate()
+            let graceDeadline = ContinuousClock.now.advanced(by: .milliseconds(250))
+            while proc.isRunning, ContinuousClock.now < graceDeadline { usleep(20_000) }
+            if proc.isRunning { kill(proc.processIdentifier, SIGKILL) }
+            let killDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+            while proc.isRunning, ContinuousClock.now < killDeadline { usleep(20_000) }
+        }.value
     }
 
     // MARK: - Helpers
+
+    private static func resolveOutput(_ launched: LaunchedProcess) throws -> (output: MacroOutput, usedInputFallback: Bool) {
+        let fm = FileManager.default
+        let produced = fm.contents(atPath: launched.outputURL.path)
+        let usedInputFallback = produced?.isEmpty != false
+        let outData = usedInputFallback ? try Data(contentsOf: launched.inputURL) : produced ?? Data()
+        let isImage = !outData.isEmpty && NSImage(data: outData)?.isValid == true
+        if !isImage, !outData.isEmpty, String(data: outData, encoding: .utf8) == nil {
+            throw MacroRunningError.invalidOutputEncoding
+        }
+        return (MacroOutput(data: outData, isImage: isImage), usedInputFallback)
+    }
+
+    private static func outputFileIsEmpty(_ launched: LaunchedProcess) throws -> Bool {
+        try fileByteCount(at: launched.outputURL) == 0
+    }
+
+    private static func readOutputPreview(
+        _ launched: LaunchedProcess,
+        useInputFallback: Bool
+    ) throws -> MacroOutputPreview? {
+        let url = useInputFallback ? launched.inputURL : launched.outputURL
+        let totalByteCount = try fileByteCount(at: url)
+        guard totalByteCount > 0 else { return nil }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: capturedStreamLimit) ?? Data()
+        let truncated = totalByteCount > Int64(data.count)
+        let kind: MacroOutputPreview.Kind
+        let previewText: String?
+        if !truncated, NSImage(data: data)?.isValid == true {
+            kind = .image
+            previewText = nil
+        } else if let text = utf8Preview(data, truncated: truncated) {
+            kind = .text
+            previewText = text
+        } else {
+            kind = .binary
+            previewText = nil
+        }
+        return MacroOutputPreview(
+            kind: kind,
+            totalByteCount: totalByteCount,
+            previewText: previewText,
+            previewByteCount: data.count,
+            truncated: truncated
+        )
+    }
+
+    private static func fileByteCount(at url: URL) throws -> Int64 {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
+    private static func utf8Preview(_ data: Data, truncated: Bool) -> String? {
+        if let text = String(data: data, encoding: .utf8) { return text }
+        guard truncated else { return nil }
+        for removedBytes in 1...min(3, data.count) {
+            if let text = String(data: data.dropLast(removedBytes), encoding: .utf8) { return text }
+        }
+        return nil
+    }
+
+    private static func shellQuoted(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+
+    private static func timeInterval(_ duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return TimeInterval(components.seconds)
+            + TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
+    }
 
     private static func writeInput(to url: URL, input: MacroInput) throws {
         if input.isImage, let png = input.imageData {
