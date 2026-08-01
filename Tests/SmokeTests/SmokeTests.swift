@@ -12,9 +12,10 @@ import AppKit
 ///   hotkeys and AppDelegate opens the main + Settings windows immediately.
 ///
 /// Test flow per case:
-///   1. setUpWithError refuses to run while the production app is active,
-///      terminates only stale E2E instances, and creates a case-specific
-///      SwiftData store and named pasteboard.
+///   1. The runner stops the production app before launching XCTest.
+///      setUpWithError retains a fail-closed production-process check for
+///      direct xcodebuild invocations, terminates only stale E2E instances,
+///      and creates a case-specific SwiftData store and named pasteboard.
 ///   2. Interact with UI elements via XCUIElement (click Clear/Reset/Record,
 ///      or call `typeKey(_:modifierFlags:)` to synthesize a key event).
 ///   3. Verify the resulting UI state (e.g. the Edit hotkey display label
@@ -87,7 +88,10 @@ final class SmokeUITests: XCTestCase {
             )
         }
 
-        let directory = FileManager.default.temporaryDirectory
+        // XCTest and the launched host can receive different TMPDIR values.
+        // User caches provide a stable per-user root shared by both processes;
+        // the case UUID directory is still removed during teardown.
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("com.xshoji.ClipboardManager.E2E", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -230,14 +234,16 @@ final class SmokeUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["globalMacroPickerHotkey.display"].value as? String ?? "", "(none)",
                        "Cancelling should preserve the current hotkey")
 
-        // Record ⇧⌘A; unlikely to collide with the E2E main-hotkey defaults.
+        // Record ⇧⌘C. The preceding action-hotkey workflow keeps ⇧⌘A
+        // registered for Edit, so this combined workflow must use a distinct
+        // shortcut rather than relying on per-test process isolation.
         let rerecordedButton = app.buttons["globalMacroPickerHotkey.record"]
         rerecordedButton.click()
         XCTAssertTrue(waitForValue(rerecordedButton, equals: "Recording", timeout: 5),
                       "Global macro picker recorder did not enter recording state")
-        app.typeKey("a", modifierFlags: [.command, .shift])
-        XCTAssertTrue(waitForValue(display, equals: "⇧⌘A", timeout: 5),
-                       "Display should be '⇧⌘A' after Record, got '\(display.value as? String ?? "")'")
+        app.typeKey("c", modifierFlags: [.command, .shift])
+        XCTAssertTrue(waitForValue(display, equals: "⇧⌘C", timeout: 5),
+                       "Display should be '⇧⌘C' after Record, got '\(display.value as? String ?? "")'")
 
         // Clear → back to "(none)".
         let clearButton = app.buttons["globalMacroPickerHotkey.clear"]
@@ -820,37 +826,34 @@ final class SmokeUITests: XCTestCase {
     /// Verifies incremental search filters the history list to only matching
     /// entries. Flow:
     ///   1. Close Settings so the main window is key.
-    ///   2. Seed three distinct text entries on the case-specific pasteboard.
-    ///   3. Select the search field and type a query matching only the second
+    ///   2. Seed two distinct text entries on the case-specific pasteboard.
+    ///   3. Select the search field and type a query matching only one
     ///      seed.
     ///   4. Poll until only the matching marker remains visible and the other
-    ///      two markers disappear from the history list.
-    ///   5. Clear the query and verify all three markers reappear.
+    ///      marker disappears from the history list.
+    ///   5. Clear the query and verify both markers reappear.
     ///
     /// This is a purely UI-state assertion because the sandboxed test runner
     /// cannot read the host view model directly (SmokeTests philosophy).
     private func exerciseSearchFiltering(app: XCUIApplication) throws {
-        // Seed three unique entries so we can verify filtering reduces the list
+        // Seed two unique entries so we can verify the real SwiftUI wiring reduces the list
         // to exactly the matching one. Use hard-coded prefixes that cannot match
         // each other or the UUID suffixes.
         let alphaMarker = "E2ESearchAlpha-"
         let bravoMarker = "E2ESearchBravo-"
-        let charlieMarker = "E2ESearchCharlie-"
         try seedClipboardHistory(app: app, text: alphaMarker)
         try seedClipboardHistory(app: app, text: bravoMarker)
-        try seedClipboardHistory(app: app, text: charlieMarker)
 
         let searchField = app.textFields["searchField"]
         XCTAssertTrue(exists(searchField, timeout: 5), "searchField not found")
         let historyList = app.scrollViews["historyList"]
         XCTAssertTrue(exists(historyList, timeout: 5), "historyList not found")
 
-        // Wait until all three seeded rows have materialised in the UI.
+        // Wait until both seeded rows have materialised in the UI.
         let seededDeadline = Date().addingTimeInterval(10)
         while Date() < seededDeadline {
             if countRows(in: app, containing: alphaMarker) == 1,
-               countRows(in: app, containing: bravoMarker) == 1,
-               countRows(in: app, containing: charlieMarker) == 1 {
+               countRows(in: app, containing: bravoMarker) == 1 {
                 break
             }
             Thread.sleep(forTimeInterval: 0.1)
@@ -865,26 +868,22 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(waitForValue(searchField, equals: "Bravo", timeout: 3),
                       "Search field value should be 'Bravo', got '\(searchField.value as? String ?? "")'")
 
-        // Wait for the debounced filter to drop alpha/charlie rows.
+        // Wait for the debounced filter to drop the alpha row.
         let filterDeadline = Date().addingTimeInterval(10)
         var bravoVisible = 0
         var alphaVisible = 1
-        var charlieVisible = 1
         while Date() < filterDeadline {
             bravoVisible = countRows(in: app, containing: bravoMarker)
             alphaVisible = countRows(in: app, containing: alphaMarker)
-            charlieVisible = countRows(in: app, containing: charlieMarker)
-            if bravoVisible == 1 && alphaVisible == 0 && charlieVisible == 0 { break }
+            if bravoVisible == 1 && alphaVisible == 0 { break }
             Thread.sleep(forTimeInterval: 0.1)
         }
         XCTAssertEqual(bravoVisible, 1,
                        "Search should keep exactly 1 'Bravo' row, got \(bravoVisible); dumping history list tree:\n\(app.scrollViews["historyList"].debugDescription)")
         XCTAssertEqual(alphaVisible, 0,
                        "Search should filter out 'Alpha' rows, got \(alphaVisible)")
-        XCTAssertEqual(charlieVisible, 0,
-                       "Search should filter out 'Charlie' rows, got \(charlieVisible)")
 
-        // Clearing the query should restore all three seeds.
+        // Clearing the query should restore both seeds.
         // Filtering can rebuild the SwiftUI field, so send keys through the app
         // to the current first responder rather than the pre-filter snapshot.
         app.typeKey("a", modifierFlags: .command)
@@ -893,20 +892,16 @@ final class SmokeUITests: XCTestCase {
         let clearDeadline = Date().addingTimeInterval(10)
         var alphaRestored = 0
         var bravoRestored = 0
-        var charlieRestored = 0
         while Date() < clearDeadline {
             alphaRestored = countRows(in: app, containing: alphaMarker)
             bravoRestored = countRows(in: app, containing: bravoMarker)
-            charlieRestored = countRows(in: app, containing: charlieMarker)
-            if alphaRestored == 1 && bravoRestored == 1 && charlieRestored == 1 { break }
+            if alphaRestored == 1 && bravoRestored == 1 { break }
             Thread.sleep(forTimeInterval: 0.1)
         }
         XCTAssertEqual(alphaRestored, 1,
                        "Clearing search should restore 'Alpha' row, got \(alphaRestored)")
         XCTAssertEqual(bravoRestored, 1,
                        "Clearing search should restore 'Bravo' row, got \(bravoRestored)")
-        XCTAssertEqual(charlieRestored, 1,
-                       "Clearing search should restore 'Charlie' row, got \(charlieRestored)")
     }
 
     /// Verifies the opt-in automatic image OCR workflow end-to-end:

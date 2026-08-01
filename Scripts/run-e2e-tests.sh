@@ -39,6 +39,51 @@ if ! command -v xcodegen >/dev/null 2>&1; then
     exit 1
 fi
 
+# The production app owns global hotkeys and can receive focus while XCUITest
+# drives the E2E bundle. Request a normal application termination before any
+# build work, but never match or terminate the separately identified E2E host.
+PRODUCTION_PIDS="$(/usr/bin/osascript -l JavaScript <<'JXA'
+ObjC.import('AppKit')
+
+const productionBundleID = 'com.xshoji.ClipboardManager'
+const e2eBundleID = 'com.xshoji.ClipboardManager.E2E'
+const terminatedPIDs = []
+
+for (const app of $.NSWorkspace.sharedWorkspace.runningApplications.js) {
+    const bundleID = ObjC.unwrap(app.bundleIdentifier)
+    const executableURL = app.executableURL
+    const executableName = executableURL ? ObjC.unwrap(executableURL.lastPathComponent) : ''
+    const isProduction = bundleID === productionBundleID
+        || (bundleID !== e2eBundleID && executableName === 'ClipboardManager')
+    if (isProduction) {
+        terminatedPIDs.push(String(app.processIdentifier))
+        app.terminate
+    }
+}
+
+terminatedPIDs.join(' ')
+JXA
+)"
+
+if [ -n "$PRODUCTION_PIDS" ]; then
+    echo "[run-e2e-tests] Stopping production ClipboardManager (PIDs: $PRODUCTION_PIDS)…"
+    for _ in $(seq 1 50); do
+        STILL_RUNNING=""
+        for PID in $PRODUCTION_PIDS; do
+            if kill -0 "$PID" 2>/dev/null; then
+                STILL_RUNNING="$STILL_RUNNING $PID"
+            fi
+        done
+        [ -z "$STILL_RUNNING" ] && break
+        sleep 0.1
+    done
+    if [ -n "${STILL_RUNNING:-}" ]; then
+        echo "error: Production ClipboardManager did not exit (PIDs:$STILL_RUNNING)." >&2
+        echo "       Quit it manually, then rerun the E2E tests." >&2
+        exit 1
+    fi
+fi
+
 # Regenerate the .xcodeproj from project.yml so the repo stays free of generated
 # project files. The project file is gitignored.
 echo "[run-e2e-tests] Generating Xcode project…"
