@@ -313,7 +313,7 @@ final class PreviewImageEditor {
         if !AXIsProcessTrusted() {
             AppNotifier.notify(
                 title: "Enable Accessibility for faster edit detection",
-                body: "Grant Accessibility permission so edited images are saved as soon as you close the Preview window. Without it, saving happens only after Preview quits. Enable it in Settings → Paste Behavior.",
+                body: "Grant Accessibility permission so edited images are saved as soon as you close the Preview window. Without it, saving happens only after Preview quits. Enable it in Settings → Permissions.",
                 deduplicationKey: "preview-edit-ax-hint"
             )
         }

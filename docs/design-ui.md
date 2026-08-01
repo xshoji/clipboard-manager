@@ -101,22 +101,33 @@ A separate standard-style window (not the menu bar popup) launched from the menu
 
 ### 7.1 App Settings
 
+Settings are ordered by task and use grouped form sections. Explanatory copy is
+shown in section footers rather than as standalone form rows. System-provided
+row separators are used; sections do not add manual dividers.
+
 1. **General**
-   - Global hotkey configuration
-   - Optional second global hotkey to open the UI and immediately show the Macro Picker
-   - Theme (System / Light / Dark)
-   - Previous-app auto-activation after paste (on/off)
+   - Launch at login
+   - History window position (screen center / near cursor)
+   - Preview text wrapping (wrap / no wrap)
 2. **History**
    - Retention period (days, or Unlimited)
    - Max count
-   - Max item size (if implemented)
-3. **Paste**
-   - Default paste mode (Rich / Plain)
+   - Max item size
+3. **Keyboard Shortcuts**
+   - Show ClipboardManager global hotkey
+   - Optional global hotkey that opens the Macro Picker directly
+   - Window-scoped Edit, Paste as Plain Text, and Macro Picker shortcuts
+4. **Paste**
+   - Automatic paste after selection via synthetic Cmd+V (off by default;
+     requires Accessibility permission)
+5. **Text Recognition**
    - Automatic OCR indexing for newly saved images (off by default)
-   - OCR recognition language set
-4. **Permissions**
-   - Accessibility permission status and a button to open System Settings
-   - Explanation of what the permission is used for (Preview window monitoring for image editing)
+   - Recognition language set shared by image search indexing and Paste as Plain Text
+   - Explanation that recognition is on-device and does not process existing images
+6. **Permissions**
+   - Accessibility permission status and a button that opens System Settings
+   - Explanation that the permission is used for automatic paste and Preview
+     window-close detection during image editing
 
 ### 7.2 Macro Management
 
