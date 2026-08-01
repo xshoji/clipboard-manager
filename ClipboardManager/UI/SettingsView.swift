@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var maxItem: Int
     @State private var hotkeyAlert: HotkeyAlert?
     @State private var selectedSection: SettingsSection = .application
+    @State private var isAccessibilityGranted = false
 
     private enum SettingsSection: String, CaseIterable, Identifiable {
         case application
@@ -83,6 +84,33 @@ struct SettingsView: View {
 
     private var applicationSettings: some View {
         Form {
+            Section("General") {
+                Toggle(
+                    "Launch at login",
+                    isOn: Binding(
+                        get: { settings.launchAtLogin },
+                        set: { enabled in
+                            settings.launchAtLogin = enabled
+                            LoginItemManager.shared.updateRegistration(enabled: enabled)
+                        }
+                    )
+                )
+                Picker("Window position", selection: Binding(
+                    get: { settings.windowPositionMode },
+                    set: { settings.windowPositionMode = $0 }
+                )) {
+                    Text("Screen center").tag("center")
+                    Text("Near cursor").tag("nearCursor")
+                }
+                Picker("Preview text wrapping", selection: Binding(
+                    get: { settings.previewWrapMode },
+                    set: { settings.previewWrapMode = $0 }
+                )) {
+                    Text("Wrap").tag("wrap")
+                    Text("No wrap").tag("nowrap")
+                }
+            }
+
             Section("History") {
                 Picker("Retention", selection: $retention) {
                     Text("1 day").tag(1)
@@ -120,11 +148,8 @@ struct SettingsView: View {
                 .onChange(of: maxItem) { _, v in commit(key: \.maxItemSizeMB, v) }
             }
 
-            Section("Global Hotkey") {
+            Section {
                 HotkeyRecorderView()
-            }
-
-            Section("Global Macro Picker Hotkey") {
                 HotkeyRecorderView(
                     keyCode: Binding(
                         get: { settings.globalMacroPickerHotkeyKeyCode },
@@ -141,7 +166,7 @@ struct SettingsView: View {
                         NotificationCenter.default.post(name: .globalHotkeyRecordingCancelled, object: nil)
                     },
                     onChange: { NotificationCenter.default.post(name: .globalMacroPickerHotkeyChanged, object: nil) },
-                    title: "Direct macro picker",
+                    title: "Open Macro Picker",
                     systemImage: "command.square",
                     accessibilityIDPrefix: "globalMacroPickerHotkey",
                     defaultKeyCode: AppSettings.defaultGlobalMacroPickerHotkeyKeyCode,
@@ -149,15 +174,6 @@ struct SettingsView: View {
                     showReset: false,
                     showClear: true
                 )
-                Text("Set an optional shortcut that opens ClipboardManager and immediately shows the Macro Picker.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Action Hotkeys") {
-                Text("Effective only while the ClipboardManager history window is visible.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 ForEach(ActionHotkeyKind.allCases, id: \.self) { kind in
                     HStack {
                         Text(kind.label)
@@ -193,17 +209,15 @@ struct SettingsView: View {
                         )
                     }
                 }
-                 Text("Defaults: Edit ⌘E, Plain Text ⌘P, Macro Picker ⌘M. Set modifiers clear to unset an action.")
-                     .font(.caption)
-                     .foregroundStyle(.secondary)
-               Text("Macro Picker opens a keyboard-driven list: ↑/↓ to navigate, Return to run, Esc to close.")
-                   .font(.caption2)
-                   .foregroundStyle(.secondary)
+            } header: {
+                Text("Keyboard Shortcuts")
+            } footer: {
+                Text("Action shortcuts work while the history window is open. Clear a shortcut to disable it.")
             }
 
-            Section("Paste Behavior") {
+            Section {
                 Toggle(
-                    "Allow synthetic Cmd+V (requires Accessibility)",
+                    "Paste automatically after selection",
                     isOn: Binding(
                         get: { settings.needsAccessibilityForSyntheticPaste },
                         set: { enabled in
@@ -214,25 +228,22 @@ struct SettingsView: View {
                         }
                     )
                 )
-                Button("Request Accessibility permission") {
-                    InputPermission().openAccessibilitySettingsPane()
-                }
-                Divider()
-                Text("Plain Text on an image runs OCR and pastes the recognized text. Choose the recognition language set.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Paste")
+            } footer: {
+                Text("Automatically sends ⌘V after activating the previous app. Requires Accessibility permission.")
+            }
+
+            Section {
                 Toggle(
-                    "Automatically index text in new images",
+                    "Index text in new images",
                     isOn: Binding(
                         get: { settings.automaticImageOcrEnabled },
                         set: { settings.automaticImageOcrEnabled = $0 }
                     )
                 )
                 .accessibilityIdentifier("automaticImageOcr")
-                Text("Runs on device in the background. Existing images are not analyzed.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Picker("OCR languages", selection: Binding(
+                Picker("Recognition languages", selection: Binding(
                     get: { settings.ocrLanguages },
                     set: { settings.ocrLanguages = $0 }
                 )) {
@@ -242,42 +253,42 @@ struct SettingsView: View {
                     Text("Chinese (Simplified)").tag(["zh-Hans"])
                     Text("Korean").tag(["ko-KR"])
                 }
+            } header: {
+                Text("Text Recognition")
+            } footer: {
+                Text("Used for image search and Paste as Plain Text. Recognition runs on device. Existing images are not processed.")
             }
 
-            Section("UI") {
-                Picker("Preview wrap", selection: Binding(get: { settings.previewWrapMode }, set: { settings.previewWrapMode = $0 })) {
-                    Text("Wrap").tag("wrap")
-                    Text("No wrap").tag("nowrap")
-                }
-                Picker("Window position", selection: Binding(
-                    get: { settings.windowPositionMode },
-                    set: { settings.windowPositionMode = $0 }
-                )) {
-                    Text("Screen center").tag("center")
-                    Text("Near cursor").tag("nearCursor")
-                }
-            }
-
-            Section("Startup") {
-                Toggle(
-                    "Launch ClipboardManager at login",
-                    isOn: Binding(
-                        get: { settings.launchAtLogin },
-                        set: { enabled in
-                            settings.launchAtLogin = enabled
-                            LoginItemManager.shared.updateRegistration(enabled: enabled)
+            Section {
+                LabeledContent("Accessibility") {
+                    HStack(spacing: 12) {
+                        Group {
+                            if isAccessibilityGranted {
+                                Text("Granted")
+                                    .foregroundStyle(.green)
+                            } else {
+                                Text("Not Granted")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                    )
-                )
-                Text("Adds ClipboardManager to your Mac's login items so it starts automatically when you log in.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                        Button("Open Settings…") {
+                            InputPermission().openAccessibilitySettingsPane()
+                        }
+                    }
+                }
+            } header: {
+                Text("Permissions")
+            } footer: {
+                Text("Accessibility is used for automatic pasting and detecting when an edited Preview window closes.")
             }
-
         }
         .formStyle(.grouped)
         .textSelection(.enabled)
         .padding()
+        .onAppear { refreshAccessibilityStatus() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshAccessibilityStatus()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .mainHotkeyRegistrationResult)) { note in
             if note.userInfo?["succeeded"] as? Bool == false {
                 hotkeyAlert = .unavailable
@@ -299,6 +310,10 @@ struct SettingsView: View {
         NotificationCenter.default.post(name: name, object: nil)
     }
 
+    private func refreshAccessibilityStatus() {
+        isAccessibilityGranted = InputPermission().isAccessibilityGranted
+    }
+
     /// per-action hotkey definition. Adding a new action only requires a new case
     /// here; `saveActionHotkey`, `snapshotActionHotkeys`, `collidingActionHotkey`,
     /// and `revertActionHotkey` all derive their behavior from `allCases`, so no
@@ -308,11 +323,11 @@ struct SettingsView: View {
         case pastePlain
         case macroPicker
 
-        /// Display label in the Action Hotkeys section.
+        /// Display label in the Keyboard Shortcuts section.
         var label: String {
             switch self {
             case .edit:        return "Edit"
-            case .pastePlain:  return "Plain Text"
+            case .pastePlain:  return "Paste as Plain Text"
             case .macroPicker: return "Macro Picker"
             }
         }

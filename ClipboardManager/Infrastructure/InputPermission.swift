@@ -6,6 +6,10 @@ import os
 struct InputPermission {
     private static let logger = Logger(subsystem: "com.xshoji.ClipboardManager", category: "InputPermission")
 
+    var isAccessibilityGranted: Bool {
+        AXIsProcessTrusted()
+    }
+
     /// Reference holder for a one-shot NotificationCenter observer so the
     /// observer closure can remove itself without capturing a mutable local.
     private final class ObserverToken: @unchecked Sendable {
@@ -55,9 +59,9 @@ struct InputPermission {
     }
 
     /// Opens System Settings → Privacy & Security → Accessibility directly,
-    /// without showing the system permission dialog. Used by the "Request
-    /// Accessibility permission" button when the user wants to re-open the
-    /// pane (e.g. to re-grant a revoked permission).
+    /// without showing the system permission dialog. Used by the Accessibility
+    /// Settings button when the user wants to re-open the pane (e.g. to re-grant
+    /// a revoked permission).
     func openAccessibilitySettingsPane() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)

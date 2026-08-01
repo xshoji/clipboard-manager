@@ -64,7 +64,7 @@ struct HotkeyRecorderView: View {
                 NotificationCenter.default.post(name: .globalHotkeyRecordingCancelled, object: nil)
             },
             onChange: { NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil) },
-            title: "Hotkey",
+            title: "Show ClipboardManager",
             systemImage: "command",
             accessibilityIDPrefix: "globalHotkey",
             defaultKeyCode: AppSettings.defaultHotkeyKeyCode,
