@@ -16,9 +16,17 @@ configuration must not weaken the production-resource boundaries defined here.
 swift build
 ```
 
-`Package.swift` intentionally has no `testTarget`, so `swift test` is currently
-a no-op. Unit and infrastructure integration test targets are planned but not
-yet implemented; see `docs/remaining-features.md`.
+`Package.swift` includes `ClipboardManagerTests` for deterministic unit and
+contract coverage of view models, paste orchestration, validators, filtering,
+and formatting. These tests do not launch the app or occupy the interactive
+desktop:
+
+```bash
+swift test
+```
+
+Infrastructure integration coverage remains planned; see
+`docs/remaining-features.md`.
 
 `Scripts/build-app.sh` uses the same Swift package track for local app bundles
 and GitHub Releases. Do not add Xcode-only production behavior to the E2E
@@ -89,15 +97,19 @@ This contract takes priority over test convenience or coverage.
 `SmokeUITests.setUpWithError()` creates a unique directory under:
 
 ```text
-$TMPDIR/com.xshoji.ClipboardManager.E2E/<case-uuid>/
+~/Library/Containers/com.xshoji.SmokeUITests.xctrunner/Data/Library/Caches/
+  com.xshoji.ClipboardManager.E2E/<case-uuid>/
 ```
 
-The E2E host receives `Clipboard.store` in that directory. Before opening
-SwiftData, the host verifies that the path:
+The XCUITest runner is containerized by macOS even though the E2E host target is
+not sandboxed. Its container Caches directory is stable across the runner and
+launched app, while their `TMPDIR` and ordinary Caches URLs are not. The E2E
+host receives `Clipboard.store` in that directory. Before opening SwiftData,
+the host verifies that the path:
 
 - is absolute;
 - has an existing directory parent;
-- resolves under the E2E temporary root after standardization and symlink
+- resolves under the E2E Caches root after standardization and symlink
   resolution;
 - has the `.store` extension; and
 - is not under the production Application Support directory.
@@ -139,15 +151,23 @@ keys; new settings would otherwise leak state between test cases.
 
 ### Production and stale processes
 
-Before creating test resources, the runner checks for:
+Before generating or building the test project, `Scripts/run-e2e-tests.sh`
+requests normal termination of:
 
 - the production bundle ID; and
 - a directly launched executable named `ClipboardManager`, including
   `swift run` or `.build/.../ClipboardManager`.
 
-If either is running, setup fails with a preflight error. The test harness must
-never terminate a production process. It may terminate stale instances of the
-E2E bundle only, and must confirm their death before continuing.
+The runner waits up to five seconds for those processes to exit and fails
+without force-terminating them if normal termination does not complete. This
+prevents production hotkeys and windows from competing with UI automation while
+allowing the normal local workflow to start with the menu-bar app running.
+
+`SmokeUITests.setUpWithError()` retains the same process check as a fail-closed
+safety net for direct `xcodebuild test` invocations that bypass the runner. The
+test bundle never terminates a production process. It may terminate stale
+instances of the E2E bundle only, and must confirm their death before
+continuing.
 
 ### Preview editing
 
@@ -205,6 +225,96 @@ behavior.
 - Seed values, macro names, and temporary filenames must be unique enough to
   avoid deduplication and collisions. Delete only resources created by the
   current case.
+
+## Test-layer selection criteria
+
+Choose the lowest test layer that can observe the behavior under test without
+reimplementing production behavior in the test. A behavior being unit-testable
+does not by itself justify removing the representative E2E workflow that proves
+the UI is wired to it.
+
+### Use a unit test when
+
+- The result is determined by explicit inputs, model state, or responses from
+  injected ports.
+- OS effects such as pasteboard writes, app activation, notifications, OCR, or
+  Macro execution can be represented by fakes while preserving the behavior
+  being asserted.
+- The test does not need a rendered SwiftUI hierarchy, an AppKit window, the
+  current first responder, Accessibility exposure, or real keyboard events.
+- The behavior has multiple data or error combinations that would be slow and
+  brittle to enumerate through the UI.
+
+Typical unit-test subjects include:
+
+- validators, search and image-filter predicates, selection calculations, and
+  hotkey collision rules;
+- view-model state transitions such as selection preservation and dirty-state
+  tracking;
+- `PasteCoordinator` branches using fake repository, OCR, Macro, activation,
+  notification, and pasteboard ports;
+- formatting and default-value rules.
+
+Unit tests should cover branch combinations and failure policy exhaustively.
+They must not assert SwiftUI implementation details or reproduce view event
+routing in a test-only model merely to avoid an E2E test.
+
+### Use an E2E UI test when
+
+- Correctness depends on actual focus or first-responder behavior, including
+  whether typed input reaches the intended control after a SwiftUI update.
+- The behavior crosses a real window, sheet, alert, menu, or window lifecycle
+  boundary.
+- The assertion concerns the Accessibility hierarchy, identifiers, values, or
+  element hittability exposed by the built app.
+- The workflow requires real keyboard routing, `XCUIApplication`, Carbon
+  hotkey registration or dispatch, or interaction between SwiftUI and AppKit.
+- The primary risk is integration wiring or timing: each component can be
+  correct independently while the user-visible workflow still fails.
+
+Typical E2E subjects include:
+
+- moving focus between the search field and history list and then proving that
+  subsequent keystrokes reach the expected control;
+- recording a real shortcut, handling Escape, and surfacing a Carbon
+  registration failure;
+- closing a Settings window with unsaved changes and operating the resulting
+  native alert;
+- registering a Macro through Settings and launching it from the Footer menu;
+- proving that asynchronous OCR completion refreshes the rendered search
+  result and that the action hotkey reaches the selected item.
+
+E2E tests should cover a small number of representative user workflows, not
+every input and failure combination. Assert externally observable outcomes and
+state the platform or UI boundary that requires E2E coverage. If no such
+boundary exists, prefer a lower layer.
+
+### Use a non-UI integration test when
+
+The behavior needs a real framework or process but not a user-driven GUI. Use
+temporary stores and files, named pasteboards, and controlled processes for
+SwiftData persistence, clipboard-monitor suppression, Vision recognition,
+Macro process execution, fingerprints, timeouts, and UserDefaults round trips.
+These tests complement unit tests without occupying the interactive desktop.
+
+### Keep responsibilities distinct
+
+When one workflow spans multiple layers, split assertions by responsibility:
+
+| Question | Preferred layer |
+|---|---|
+| Does the search predicate match OCR text and exclude text rows in image-only mode? | Unit |
+| Does typing in the search field rebuild the visible SwiftUI list? | E2E |
+| Does cached OCR skip recognition and write the cached text? | Unit |
+| Does the action hotkey reach the selected image and produce visible workflow output? | E2E |
+| Does a Macro failure restore the original value for the configured policy? | Unit |
+| Can a registered Macro be selected from the real Footer menu? | E2E |
+| Does an actual script receive `CB_INPUT_FILE` and write `CB_OUTPUT_FILE`? | Non-UI integration |
+
+Do not duplicate the same implementation-level assertion at every layer. Unit
+tests establish rules and failure behavior; integration tests establish
+framework adapters; E2E tests establish user-visible wiring, focus, and native
+UI behavior.
 
 ## UI smoke-test rules
 

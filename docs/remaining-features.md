@@ -17,8 +17,8 @@ No new user-visible behavior was introduced by the architecture refactoring.
 The current architecture and isolation contract are documented in
 `docs/testing.md`; this section tracks only work that is not implemented yet.
 
-- Restore a SwiftPM unit/contract test target for view models, paste orchestration,
-  validators, and other deterministic behavior using fake ports.
+- Expand the SwiftPM unit/contract suite beyond its current view-model, paste
+  orchestration, validator, history-filter, and formatting coverage.
 - Add infrastructure integration tests for temporary SwiftData stores, named
   pasteboards, process timeout/failure handling, limits, and migrations.
 - Run `swift build` and the deterministic test layers on pull requests. Keep

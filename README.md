@@ -297,18 +297,19 @@ required (see `docs/design-implementation.md §8`).
 
 ## Test
 
-The Swift package currently provides the production build track only:
+The Swift package provides production build and deterministic unit/contract
+test tracks:
 
 ```bash
 swift build
+swift test
 ```
 
-`swift test` is intentionally a no-op because `Package.swift` has no test
-target. UI smoke tests use XCUITest through the separate E2E host:
+UI smoke tests use XCUITest through the separate E2E host:
 
 ```bash
 Scripts/run-e2e-tests.sh
-Scripts/run-e2e-tests.sh SmokeUITests/testActionHotkeyWorkflow
+Scripts/run-e2e-tests.sh SmokeUITests/testSettingsAndHotkeyWorkflows
 ```
 
 See [`docs/testing.md`](docs/testing.md) for prerequisites, focused runs, E2E

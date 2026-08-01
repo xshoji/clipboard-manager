@@ -26,6 +26,10 @@ let package = Package(
                 .linkedFramework("Vision"),
             ]
         ),
+        .testTarget(
+            name: "ClipboardManagerTests",
+            dependencies: ["ClipboardManager"],
+            path: "Tests/UnitTests"
+        ),
     ]
 )
-
