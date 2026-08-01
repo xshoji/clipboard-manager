@@ -150,16 +150,9 @@ final class SmokeUITests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(maxItemsPopUp.value as? String), "1,000",
                        "Max items picker did not show '1,000'")
 
-        // Max item size is a Stepper with label text "Max item size: 10 MB".
-        // SwiftUI on macOS exposes the rendered Text content as the
-        // staticText's *value* (not its `label`) when the Text is standalone,
-        // while Text used as the label of a Label/Picker shows up under
-        // `label`. The Stepper here renders "Max item size: 10 MB" as a plain
-        // Text, so the string is in `value` and `label` is empty. Query both
-        // attributes so the match is reliable regardless of which slot
-        // SwiftUI populates. We wait for the staticText to exist (failing the
-        // test if it never shows up) instead of silently skipping — a missing
-        // label means the Stepper is gone or renamed, which is a regression.
+        // Max item size renders its value separately from the trailing Stepper.
+        // Query both accessibility attributes because SwiftUI may expose the
+        // standalone Text through either slot on macOS.
         let maxItemText = app.staticTexts["history.maxItemSize"]
         XCTAssertTrue(
             exists(maxItemText, timeout: 5),

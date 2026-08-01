@@ -107,10 +107,17 @@ struct SettingsView: View {
                 .accessibilityIdentifier("history.maxItems")
                 .onChange(of: maxCount) { _, v in commit(key: \.maxHistoryCount, v); notify(.maxCountChanged) }
 
-                Stepper(value: $maxItem, in: 1...100) {
-                    Text("Max item size: \(maxItem) MB")
-                        .accessibilityIdentifier("history.maxItemSize")
-                }.onChange(of: maxItem) { _, v in commit(key: \.maxItemSizeMB, v) }
+                LabeledContent("Max item size") {
+                    HStack(spacing: 8) {
+                        Text("\(maxItem) MB")
+                            .monospacedDigit()
+                            .foregroundStyle(.primary)
+                            .accessibilityIdentifier("history.maxItemSize")
+                        Stepper("Max item size", value: $maxItem, in: 1...100)
+                            .labelsHidden()
+                    }
+                }
+                .onChange(of: maxItem) { _, v in commit(key: \.maxItemSizeMB, v) }
             }
 
             Section("Global Hotkey") {
