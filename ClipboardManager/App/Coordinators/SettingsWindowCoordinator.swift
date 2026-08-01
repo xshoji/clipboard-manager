@@ -22,7 +22,7 @@ final class SettingsWindowCoordinator {
                 .environment(settings)
                 .environment(viewModel)
                 .environment(historyViewModel)
-            let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
+            let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 720),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "ClipboardManager Settings"
             window.isReleasedWhenClosed = false

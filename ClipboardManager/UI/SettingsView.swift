@@ -3,11 +3,32 @@ import AppKit
 
 struct SettingsView: View {
     @Environment(AppSettings.self) private var settings
-    @Environment(SettingsViewModel.self) private var viewModel
     @State private var retention: Int
     @State private var maxCount: Int
     @State private var maxItem: Int
     @State private var hotkeyAlert: HotkeyAlert?
+    @State private var selectedSection: SettingsSection = .application
+
+    private enum SettingsSection: String, CaseIterable, Identifiable {
+        case application
+        case macros
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .application: "App Settings"
+            case .macros: "Macros"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .application: "gearshape"
+            case .macros: "terminal"
+            }
+        }
+    }
 
     private enum HotkeyAlert: Identifiable {
         case unavailable
@@ -40,6 +61,27 @@ struct SettingsView: View {
     }
 
     var body: some View {
+        NavigationSplitView {
+            List(SettingsSection.allCases, selection: $selectedSection) { section in
+                Label(section.title, systemImage: section.systemImage)
+                    .tag(section)
+                    .accessibilityIdentifier("settings.\(section.rawValue)")
+            }
+            .navigationTitle("Settings")
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 230)
+        } detail: {
+            switch selectedSection {
+            case .application:
+                applicationSettings
+            case .macros:
+                MacroManagementView()
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 760, minHeight: 640)
+    }
+
+    private var applicationSettings: some View {
         Form {
             Section("History") {
                 Picker("Retention", selection: $retention) {
@@ -152,72 +194,6 @@ struct SettingsView: View {
                    .foregroundStyle(.secondary)
             }
 
-            Section("Macro Scripts") {
-                ForEach(Array(settings.macroScripts.enumerated()), id: \.element.id) { idx, macro in
-                    MacroScriptRowView(
-                        macro: macro,
-                        // Stable identifier prefix used for every accessibilityIdentifier
-                        // on the row's child elements (name field, save button, etc.).
-                        // The index is positional and shifts if macros above are
-                        // removed; for E2E that is acceptable because tests
-                        // re-resolve the prefix right after Add/Remove.
-                        accessibilityIDPrefix: "macro.\(idx)",
-                        onUpdate: { edited in
-                            var arr = settings.macroScripts
-                            if let i = arr.firstIndex(where: { $0.id == edited.id }) {
-                                arr[i] = edited
-                            }
-                            settings.macroScripts = arr
-                        },
-                        onDirtyChange: { id, dirty in
-                            if dirty {
-                                viewModel.setDirty(id, true)
-                            } else {
-                                viewModel.setDirty(id, false)
-                            }
-                        }
-                    )
-                    .padding(.vertical, 8)
-                    .listRowSeparator(.hidden)
-                }
-                if settings.macroScripts.isEmpty {
-                    Text("No Macros registered.").foregroundStyle(.secondary)
-                        .accessibilityIdentifier("macro.empty")
-                }
-                Button("Add Macro…") {
-                    // Adds an inline example that the user edits in place; the row's Save
-                    // button presents the registration confirmation dialog (design-implementation.md §5.1-1).
-                    settings.macroScripts.append(MacroScript(
-                        name: "New Macro",
-                        scriptPath: "",
-                        inlineScript: """
-                        #!/bin/sh
-                        # Example: replace "foo" with "bar" in copied text.
-                        sed 's/foo/bar/g' "$CB_INPUT_FILE" > "$CB_OUTPUT_FILE"
-                        """
-                    ))
-                }
-                .accessibilityIdentifier("macro.add")
-            }
-
-            Section("Macro Behavior") {
-                Picker("On macro failure", selection: Binding(
-                    get: { settings.macroFailureBehavior },
-                    set: { settings.macroFailureBehavior = $0 }
-                )) {
-                    Text("Restore original + notify").tag("restoreOriginalAndNotify")
-                    Text("Notify only").tag("notifyOnly")
-                    Text("Silent").tag("silentlySkip")
-                }
-                Toggle(
-                    "Verify script fingerprint before run",
-                    isOn: Binding(
-                        get: { settings.macroSameDirectoryFingerprint },
-                        set: { settings.macroSameDirectoryFingerprint = $0 }
-                    )
-                )
-            }
-
             Section("Paste Behavior") {
                 Toggle(
                     "Allow synthetic Cmd+V (requires Accessibility)",
@@ -295,7 +271,6 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .textSelection(.enabled)
         .padding()
-        .frame(minWidth: 560, minHeight: 600)
         .onReceive(NotificationCenter.default.publisher(for: .mainHotkeyRegistrationResult)) { note in
             if note.userInfo?["succeeded"] as? Bool == false {
                 hotkeyAlert = .unavailable
