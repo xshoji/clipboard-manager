@@ -35,7 +35,7 @@ with XcodeGen. `Scripts/run-e2e-tests.sh` wraps project generation and
 Scripts/run-e2e-tests.sh
 
 # One focused test
-Scripts/run-e2e-tests.sh SmokeUITests/testActionHotkeyWorkflow
+Scripts/run-e2e-tests.sh SmokeUITests/testSettingsAndHotkeyWorkflows
 ```
 
 The generated `ClipboardManager.xcodeproj` and workspaces are disposable and
@@ -54,7 +54,7 @@ Example:
 
 ```bash
 DEVELOPMENT_TEAM=ABCD1234 \
-  Scripts/run-e2e-tests.sh SmokeUITests/testSearchFiltersHistoryList
+  Scripts/run-e2e-tests.sh SmokeUITests/testHistoryListWorkflows
 ```
 
 The runner also accepts:
@@ -193,6 +193,10 @@ behavior.
   so they must not run in parallel.
 - Run the smallest relevant case during iteration. Run the full suite only
   when combined workflow coverage is necessary.
+- Settings/default/hotkey checks share one launch, as do keyboard/search/image
+  filter checks. Keep workflows together when they can safely share isolated
+  case state; keep expensive or side-effect-heavy OCR and Macro execution cases
+  separate so failures remain diagnosable.
 - XCUITest is local-only until a dedicated runner can satisfy signing, TCC, and
   Accessibility requirements. It is not part of the current GitHub Actions
   pipeline.

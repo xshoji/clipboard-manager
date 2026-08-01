@@ -12,7 +12,7 @@
 #
 # Usage:
 #   Scripts/run-e2e-tests.sh                 # run all tests
-#   Scripts/run-e2e-tests.sh SmokeUITests/testActionHotkeyWorkflow
+#   Scripts/run-e2e-tests.sh SmokeUITests/testSettingsAndHotkeyWorkflows
 #
 # Optional environment variables:
 #   DEVELOPMENT_TEAM   - Personal Team ID (e.g. "ABCD1234") forced on both the
