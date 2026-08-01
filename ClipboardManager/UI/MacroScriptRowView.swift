@@ -34,6 +34,8 @@ struct MacroScriptRowView: View {
     @State private var isPresentingConfirm: Bool = false
     @State private var isPresentingRemoveConfirm: Bool = false
     @State private var shouldTestAfterSave: Bool = false
+    @State private var debugReport: MacroDebugReport?
+    @State private var testTask: Task<Void, Never>?
     /// `true` when the in-flight `apply()` was triggered by a
     /// `.saveAllUnsavedMacros` broadcast (window-close "Save all"). Set before
     /// `apply()` runs and consumed by every settle path (saved, user-cancelled,
@@ -204,6 +206,7 @@ struct MacroScriptRowView: View {
                     .accessibilityIdentifier("\(accessibilityIDPrefix).testRun")
                     Spacer()
                     Button("Remove", role: .destructive) { isPresentingRemoveConfirm = true }
+                        .disabled(isTestRunning)
                         .accessibilityIdentifier("\(accessibilityIDPrefix).remove")
                 }
             }
@@ -229,6 +232,13 @@ struct MacroScriptRowView: View {
         } message: {
             Text("The Macro “\(macro.name)” will be removed. This cannot be undone.")
         }
+        .sheet(item: $debugReport) { report in
+            MacroDebugConsoleView(
+                macroName: macro.name,
+                report: report,
+                onCopy: historyViewModel.copyMacroDebugReport
+            )
+        }
         .onAppear {
             checkDirty()
             saveObserverToken = NotificationCenter.default.addObserver(
@@ -248,6 +258,9 @@ struct MacroScriptRowView: View {
             }
         }
         .onDisappear {
+            testTask?.cancel()
+            testTask = nil
+            isTestRunning = false
             if let token = saveObserverToken {
                 NotificationCenter.default.removeObserver(token)
             }
@@ -328,9 +341,9 @@ struct MacroScriptRowView: View {
     private var testRunHelp: String {
         if historyViewModel.selectedItem == nil { return "Select a clipboard history item before testing this Macro." }
         if hasContentChanges || macro.lastFingerprint == nil {
-            return "Save and confirm this Macro, then run it against the selected history item."
+            return "Save and confirm this Macro, then debug it against the selected history item."
         }
-        return "Run this Macro against the selected history item using the normal paste flow."
+        return "Run with the normal Macro environment and inspect the result without changing the pasteboard."
     }
 
     private func browse() {
@@ -470,14 +483,32 @@ struct MacroScriptRowView: View {
 
     private func runTest(savedMacro: MacroScript) {
         guard let item = historyViewModel.selectedItem else { return }
+        testTask?.cancel()
         isTestRunning = true
-        Task {
-            _ = await historyViewModel.runMacro(macro: savedMacro, item: item)
-            isTestRunning = false
+        testTask = Task { @MainActor in
+            defer {
+                isTestRunning = false
+                testTask = nil
+            }
+            do {
+                let report = try await historyViewModel.debugMacro(macro: savedMacro, item: item)
+                guard !Task.isCancelled else { return }
+                debugReport = report
+            } catch is CancellationError {
+                // Closing the view or removing the Macro intentionally stops the debug run.
+            } catch {
+                guard !Task.isCancelled else { return }
+                debugReport = .notLaunched(
+                    command: "\(savedMacro.interpreter) \(savedMacro.inlineScript == nil ? savedMacro.scriptPath : "<inline-script>")",
+                    errorMessage: error.localizedDescription
+                )
+            }
         }
     }
 
     private func remove() {
+        testTask?.cancel()
+        testTask = nil
         var arr = settings.macroScripts
         arr.removeAll { $0.id == macro.id }
         settings.macroScripts = arr
@@ -520,6 +551,201 @@ struct MacroScriptRowView: View {
             lastNotifiedDirty = dirty
             onDirtyChange?(macro.id, dirty)
         }
+    }
+}
+
+private struct MacroDebugConsoleView: View {
+    @Environment(\.dismiss) private var dismiss
+    let macroName: String
+    let report: MacroDebugReport
+    let onCopy: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Macro Debug Console")
+                        .font(.title2.weight(.semibold))
+                        .accessibilityIdentifier("macroDebug.console")
+                    Text(macroName)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Label(statusText, systemImage: statusImage)
+                    .foregroundStyle(report.succeeded ? .green : .red)
+            }
+            .padding(20)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("The Macro ran with the normal execution environment. ClipboardManager did not write its result to the pasteboard or switch applications. The script itself still runs with your user permissions.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+
+                    GroupBox("Execution") {
+                        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+                            debugRow("Command", report.command)
+                            debugRow("Total Duration", String(format: "%.3f s", report.duration))
+                            debugRow("Exit", exitDescription)
+                        }
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    if let errorMessage = report.errorMessage {
+                        consoleSection("Error", text: errorMessage, color: .red, accessibilityID: "macroDebug.error")
+                    }
+                    consoleSection(
+                        "Standard Output (stdout)",
+                        text: streamText(report.standardOutput, truncated: report.standardOutputTruncated),
+                        accessibilityID: "macroDebug.stdout"
+                    )
+                    consoleSection(
+                        "Standard Error (stderr)",
+                        text: streamText(report.standardError, truncated: report.standardErrorTruncated),
+                        accessibilityID: "macroDebug.stderr"
+                    )
+                    consoleSection(
+                        report.usedInputFallback ? "Macro Output (input fallback)" : "Macro Output",
+                        text: outputDescription,
+                        accessibilityID: "macroDebug.output"
+                    )
+
+                    GroupBox("Macro Environment") {
+                        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+                            ForEach(report.environment.keys.sorted(), id: \.self) { key in
+                                debugRow(key, report.environment[key] ?? "")
+                            }
+                            if report.environment.isEmpty {
+                                Text("Process was not launched.")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Text("Temporary input, output, and inline-script files are removed after execution.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+
+            Divider()
+
+            HStack {
+                Button("Copy Report") { copyReport() }
+                    .accessibilityIdentifier("macroDebug.copy")
+                Spacer()
+                Button("Done") { dismiss() }
+                    .accessibilityIdentifier("macroDebug.done")
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .frame(minWidth: 720, minHeight: 620)
+    }
+
+    private var statusText: String {
+        if report.succeeded { return "Succeeded" }
+        if report.timedOut { return "Timed Out" }
+        if report.terminationStatus == nil { return "Not Launched" }
+        return "Failed"
+    }
+
+    private var statusImage: String {
+        report.succeeded ? "checkmark.circle.fill" : "xmark.octagon.fill"
+    }
+
+    private var exitDescription: String {
+        if report.timedOut { return "Timed out after 5 seconds (status \(report.terminationStatus ?? -1))" }
+        if let status = report.terminationStatus { return "Status \(status)" }
+        return "Not launched"
+    }
+
+    private var outputDescription: String {
+        guard let output = report.output else { return "(no readable output)" }
+        let size = "\(output.totalByteCount) bytes"
+        switch output.kind {
+        case .image:
+            return "Image output (\(size))"
+        case .binary:
+            return "Binary output (\(size))"
+        case .text:
+            let text = output.previewText ?? ""
+            return output.truncated
+                ? "\(text)\n\n[truncated after \(output.previewByteCount) bytes; total \(size)]"
+                : text
+        }
+    }
+
+    private func streamText(_ text: String, truncated: Bool) -> String {
+        let value = text.isEmpty ? "(no output)" : text
+        return truncated ? "\(value)\n\n[truncated after 256 KiB]" : value
+    }
+
+    @ViewBuilder
+    private func debugRow(_ label: String, _ value: String) -> some View {
+        GridRow {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(.body, design: .monospaced))
+                .textSelection(.enabled)
+        }
+    }
+
+    private func consoleSection(
+        _ title: String,
+        text: String,
+        color: Color = .primary,
+        accessibilityID: String
+    ) -> some View {
+        GroupBox(title) {
+            ScrollView(.horizontal) {
+                Text(text)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(color)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, minHeight: 54, alignment: .topLeading)
+                    .padding(8)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityIdentifier(accessibilityID)
+    }
+
+    private var reportText: String {
+        let environment = report.environment.keys.sorted().map { "\($0)=\(report.environment[$0] ?? "")" }.joined(separator: "\n")
+        return """
+        Macro: \(macroName)
+        Status: \(statusText)
+        Command: \(report.command)
+        Exit: \(exitDescription)
+        Total Duration: \(String(format: "%.3f s", report.duration))
+
+        Error
+        \(report.errorMessage ?? "(none)")
+
+        stdout
+        \(streamText(report.standardOutput, truncated: report.standardOutputTruncated))
+
+        stderr
+        \(streamText(report.standardError, truncated: report.standardErrorTruncated))
+
+        Macro Output
+        \(outputDescription)
+
+        Environment
+        \(environment)
+        """
+    }
+
+    private func copyReport() {
+        onCopy(reportText)
     }
 }
 

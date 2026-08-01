@@ -52,6 +52,7 @@ struct MacroManagementView: View {
                 .frame(maxWidth: 760, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .accessibilityIdentifier("macro.management.scroll")
         }
         .navigationTitle("Macros")
         .background(Color(nsColor: .windowBackgroundColor))
