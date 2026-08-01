@@ -216,32 +216,14 @@ struct HistoryListPane: View {
     }
 
     private func recomputeIndex() {
-        // Build a Sendable search index on the main actor (entities are @Model and
-        // bound to the main actor's ModelContext), then run the O(n) filter on a
-        // background task so the main actor is not blocked for 100k rows (review #22).
-        let needle = query.lowercased()
+        // ClipboardItem is a Sendable DTO, so filtering can run off the main actor
+        // without touching SwiftData models or blocking rendering for large histories.
+        let items = viewModel.items
+        let query = query
         let imagesOnly = showsImagesOnly
-        let index = viewModel.items.map { entity in
-            SearchRow(
-                id: entity.id,
-                isImage: entity.isImage,
-                textPreviewLower: entity.textPreviewLowercased ?? entity.textPreview?.lowercased() ?? "",
-                ocrTextLower: entity.ocrTextLowercased,
-                sourceBundleIDLower: entity.sourceBundleID?.lowercased(),
-                contentHashLower: entity.contentHash?.lowercased()
-            )
-        }
         filterTask?.cancel()
         filterTask = Task.detached(priority: .userInitiated) {
-            let filteredIDs = index.compactMap { row -> UUID? in
-                guard !imagesOnly || row.isImage else { return nil }
-                if needle.isEmpty { return row.id }
-                if row.textPreviewLower.contains(needle) { return row.id }
-                if let ocr = row.ocrTextLower, ocr.contains(needle) { return row.id }
-                if let b = row.sourceBundleIDLower, b.contains(needle) { return row.id }
-                if let h = row.contentHashLower, h.contains(needle) { return row.id }
-                return nil
-            }
+            let filteredIDs = HistoryFilter.filter(items, query: query, imagesOnly: imagesOnly).map(\.id)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 let idSet = Set(filteredIDs)
@@ -264,17 +246,6 @@ struct HistoryListPane: View {
         }
         debounceWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
-    }
-
-    /// Sendable search index row extracted from the DTO so the filter can
-    /// run off the main actor without touching the `@Model` (review #22).
-    private struct SearchRow: Sendable {
-        let id: UUID
-        let isImage: Bool
-        let textPreviewLower: String
-        let ocrTextLower: String?
-        let sourceBundleIDLower: String?
-        let contentHashLower: String?
     }
 
     private func moveSelection(_ direction: MoveCommandDirection) {

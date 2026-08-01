@@ -1,6 +1,27 @@
 import AppKit
 import Foundation
 
+enum HistoryFilter {
+    static func filter(
+        _ items: [ClipboardItem],
+        query: String,
+        imagesOnly: Bool
+    ) -> [ClipboardItem] {
+        let needle = query.lowercased()
+        return items.filter { item in
+            guard !imagesOnly || item.isImage else { return false }
+            guard !needle.isEmpty else { return true }
+            if (item.textPreviewLowercased ?? item.textPreview?.lowercased() ?? "").contains(needle) {
+                return true
+            }
+            if item.ocrTextLowercased?.contains(needle) == true { return true }
+            if item.sourceBundleID?.lowercased().contains(needle) == true { return true }
+            if item.contentHash?.lowercased().contains(needle) == true { return true }
+            return false
+        }
+    }
+}
+
 @MainActor @Observable
 final class HistoryViewModel {
     private let repository: ClipboardRepositoryPort
