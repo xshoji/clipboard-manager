@@ -80,4 +80,6 @@ final class HistoryViewModel {
     @discardableResult func pasteStandard(item: ClipboardItem, rich: Bool, activate: Bool = true) async -> Bool { await pasteCoordinator.pasteStandard(item: item, rich: rich, activate: activate) }
     func runOcr(item: ClipboardItem) async { await pasteCoordinator.runOcr(item: item) }
     @discardableResult func runMacro(macro: MacroScript, item: ClipboardItem) async -> Bool { await pasteCoordinator.runMacro(macro: macro, item: item) }
+    func debugMacro(macro: MacroScript, item: ClipboardItem) async throws -> MacroDebugReport { try await pasteCoordinator.debugMacro(macro: macro, item: item) }
+    func copyMacroDebugReport(_ text: String) { pasteCoordinator.copyMacroDebugReport(text) }
 }

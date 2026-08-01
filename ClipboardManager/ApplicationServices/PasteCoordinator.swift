@@ -85,14 +85,7 @@ final class PasteCoordinator {
 
     @discardableResult
     func runMacro(macro: MacroScript, item: ClipboardItem) async -> Bool {
-        let input: MacroInput
-        if item.isImage {
-            guard let imageData = await repository.fetchImageData(id: item.id) else { return false }
-            input = .init(isImage: true, imageData: imageData, text: nil, sourceBundleID: item.sourceBundleID)
-        } else {
-            guard let text = await repository.fetchFullText(id: item.id) else { return false }
-            input = .init(isImage: false, imageData: nil, text: text, sourceBundleID: item.sourceBundleID)
-        }
+        guard let input = await macroInput(for: item) else { return false }
         do {
             let output = try await macroRunner.runAsync(script: macro, input: input,
                 verifyFingerprint: settings.macroSameDirectoryFingerprint)
@@ -102,6 +95,8 @@ final class PasteCoordinator {
                 else { pb.setString(String(data: output.data, encoding: .utf8) ?? "", forType: .string) }
             }
             activatePreviousApp(); return true
+        } catch is CancellationError {
+            return false
         } catch {
             let message = (error as? MacroRunningError)?.description ?? error.localizedDescription
             switch settings.macroFailureBehavior {
@@ -114,6 +109,36 @@ final class PasteCoordinator {
             }
             return false
         }
+    }
+
+    func debugMacro(macro: MacroScript, item: ClipboardItem) async throws -> MacroDebugReport {
+        guard let input = await macroInput(for: item) else {
+            return .notLaunched(
+                command: "\(macro.interpreter) \(macro.inlineScript == nil ? macro.scriptPath : "<inline-script>")",
+                errorMessage: "The selected history item has no available input data."
+            )
+        }
+        return try await macroRunner.debugRunAsync(
+            script: macro,
+            input: input,
+            verifyFingerprint: settings.macroSameDirectoryFingerprint
+        )
+    }
+
+    func copyMacroDebugReport(_ text: String) {
+        suppressedWrite { pasteboard in
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+        }
+    }
+
+    private func macroInput(for item: ClipboardItem) async -> MacroInput? {
+        if item.isImage {
+            guard let imageData = await repository.fetchImageData(id: item.id) else { return nil }
+            return .init(isImage: true, imageData: imageData, text: nil, sourceBundleID: item.sourceBundleID)
+        }
+        guard let text = await repository.fetchFullText(id: item.id) else { return nil }
+        return .init(isImage: false, imageData: nil, text: text, sourceBundleID: item.sourceBundleID)
     }
 
     private func writeText(_ content: ClipboardTextContent, rich: Bool) {
