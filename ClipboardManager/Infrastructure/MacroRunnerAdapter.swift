@@ -10,6 +10,12 @@ import Foundation
 /// satisfy the port/adapter shape so `PasteCoordinator` depends on the
 /// `MacroRunning` protocol rather than the concrete Infrastructure enum.
 final class MacroRunnerAdapter: MacroRunning {
+    private let settings: AppSettings
+
+    init(settings: AppSettings) {
+        self.settings = settings
+    }
+
     func runAsync(
         script: MacroScript,
         input: MacroInput,
@@ -18,7 +24,8 @@ final class MacroRunnerAdapter: MacroRunning {
         try await MacroRunner.runAsync(
             script: script,
             input: input,
-            verifyFingerprint: verifyFingerprint
+            verifyFingerprint: verifyFingerprint,
+            timeoutSeconds: settings.macroTimeoutSeconds
         )
     }
 
@@ -30,7 +37,8 @@ final class MacroRunnerAdapter: MacroRunning {
         try await MacroRunner.debugRunAsync(
             script: script,
             input: input,
-            verifyFingerprint: verifyFingerprint
+            verifyFingerprint: verifyFingerprint,
+            timeoutSeconds: settings.macroTimeoutSeconds
         )
     }
 }

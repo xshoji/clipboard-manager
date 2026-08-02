@@ -274,7 +274,7 @@ final class AppContainer {
             settings: settings,
             pasteboard: monitor,
             ocr: OcrRecognizerAdapter(),
-            macroRunner: MacroRunnerAdapter(),
+            macroRunner: MacroRunnerAdapter(settings: settings),
             activator: AppActivator.shared,
             notifier: AppNotifierAdapter()
         )
