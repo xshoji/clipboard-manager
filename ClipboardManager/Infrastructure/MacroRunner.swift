@@ -122,13 +122,15 @@ enum MacroRunner {
     static func runAsync(
         script: MacroScript,
         input: MacroInput,
-        verifyFingerprint: Bool
+        verifyFingerprint: Bool,
+        timeoutSeconds: Int = AppSettings.defaultMacroTimeoutSeconds
     ) async throws -> MacroOutput {
         let execution = try await execute(
             script: script,
             input: input,
             verifyFingerprint: verifyFingerprint,
-            captureStreams: false
+            captureStreams: false,
+            timeoutSeconds: timeoutSeconds
         )
         defer { cleanupFiles(execution.launched) }
         if execution.timedOut { throw MacroRunningError.timeout }
@@ -142,7 +144,8 @@ enum MacroRunner {
     static func debugRunAsync(
         script: MacroScript,
         input: MacroInput,
-        verifyFingerprint: Bool
+        verifyFingerprint: Bool,
+        timeoutSeconds: Int = AppSettings.defaultMacroTimeoutSeconds
     ) async throws -> MacroDebugReport {
         let fallbackCommand = "\(script.interpreter) \(script.inlineScript == nil ? script.scriptPath : "<inline-script>")"
         do {
@@ -150,7 +153,8 @@ enum MacroRunner {
                 script: script,
                 input: input,
                 verifyFingerprint: verifyFingerprint,
-                captureStreams: true
+                captureStreams: true,
+                timeoutSeconds: timeoutSeconds
             )
             defer { cleanupFiles(execution.launched) }
             let status = execution.terminationStatus
@@ -198,7 +202,8 @@ enum MacroRunner {
         script: MacroScript,
         input: MacroInput,
         verifyFingerprint: Bool,
-        captureStreams: Bool
+        captureStreams: Bool,
+        timeoutSeconds: Int
     ) async throws -> Execution {
         let clock = ContinuousClock()
         let startedAt = clock.now
@@ -217,7 +222,10 @@ enum MacroRunner {
             StreamCollector(pipe: $0, label: "ClipboardManager.MacroRunner.stderr")
         }
         do {
-            let timedOut = try await waitForProcess(launched.proc, timeout: .seconds(5))
+            let timedOut = try await waitForProcess(
+                launched.proc,
+                timeout: .seconds(timeoutSeconds)
+            )
             let standardOutput = stdoutCollector?.finish() ?? .init(text: "", truncated: false)
             let standardError = stderrCollector?.finish() ?? .init(text: "", truncated: false)
             return Execution(
