@@ -83,6 +83,9 @@ struct MainView: View {
            }
        }
         .animation(.easeOut(duration: 0.12), value: macroPickerPresented)
+        .onChange(of: settings.isSidebarVisible) { _, visible in
+            sidebarVisible = visible
+        }
         .onChange(of: macroPickerPresented) { _, presented in
             // When the Macro Picker is dismissed (Esc, Cmd+M toggle, Enter, or
             // background click), the overlay's `@FocusState` releases and no

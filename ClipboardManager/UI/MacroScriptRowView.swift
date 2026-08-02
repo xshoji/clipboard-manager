@@ -34,6 +34,7 @@ struct MacroScriptRowView: View {
     @State private var isPresentingConfirm: Bool = false
     @State private var isPresentingRemoveConfirm: Bool = false
     @State private var shouldTestAfterSave: Bool = false
+    @State private var testInput: String = ""
     @State private var debugReport: MacroDebugReport?
     @State private var testTask: Task<Void, Never>?
     /// `true` when the in-flight `apply()` was triggered by a
@@ -66,6 +67,7 @@ struct MacroScriptRowView: View {
         _sourceType = State(initialValue: macro.inlineScript == nil ? "file" : "inline")
         _path = State(initialValue: macro.scriptPath)
         _inlineScript = State(initialValue: macro.inlineScript ?? "")
+        _testInput = State(initialValue: macro.testInput ?? "")
         _interpreter = State(initialValue: macro.interpreter)
         _interpreterPreset = State(
             initialValue: Self.shellPresets.contains(macro.interpreter) ? macro.interpreter : "custom"
@@ -139,14 +141,14 @@ struct MacroScriptRowView: View {
                 }
             } else {
                 Text("Script")
-                ShellScriptEditor(text: $inlineScript)
+                PlainTextEditor(text: $inlineScript)
                     .accessibilityIdentifier("\(accessibilityIDPrefix).inlineScript")
                     .frame(maxWidth: .infinity, minHeight: 180)
                     .overlay {
                         RoundedRectangle(cornerRadius: 5)
                             .stroke(Color.secondary.opacity(0.25))
                     }
-                if ShellScriptEditor.containsSmartQuotes(in: inlineScript) {
+                if PlainTextEditor.containsSmartQuotes(in: inlineScript) {
                     settingsRow("") {
                         Label(
                             "Smart quotes detected. Replace \" \" with straight quotes (\").",
@@ -165,6 +167,20 @@ struct MacroScriptRowView: View {
                     }
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
+                }
+            }
+            settingsRow("Test Input") {
+                VStack(alignment: .leading, spacing: 4) {
+                    PlainTextEditor(text: $testInput)
+                        .frame(height: testInput.isEmpty ? 28 : 72)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(Color.secondary.opacity(0.25))
+                        }
+                        .accessibilityIdentifier("\(accessibilityIDPrefix).testInput")
+                    Text("Saved automatically with this Macro and used only by Test Run.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
             if showFingerprintCaptured {
@@ -284,6 +300,7 @@ struct MacroScriptRowView: View {
             showFingerprintCaptured = false
             checkDirty()
         }
+        .onChange(of: testInput) { _, _ in saveTestInput() }
         .onChange(of: interpreter) { _, _ in
             showFingerprintCaptured = false
             checkDirty()
@@ -333,17 +350,15 @@ struct MacroScriptRowView: View {
         && (sourceType == "inline"
             ? !inlineScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             : !path.trimmingCharacters(in: .whitespaces).isEmpty)
-        && historyViewModel.selectedItem != nil
         && !isTestRunning
         && !isPresentingConfirm
     }
 
     private var testRunHelp: String {
-        if historyViewModel.selectedItem == nil { return "Select a clipboard history item before testing this Macro." }
         if hasContentChanges || macro.lastFingerprint == nil {
-            return "Save and confirm this Macro, then debug it against the selected history item."
+            return "Save and confirm this Macro, then debug it with the Test Input."
         }
-        return "Run with the normal Macro environment and inspect the result without changing the pasteboard."
+        return "Run with the Test Input and inspect the result without changing the pasteboard."
     }
 
     private func browse() {
@@ -471,6 +486,14 @@ struct MacroScriptRowView: View {
         onUpdate(edited)
     }
 
+    private func saveTestInput() {
+        let storedInput = testInput.isEmpty ? nil : testInput
+        guard storedInput != macro.testInput else { return }
+        var edited = macro
+        edited.testInput = storedInput
+        onUpdate(edited)
+    }
+
     private func testRun() {
         guard canTestRun else { return }
         if hasContentChanges || macro.lastFingerprint == nil {
@@ -482,7 +505,7 @@ struct MacroScriptRowView: View {
     }
 
     private func runTest(savedMacro: MacroScript) {
-        guard let item = historyViewModel.selectedItem else { return }
+        let inputText = testInput
         testTask?.cancel()
         isTestRunning = true
         testTask = Task { @MainActor in
@@ -491,7 +514,7 @@ struct MacroScriptRowView: View {
                 testTask = nil
             }
             do {
-                let report = try await historyViewModel.debugMacro(macro: savedMacro, item: item)
+                let report = try await historyViewModel.debugMacro(macro: savedMacro, inputText: inputText)
                 guard !Task.isCancelled else { return }
                 debugReport = report
             } catch is CancellationError {
@@ -509,6 +532,7 @@ struct MacroScriptRowView: View {
     private func remove() {
         testTask?.cancel()
         testTask = nil
+        onDirtyChange?(macro.id, false)
         var arr = settings.macroScripts
         arr.removeAll { $0.id == macro.id }
         settings.macroScripts = arr
@@ -521,6 +545,7 @@ struct MacroScriptRowView: View {
         }
         if path == previous.scriptPath { path = updated.scriptPath }
         if inlineScript == (previous.inlineScript ?? "") { inlineScript = updated.inlineScript ?? "" }
+        if testInput == (previous.testInput ?? "") { testInput = updated.testInput ?? "" }
         if interpreter == previous.interpreter {
             interpreter = updated.interpreter
             interpreterPreset = Self.shellPresets.contains(updated.interpreter) ? updated.interpreter : "custom"
@@ -749,9 +774,8 @@ private struct MacroDebugConsoleView: View {
     }
 }
 
-/// Plain-text editor for shell code.
-/// Disables macOS smart quotes, dashes, and auto-substitution to preserve typed ASCII symbols.
-struct ShellScriptEditor: NSViewRepresentable {
+/// Plain-text editor that preserves input verbatim by disabling macOS text substitutions.
+struct PlainTextEditor: NSViewRepresentable {
     @Binding var text: String
 
     func makeCoordinator() -> Coordinator {
@@ -805,12 +829,12 @@ struct ShellScriptEditor: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: ShellScriptEditor
+        var parent: PlainTextEditor
         /// `true` while the parent is programmatically setting `textView.string`,
         /// so `textDidChange` is ignored and the binding is not overwritten.
         var isUpdatingFromParent = false
 
-        init(parent: ShellScriptEditor) {
+        init(parent: PlainTextEditor) {
             self.parent = parent
         }
 

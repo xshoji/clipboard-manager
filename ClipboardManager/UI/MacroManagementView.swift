@@ -108,7 +108,14 @@ struct MacroManagementView: View {
 
     private func addMacro() {
         // The row's Save action presents the required registration confirmation.
+        let existingOrders = Set(settings.macroScripts.compactMap(\.order))
+        let maximumOrder = existingOrders.max() ?? 0
+        let (incrementedOrder, overflowed) = maximumOrder.addingReportingOverflow(10)
+        let nextOrder = overflowed
+            ? (0...settings.macroScripts.count).lazy.map { $0 * 10 }.first { !existingOrders.contains($0) } ?? 0
+            : incrementedOrder
         settings.macroScripts.append(MacroScript(
+            order: nextOrder,
             name: "New Macro",
             scriptPath: "",
             inlineScript: """

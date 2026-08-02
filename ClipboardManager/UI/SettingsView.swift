@@ -3,12 +3,14 @@ import AppKit
 
 struct SettingsView: View {
     @Environment(AppSettings.self) private var settings
+    @Environment(SettingsViewModel.self) private var viewModel
     @State private var retention: Int
     @State private var maxCount: Int
     @State private var maxItem: Int
     @State private var hotkeyAlert: HotkeyAlert?
     @State private var selectedSection: SettingsSection = .application
     @State private var isAccessibilityGranted = false
+    @State private var configurationAlert: ConfigurationAlert?
 
     private enum SettingsSection: String, CaseIterable, Identifiable {
         case application
@@ -52,6 +54,12 @@ struct SettingsView: View {
                 "Action hotkeys cannot share the same shortcut. Choose a different shortcut for one of them."
             }
         }
+    }
+
+    private struct ConfigurationAlert: Identifiable {
+        let id = UUID()
+        let title: String
+        let message: String
     }
 
     init() {
@@ -281,6 +289,8 @@ struct SettingsView: View {
             } footer: {
                 Text("Accessibility is used for automatic pasting and detecting when an edited Preview window closes.")
             }
+
+            configurationSection
         }
         .formStyle(.grouped)
         .textSelection(.enabled)
@@ -294,6 +304,11 @@ struct SettingsView: View {
                 hotkeyAlert = .unavailable
             }
         }
+        .onChange(of: viewModel.configurationRevision) { _, _ in
+            retention = settings.retentionDays
+            maxCount = settings.maxHistoryCount
+            maxItem = settings.maxItemSizeMB
+        }
         .alert(item: $hotkeyAlert) { alert in
             Alert(
                 title: Text(alert.title),
@@ -302,6 +317,75 @@ struct SettingsView: View {
             )
         }
     }
+
+    private var configurationSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(viewModel.configurationFileURL.path)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("settings.configuration.path")
+                HStack {
+                    Button("Open Config File") {
+                        NSWorkspace.shared.open(viewModel.configurationFileURL)
+                    }
+                    .accessibilityIdentifier("settings.configuration.open")
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([viewModel.configurationFileURL])
+                    }
+                    .accessibilityIdentifier("settings.configuration.reveal")
+                    Button("Reload Config", action: reloadConfiguration)
+                        .accessibilityIdentifier("settings.configuration.reload")
+                    if viewModel.isConfigurationOperationInProgress {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+                .disabled(viewModel.isConfigurationOperationInProgress)
+                if let error = viewModel.configurationStatus.errorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("settings.configuration.error")
+                } else if let loadedAt = viewModel.configurationStatus.lastLoadedAt {
+                    Text("Last synchronized \(Self.restoreDateFormatter.string(from: loadedAt))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("Configuration")
+        } footer: {
+            Text("This JSON file is the source of truth and is updated automatically. Inline code and Test Inputs are included; external script files are referenced by path only. External changes are validated before being applied.")
+        }
+        .alert(item: $configurationAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
+    }
+
+    private func reloadConfiguration() {
+        Task { @MainActor in
+            do {
+                try await viewModel.reloadConfiguration()
+            } catch {
+                configurationAlert = ConfigurationAlert(
+                    title: "Reload Failed",
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private static let restoreDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
 
     private func commit(key: ReferenceWritableKeyPath<AppSettings, Int>, _ value: Int) {
         settings[keyPath: key] = value
