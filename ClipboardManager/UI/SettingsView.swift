@@ -341,21 +341,12 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("settings.configuration.location")
                 HStack {
-                    Button("Open Config File") {
-                        NSWorkspace.shared.open(viewModel.configurationFileURL)
-                    }
-                    .accessibilityIdentifier("settings.configuration.open")
                     Button("Reveal in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([viewModel.configurationFileURL])
                     }
                     .accessibilityIdentifier("settings.configuration.reveal")
-                    Button("Reload Config", action: reloadConfiguration)
-                        .accessibilityIdentifier("settings.configuration.reload")
-                }
-                .disabled(viewModel.isConfigurationOperationInProgress)
-                HStack {
-                    Button("Change Location…", action: chooseConfigurationLocation)
-                        .accessibilityIdentifier("settings.configuration.changeLocation")
+                    Button("Change and Reload Config…", action: changeAndReloadConfiguration)
+                        .accessibilityIdentifier("settings.configuration.changeAndReload")
                         .disabled(!viewModel.allowsConfigurationLocationChanges)
                     Button("Reset Location") {
                         isResetConfigurationLocationConfirmationPresented = true
@@ -457,20 +448,7 @@ struct SettingsView: View {
         }
     }
 
-    private func reloadConfiguration() {
-        Task { @MainActor in
-            do {
-                try await viewModel.reloadConfiguration()
-            } catch {
-                configurationAlert = ConfigurationAlert(
-                    title: "Reload Failed",
-                    message: error.localizedDescription
-                )
-            }
-        }
-    }
-
-    private func chooseConfigurationLocation() {
+    private func changeAndReloadConfiguration() {
         guard viewModel.unsavedMacroIDs.isEmpty else {
             configurationAlert = ConfigurationAlert(
                 title: "Unsaved Macro Edits",
@@ -480,7 +458,7 @@ struct SettingsView: View {
         }
 
         let panel = NSOpenPanel()
-        panel.title = "Choose Configuration Location"
+        panel.title = "Change and Reload Configuration"
         panel.message = "Choose an existing config.json to apply, or choose a folder for a new config.json."
         panel.prompt = "Choose"
         panel.canChooseFiles = true
