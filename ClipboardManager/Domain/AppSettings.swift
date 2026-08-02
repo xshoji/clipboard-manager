@@ -22,6 +22,7 @@ struct Setting<T> {
         }
         nonmutating set {
             storedIn.set(newValue, forKey: key)
+            NotificationCenter.default.post(name: .appSettingsDidChange, object: nil)
         }
     }
 }
@@ -102,7 +103,10 @@ final class AppSettings: @unchecked Sendable {
     /// tracks changes and the Settings toggle updates reliably even after
     /// `requestAccessibility()` causes window focus changes.
     var needsAccessibilityForSyntheticPaste: Bool = false {
-        didSet { UserDefaults.standard.set(needsAccessibilityForSyntheticPaste, forKey: "needsAccessibilityForSyntheticPaste") }
+        didSet {
+            UserDefaults.standard.set(needsAccessibilityForSyntheticPaste, forKey: "needsAccessibilityForSyntheticPaste")
+            notifySettingsChanged()
+        }
     }
     @ObservationIgnored @Setting("launchAtLogin", default: false) var launchAtLogin: Bool
     /// Behavior when a Macro fails (design-implementation.md §5: timeout / non-zero exit).
@@ -124,32 +128,53 @@ final class AppSettings: @unchecked Sendable {
     /// inline-initializer form read UserDefaults at first property access, which
     /// could theoretically drift if another thread wrote before evaluation).
     var ocrLanguages: [String] = ["en-US"] {
-        didSet { UserDefaults.standard.set(ocrLanguages, forKey: "ocrLanguages") }
+        didSet {
+            UserDefaults.standard.set(ocrLanguages, forKey: "ocrLanguages")
+            notifySettingsChanged()
+        }
     }
     /// Runs on-device OCR for newly saved image history entries. Existing entries
     /// are intentionally not backfilled. Defaults off to avoid unexpected energy use
     /// and searchable storage of text contained in images.
     var automaticImageOcrEnabled: Bool = false {
-        didSet { UserDefaults.standard.set(automaticImageOcrEnabled, forKey: "automaticImageOcrEnabled") }
+        didSet {
+            UserDefaults.standard.set(automaticImageOcrEnabled, forKey: "automaticImageOcrEnabled")
+            notifySettingsChanged()
+        }
     }
 
     var isAlwaysOnTop: Bool = false {
-        didSet { UserDefaults.standard.set(isAlwaysOnTop, forKey: "isAlwaysOnTop") }
+        didSet {
+            UserDefaults.standard.set(isAlwaysOnTop, forKey: "isAlwaysOnTop")
+            notifySettingsChanged()
+        }
     }
     var isSidebarVisible: Bool = true {
-        didSet { UserDefaults.standard.set(isSidebarVisible, forKey: "isSidebarVisible") }
+        didSet {
+            UserDefaults.standard.set(isSidebarVisible, forKey: "isSidebarVisible")
+            notifySettingsChanged()
+        }
     }
     var isSplitView: Bool = true {
-        didSet { UserDefaults.standard.set(isSplitView, forKey: "isSplitView") }
+        didSet {
+            UserDefaults.standard.set(isSplitView, forKey: "isSplitView")
+            notifySettingsChanged()
+        }
     }
     var previewWrapMode: String = "wrap" {
-        didSet { UserDefaults.standard.set(previewWrapMode, forKey: "previewWrapMode") }
+        didSet {
+            UserDefaults.standard.set(previewWrapMode, forKey: "previewWrapMode")
+            notifySettingsChanged()
+        }
     }
     /// History window placement when invoked by the global hotkey / menu bar.
     /// - `"center"` (default): center of the screen containing the cursor.
     /// - `"nearCursor"`: position the window near the cursor (design-ui.md §1).
     var windowPositionMode: String = "center" {
-        didSet { UserDefaults.standard.set(windowPositionMode, forKey: "windowPositionMode") }
+        didSet {
+            UserDefaults.standard.set(windowPositionMode, forKey: "windowPositionMode")
+            notifySettingsChanged()
+        }
     }
 
     @ObservationIgnored @Setting("macroScriptsData", default: Data()) var macroScriptsData: Data
@@ -168,7 +193,12 @@ final class AppSettings: @unchecked Sendable {
                 macroScriptsData = data
             }
             NotificationCenter.default.post(name: .macroScriptsChanged, object: nil)
+            notifySettingsChanged()
         }
+    }
+
+    private func notifySettingsChanged() {
+        NotificationCenter.default.post(name: .appSettingsDidChange, object: nil)
     }
 
     private init() {
@@ -186,4 +216,8 @@ final class AppSettings: @unchecked Sendable {
             macroScripts = decoded
         }
     }
+}
+
+extension Notification.Name {
+    static let appSettingsDidChange = Notification.Name("appSettingsDidChange")
 }
