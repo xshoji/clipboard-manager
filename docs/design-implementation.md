@@ -199,6 +199,7 @@ final class ClipboardEntity {
 - `dedupCacheSize: Int` (default 100) — [deprecated] recent hash cache size. The `DedupCache` ring buffer is no longer used; the setting is retained only for backward compatibility of the UserDefaults schema and is ignored at runtime. Dedup is now a two-layer approach (see §4.1 and `ClipboardMonitor.removeDuplicates`).
 - `macroScripts: [MacroScript]` (JSON encoded)
 - `macroSameDirectoryFingerprint: Bool` (default true) — verify script fingerprint before run
+- `macroTimeoutSeconds: Int` (default 5, range 1–300) — maximum Macro execution time
 - `needsAccessibilityForSyntheticPaste: Bool` (default false) — enable synthetic `Cmd+V`
 
 #### UI State Persistence (corresponds to UI toggles in design-ui.md)
@@ -300,7 +301,7 @@ final class ClipboardEntity {
 | `CB_ITEM_SOURCE` | Source bundle ID (if available) | Optional |
 
 - If the output file is not created, treat as **no transformation** and paste input content as-is.
-- exit != 0 or timeout 5s is treated as "Macro failure" (see §5 response table).
+- exit != 0 or the configured timeout (5s by default) is treated as "Macro failure" (see §5 response table).
 - Normal Macro runs send stdout/stderr to the null device so verbose scripts cannot block on full process pipes and no unused logs are retained.
 - The Settings Macro row stores a reusable text test case with each Macro for
   **Test Run**. It is saved automatically and does not read from or require a selected history item.
@@ -413,7 +414,7 @@ Key behaviors:
 | Paste method | Simple approach: write to pasteboard then activate previous app. Synthetic Cmd+V requires accessibility, so not prioritized (`AppSettings.needsAccessibilityForSyntheticPaste` for future) |
 | Plain text paste | Set only `NSStringPboardType` on `NSPasteboard` (do not co-write RTF) |
 | Macro file format | Assume `.txt` for text and `.png` for image. Detect output with same extension |
-| Macro failure | 5s timeout, exit != 0 → user notification + paste original content (default, configurable) |
+| Macro failure | Configurable timeout (5s default), exit != 0 → user notification + paste original content (default, configurable) |
 | Large image rejection | `maxItemSizeMB` in UserDefaults, skip save + notify on exceed. Default 10MB |
 | Dedup | Two layers: (1) in-memory `lastSavedContentHash` skips a save entirely when the copy matches the immediately-preceding save; (2) `ClipboardMonitor.removeDuplicates` deletes older entities with the same `contentHash` before insert, so each hash has at most one entry and the new copy bubbles to the top. The previous `DedupCache` ring buffer (`dedupCacheSize` default 100) is deprecated. |
 | Sanitize | Invalid RTF load via try/catch + Data validation, corrupt Entity deleted |
