@@ -524,6 +524,44 @@ final class SettingsConfigurationTests: XCTestCase {
         XCTAssertEqual(plan.macros.compactMap(\.order), [0, 40])
     }
 
+    func testConfigurationRoundTripsMacroTimeoutAndDefaultsMissingValue() throws {
+        let settings = AppSettings.shared
+        let previousTimeout = settings.macroTimeoutSeconds
+        defer { settings.macroTimeoutSeconds = previousTimeout }
+        settings.macroTimeoutSeconds = 17
+
+        let encoded = try JSONEncoder().encode(SettingsConfigurationDocument(settings: settings))
+        let decoded = try JSONDecoder().decode(SettingsConfigurationDocument.self, from: encoded)
+        XCTAssertEqual(try decoded.validatedPlan().settings.macroTimeoutSeconds, 17)
+
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        var settingsObject = try XCTUnwrap(object["settings"] as? [String: Any])
+        settingsObject.removeValue(forKey: "macroTimeoutSeconds")
+        object["settings"] = settingsObject
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        let legacyDocument = try JSONDecoder().decode(SettingsConfigurationDocument.self, from: legacyData)
+        let legacySettings = try legacyDocument.validatedPlan().settings
+
+        XCTAssertNil(legacySettings.macroTimeoutSeconds)
+        legacySettings.apply(to: settings)
+        XCTAssertEqual(settings.macroTimeoutSeconds, AppSettings.defaultMacroTimeoutSeconds)
+    }
+
+    func testConfigurationRejectsMacroTimeoutOutsideSupportedRange() throws {
+        let encoded = try JSONEncoder().encode(SettingsConfigurationDocument(settings: AppSettings.shared))
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        var settingsObject = try XCTUnwrap(object["settings"] as? [String: Any])
+        settingsObject["macroTimeoutSeconds"] = 301
+        object["settings"] = settingsObject
+        let invalidData = try JSONSerialization.data(withJSONObject: object)
+
+        XCTAssertThrowsError(
+            try JSONDecoder()
+                .decode(SettingsConfigurationDocument.self, from: invalidData)
+                .validatedPlan()
+        )
+    }
+
     func testConfigurationRejectsDuplicateOrder() throws {
         let settings = AppSettings.shared
         let previous = settings.macroScripts
@@ -719,7 +757,7 @@ final class PasteCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.activator.callCount, 1)
         XCTAssertEqual(harness.notifier.notifications.count, 1)
         XCTAssertEqual(harness.notifier.notifications.first?.title, "Macro failed")
-        XCTAssertEqual(harness.notifier.notifications.first?.body, "Macro script timed out (>5s).")
+        XCTAssertEqual(harness.notifier.notifications.first?.body, "Macro script timed out.")
     }
 
     func testMacroDebugUsesFixedTextInputWithoutPasteSideEffects() async throws {
@@ -958,10 +996,12 @@ final class MacroRunnerDebugTests: XCTestCase {
         let report = try await MacroRunner.debugRunAsync(
             script: script,
             input: .init(isImage: false, imageData: nil, text: "input", sourceBundleID: nil),
-            verifyFingerprint: false
+            verifyFingerprint: false,
+            timeoutSeconds: 1
         )
 
         XCTAssertTrue(report.timedOut)
+        XCTAssertLessThan(report.duration, 3)
         XCTAssertEqual(report.output?.totalByteCount, 300_000)
         XCTAssertEqual(report.output?.previewByteCount, 256 * 1024)
         XCTAssertEqual(report.output?.truncated, true)
