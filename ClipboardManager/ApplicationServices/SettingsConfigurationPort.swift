@@ -83,6 +83,7 @@ struct AppSettingsSnapshot: Codable, Sendable {
     let maxItemSizeMB: Int
     let pollingIntervalMs: Int
     let macroSameDirectoryFingerprint: Bool
+    let macroTimeoutSeconds: Int?
     let needsAccessibilityForSyntheticPaste: Bool
     let launchAtLogin: Bool
     let macroFailureBehavior: String
@@ -110,6 +111,7 @@ struct AppSettingsSnapshot: Codable, Sendable {
         maxItemSizeMB = settings.maxItemSizeMB
         pollingIntervalMs = settings.pollingIntervalMs
         macroSameDirectoryFingerprint = settings.macroSameDirectoryFingerprint
+        macroTimeoutSeconds = settings.macroTimeoutSeconds
         needsAccessibilityForSyntheticPaste = settings.needsAccessibilityForSyntheticPaste
         launchAtLogin = settings.launchAtLogin
         macroFailureBehavior = settings.macroFailureBehavior
@@ -146,7 +148,8 @@ struct AppSettingsSnapshot: Codable, Sendable {
         guard (0...36_500).contains(retentionDays),
               (1...1_000_000).contains(maxHistoryCount),
               (1...10_000).contains(maxItemSizeMB),
-              (50...60_000).contains(pollingIntervalMs) else {
+              (50...60_000).contains(pollingIntervalMs),
+              macroTimeoutSeconds.map({ (1...300).contains($0) }) ?? true else {
             throw SettingsConfigurationError.invalidData("The configuration contains settings outside the supported range.")
         }
         guard ["wrap", "nowrap"].contains(previewWrapMode),
@@ -178,6 +181,7 @@ struct AppSettingsSnapshot: Codable, Sendable {
         settings.maxItemSizeMB = maxItemSizeMB
         settings.pollingIntervalMs = pollingIntervalMs
         settings.macroSameDirectoryFingerprint = macroSameDirectoryFingerprint
+        settings.macroTimeoutSeconds = macroTimeoutSeconds ?? AppSettings.defaultMacroTimeoutSeconds
         settings.needsAccessibilityForSyntheticPaste = needsAccessibilityForSyntheticPaste
         settings.launchAtLogin = launchAtLogin
         settings.macroFailureBehavior = macroFailureBehavior
