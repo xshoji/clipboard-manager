@@ -123,6 +123,13 @@ ClipboardManager/
 | `Domain` | Data models and pure rules. Knows nothing about persistence details |
 | `Infrastructure` | Integration with external APIs: SwiftData, NSPasteboard, Carbon API, Process, etc. Conforms to ApplicationServices port protocols |
 
+## Settings Synchronization
+
+- Whenever adding, removing, renaming, or changing a Settings item, also update the canonical `config.json` synchronization contract in the same change.
+- Ensure the setting is represented in `SettingsConfigurationDocument` / `AppSettingsSnapshot`, encoded on app-side changes, decoded and validated on external reload, and applied back to `AppSettings`.
+- Add or update focused round-trip and validation tests. A Settings UI or UserDefaults change is incomplete until its `config.json` behavior is covered.
+- Keep machine-local bootstrap metadata, permissions, and other explicitly excluded values outside `config.json`; document any new exclusion rather than omitting it silently.
+
 ## Execution Loop
 
 1. Inspect related code and authoritative docs.
