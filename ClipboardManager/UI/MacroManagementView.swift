@@ -90,6 +90,24 @@ struct MacroManagementView: View {
                     Text("Silent").tag("silentlySkip")
                 }
 
+                LabeledContent("Timeout") {
+                    HStack(spacing: 8) {
+                        Text("\(settings.macroTimeoutSeconds) sec")
+                            .monospacedDigit()
+                            .accessibilityIdentifier("macro.timeout.value")
+                        Stepper(
+                            "Macro timeout",
+                            value: Binding(
+                                get: { settings.macroTimeoutSeconds },
+                                set: { settings.macroTimeoutSeconds = $0 }
+                            ),
+                            in: 1...300
+                        )
+                        .labelsHidden()
+                        .accessibilityIdentifier("macro.timeout.stepper")
+                    }
+                }
+
                 Toggle(
                     "Verify script fingerprint before run",
                     isOn: Binding(
