@@ -98,6 +98,13 @@ final class AppSettings: @unchecked Sendable {
     /// near-instant for typical copy operations. Tunable via Settings in the future.
     @ObservationIgnored @Setting("pollingIntervalMs", default: 250)   var pollingIntervalMs: Int
     @ObservationIgnored @Setting("macroSameDirectoryFingerprint", default: true) var macroSameDirectoryFingerprint: Bool
+    static let defaultMacroTimeoutSeconds = 5
+    var macroTimeoutSeconds = AppSettings.defaultMacroTimeoutSeconds {
+        didSet {
+            UserDefaults.standard.set(macroTimeoutSeconds, forKey: "macroTimeoutSeconds")
+            notifySettingsChanged()
+        }
+    }
     /// Enable synthetic Cmd+V paste (requires Accessibility permission).
     /// Stored with `didSet` (not `@ObservationIgnored @Setting`) so `@Observable`
     /// tracks changes and the Settings toggle updates reliably even after
@@ -210,6 +217,7 @@ final class AppSettings: @unchecked Sendable {
         ocrLanguages      = UserDefaults.standard.object(forKey: "ocrLanguages")      as? [String] ?? ocrLanguages
         automaticImageOcrEnabled = UserDefaults.standard.object(forKey: "automaticImageOcrEnabled") as? Bool ?? automaticImageOcrEnabled
         needsAccessibilityForSyntheticPaste = UserDefaults.standard.object(forKey: "needsAccessibilityForSyntheticPaste") as? Bool ?? needsAccessibilityForSyntheticPaste
+        macroTimeoutSeconds = UserDefaults.standard.object(forKey: "macroTimeoutSeconds") as? Int ?? macroTimeoutSeconds
 
         if !macroScriptsData.isEmpty,
            let decoded = try? JSONDecoder().decode([MacroScript].self, from: macroScriptsData) {
