@@ -356,15 +356,20 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(nameAfterSeed.hasSuffix("X"),
                       "Name should reflect seeded edit after registration, got '\(nameAfterSeed)'")
 
-        // Test Run is a side-effect-free debug execution. Seed a selected
-        // history item, run the Macro, and verify the console appears without
-        // replacing the case-specific pasteboard value.
-        try seedClipboardHistory(app: app, text: "MacroDebugInput")
+        // Test Run is a side-effect-free debug execution. Supply its dedicated
+        // saved test case, run the Macro without a selected history item,
+        // and verify the console appears without replacing the pasteboard.
+        let testInputScroll = app.scrollViews["macro.0.testInput"]
+        XCTAssertTrue(exists(testInputScroll, timeout: 5), "Macro Test Input field not found")
+        let testInput = testInputScroll.textViews.firstMatch
+        XCTAssertTrue(exists(testInput, timeout: 5), "Macro Test Input editor not found")
+        testInput.click()
+        testInput.typeText("foo fixed input")
         let pasteboardBeforeDebug = pasteboard.string(forType: .string)
         let testRunButton = app.buttons["macro.0.testRun"]
         XCTAssertTrue(exists(testRunButton, timeout: 5), "Macro Test Run button not found")
         XCTAssertTrue(waitForEnabled(testRunButton, timeout: 5),
-                      "Macro Test Run should be enabled after selecting a history item")
+                      "Macro Test Run should be enabled without a selected history item")
         testRunButton.click()
         XCTAssertTrue(exists(app.staticTexts["Macro Debug Console"], timeout: 10),
                       "Macro debug console did not appear")
@@ -376,8 +381,9 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(exists(copyDebugReportButton, timeout: 5), "Macro debug Copy Report button not found")
         copyDebugReportButton.click()
         XCTAssertTrue(waitUntil(timeout: 5) {
-            self.pasteboard.string(forType: .string)?.contains("Macro: New MacroX") == true
-        }, "Copy Report should write to the case-specific pasteboard")
+            guard let report = self.pasteboard.string(forType: .string) else { return false }
+            return report.contains("Macro: New MacroX") && report.contains("bar fixed input")
+        }, "Copy Report should contain the output transformed from the fixed Test Input")
         let debugDoneButton = app.buttons["macroDebug.done"]
         XCTAssertTrue(exists(debugDoneButton, timeout: 5), "Macro debug Done button not found")
         debugDoneButton.click()
@@ -1173,7 +1179,7 @@ final class SmokeUITests: XCTestCase {
         // Edit the inline script body so the macro writes a unique marker to
         // its normal output file. PasteCoordinator then places that output on
         // the case-specific pasteboard, which the test process can observe directly.
-        // ShellScriptEditor is an NSViewRepresentable that wraps NSScrollView
+        // PlainTextEditor is an NSViewRepresentable that wraps NSScrollView
         // + NSTextView. The accessibilityIdentifier("macro.0.inlineScript") is
         // applied to the SwiftUI view, which surfaces on the underlying
         // NSScrollView in the AX tree — so we resolve it as a ScrollView, then

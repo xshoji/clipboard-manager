@@ -134,8 +134,16 @@ row separators are used; sections do not add manual dividers.
 - A dedicated view supports Macro registration, editing, test runs, and confirmed removal.
 - New Macros start as editable inline-shell examples; file-backed scripts can be selected in the editor.
 - Registration and script changes require the existing trust confirmation and fingerprint capture flow.
-- A saved Macro can be test-run against the currently selected history item with the same execution environment used by the main window. Test Run opens a debug console with exit status, stdout, stderr, environment variables, and a size-bounded transformed-output preview; it does not update the pasteboard or switch applications. Copy Report uses the app's monitored pasteboard boundary so the report is not re-added to history.
+- Each Macro stores a reusable text test case used only by Test Run, allowing scripts to be tested without changing or selecting clipboard history. The test input is saved automatically with the Macro. Test Run uses that fixed text with the same execution environment used by the main window and opens a debug console with exit status, stdout, stderr, environment variables, and a size-bounded transformed-output preview; it does not update the pasteboard or switch applications. Copy Report uses the app's monitored pasteboard boundary so the report is not re-added to history.
 - Macro failure behavior and fingerprint verification are configured in this view because they apply to script execution rather than general app behavior.
+
+### 7.3 Canonical Configuration
+
+- App Settings displays the canonical configuration path, `~/.config/clipboard-manager/config.json`, with actions to open it, reveal it in Finder, or reload it.
+- Settings and Macro changes update that file automatically. External file replacements, including Git checkouts, are monitored and validated before being applied.
+- The configuration contains application settings, Macro settings, explicit stable Macro order, inline code, and each Macro's Test Input. Clipboard history, macOS permissions, debug results, and local Macro trust fingerprints are excluded.
+- File-backed Macros include only their external script path. The script content and its dependencies are not copied.
+- Invalid external changes do not alter live settings or get overwritten. External changes wait while a Macro editor contains unsaved changes.
 
 ## 8. Menu Bar Icon Menu
 

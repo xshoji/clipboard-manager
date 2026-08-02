@@ -63,6 +63,14 @@ bash, that's one more language to learn for no reason. Macro scripts run
 once, register it, and invoke it with its own hotkey or through the
 keyboard-driven picker (`Cmd+M`) without touching the mouse.
 
+### Git-friendly configuration
+Application settings and Macros are stored in one canonical JSON file at
+`~/.config/clipboard-manager/config.json`. The app updates it automatically and
+validates external edits before applying them, so the file can be managed in a
+dotfiles or other Git repository. Inline code, reusable Test Inputs, and stable
+Macro ordering are included. File-backed Macros store only their external script
+path; the script file and its dependencies remain externally managed.
+
 ### Image editing via Preview.app
 Hit Edit on an image entry and it opens in Preview — the same editor
 you already know, launched as a real external process. `Cmd+S` saves

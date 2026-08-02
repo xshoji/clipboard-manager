@@ -64,7 +64,8 @@ ClipboardManager/
 │   ├── ClipboardRepositoryPort.swift     # ClipboardRepositoryPort + ClipboardHistoryWriting (Presentation/Infrastructure-facing)
 │   ├── ClipboardRepository.swift         # Port-mediated persistence boundary (DI)
 │   ├── ClipboardPersistencePort.swift    # Port protocol abstracting PersistenceController + ClipboardDataActor
-│   └── PasteCoordinatorPorts.swift       # Paste-side port protocols
+│   ├── PasteCoordinatorPorts.swift       # Paste-side port protocols
+│   └── SettingsConfigurationPort.swift   # Canonical JSON configuration schema + port
 ├── UI/                                # SwiftUI views
 │   ├── MainView.swift                # 2-pane layout
 │   ├── HeaderBar.swift                # Header controls
@@ -90,6 +91,7 @@ ClipboardManager/
 │   ├── HotkeyManager.swift          # Carbon API wrapper
 │   ├── PreviewImageEditor.swift      # Preview.app integration for image editing
 │   ├── MacroRunner.swift              # Launch scripts via Process
+│   ├── SettingsConfigurationAdapter.swift # Atomic JSON persistence + external-change monitoring
 │   ├── PersistenceController.swift  # SwiftData ModelContainer + cleanup
 │   ├── ClipboardPersistenceAdapter.swift  # ClipboardPersistencePort adapter (owns PersistenceController + ClipboardDataActor)
 │   ├── ClipboardDataActor.swift        # @ModelActor performing off-main reads
@@ -213,6 +215,8 @@ final class ClipboardEntity {
 | id | UUID | Primary key |
 | name | String | Registered name |
 | scriptPath | String | Script file path |
+| inlineScript | String? | Inline script code; `nil` for file-backed Macros |
+| testInput | String? | Reusable text fixture saved with the Macro for Test Run |
 | interpreter | String | `/bin/sh`, `python3`, etc. |
 | hotkeyCode | Int | For shortcut binding |
 | hotkeyModifiers | Int | Ditto |
@@ -298,9 +302,11 @@ final class ClipboardEntity {
 - If the output file is not created, treat as **no transformation** and paste input content as-is.
 - exit != 0 or timeout 5s is treated as "Macro failure" (see §5 response table).
 - Normal Macro runs send stdout/stderr to the null device so verbose scripts cannot block on full process pipes and no unused logs are retained.
-- The Settings Macro row's **Test Run** action requires a selected history item.
+- The Settings Macro row stores a reusable text test case with each Macro for
+  **Test Run**. It is saved automatically and does not read from or require a selected history item.
   New or edited Macros first pass through the normal registration/change
-  confirmation and fingerprint-save flow. Test Run uses the same input-file,
+  confirmation and fingerprint-save flow. Test Run writes the configured text
+  to a `.txt` input file and uses the same input-file,
   environment-variable, interpreter, fingerprint, and timeout setup as a normal
   Macro run, but it does not write to the pasteboard, activate another app, or
   apply the configured failure fallback. A debug console shows the command,
@@ -386,6 +392,16 @@ Key behaviors:
 - `retentionDays`, `maxHistoryCount` slider: 1 second debounce.
 - `macroScripts` add/edit: immediate (user action each time).
 - `pollingIntervalMs` change: immediate (ClipboardMonitor rebuilds timer on next poll).
+
+### 4.5 Canonical Settings and Macro Configuration
+
+- `~/.config/clipboard-manager/config.json` is the versioned, size-bounded source of truth for explicit application settings and Macro snapshots. If it does not exist, the app migrates the current UserDefaults values into it once.
+- Inline Macros include their code; file-backed Macros include only the external path because one script file does not represent its dependencies or runtime environment. Test Input is included for both source types.
+- Each Macro has a unique non-negative integer `order`. Gaps are valid, reads sort by `order`, and a newly registered Macro uses the current maximum plus 10 to keep ordering stable in Git diffs.
+- App changes are written after a short debounce using pretty-printed, sorted JSON and atomic replacement. A directory watcher handles editor saves and Git checkout inode replacement; self-writes are ignored by content hash.
+- Reads reject files larger than 10 MB, unknown format versions, duplicate Macro IDs or order values, conflicting truncated Carbon IDs, invalid source discriminators, and unsupported setting values before changing `AppSettings`.
+- Invalid external content is never applied or overwritten. External reload waits while Macro rows have unsaved edits, and runtime hotkey failures roll settings back.
+- Clipboard history, macOS permissions, and Macro trust fingerprints remain local and outside this contract. Existing trust is retained only when a Macro ID and source are unchanged.
 
 ## 5. Technical Concerns and Mitigations
 

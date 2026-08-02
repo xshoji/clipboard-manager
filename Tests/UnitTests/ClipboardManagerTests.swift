@@ -2,6 +2,207 @@ import AppKit
 import XCTest
 @testable import ClipboardManager
 
+final class MacroScriptTests: XCTestCase {
+    func testDecodesExistingSettingsWithoutTestInput() throws {
+        let id = UUID()
+        let data = Data("""
+        {
+          "id": "\(id.uuidString)",
+          "name": "Existing Macro",
+          "scriptPath": "",
+          "inlineScript": "cat",
+          "interpreter": "/bin/sh",
+          "hotkeyCode": 0,
+          "hotkeyModifiers": 0
+        }
+        """.utf8)
+
+        let macro = try JSONDecoder().decode(MacroScript.self, from: data)
+
+        XCTAssertNil(macro.order)
+        XCTAssertNil(macro.testInput)
+    }
+
+    func testRoundTripsTestInputWithMacroSettings() throws {
+        let macro = MacroScript(
+            name: "Testable Macro",
+            scriptPath: "",
+            inlineScript: "cat",
+            testInput: "reusable test case"
+        )
+
+        let decoded = try JSONDecoder().decode(
+            MacroScript.self,
+            from: JSONEncoder().encode(macro)
+        )
+
+        XCTAssertEqual(decoded.testInput, "reusable test case")
+    }
+}
+
+@MainActor
+final class SettingsConfigurationTests: XCTestCase {
+    func testInlineMacroRoundTripIncludesCodeAndTestInputWithoutTrustData() throws {
+        let code = """
+        #!/bin/sh
+        # Preserve comments and newlines.
+        cat "$CB_INPUT_FILE" > "$CB_OUTPUT_FILE"
+        """
+        let original = MacroScript(
+            order: 20,
+            name: "Inline Backup",
+            scriptPath: "",
+            inlineScript: code,
+            testInput: "first line\nsecond line",
+            lastFingerprint: "untrusted-backup-fingerprint"
+        )
+
+        let encoded = try JSONEncoder().encode(MacroSnapshot(macro: original))
+        let decoded = try JSONDecoder().decode(MacroSnapshot.self, from: encoded)
+        let restored = try decoded.restoredMacro()
+
+        XCTAssertEqual(restored.inlineScript, code)
+        XCTAssertEqual(restored.testInput, "first line\nsecond line")
+        XCTAssertEqual(restored.order, 20)
+        XCTAssertNil(restored.lastFingerprint)
+        XCTAssertNil(restored.lastModified)
+    }
+
+    func testFileMacroSnapshotContainsPathAndTestInputButNoCode() throws {
+        let original = MacroScript(
+            name: "External Backup",
+            scriptPath: "/tmp/external-script-does-not-exist.sh",
+            inlineScript: nil,
+            testInput: "external test case",
+            lastFingerprint: "untrusted-backup-fingerprint"
+        )
+
+        let snapshot = MacroSnapshot(macro: original)
+        let encoded = try JSONEncoder().encode(snapshot)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let source = try XCTUnwrap(object["source"] as? [String: Any])
+        let restored = try snapshot.restoredMacro()
+
+        XCTAssertEqual(source["type"] as? String, "file")
+        XCTAssertEqual(source["path"] as? String, original.scriptPath)
+        XCTAssertNil(source["code"])
+        XCTAssertEqual(restored.scriptPath, original.scriptPath)
+        XCTAssertNil(restored.inlineScript)
+        XCTAssertEqual(restored.testInput, "external test case")
+        XCTAssertNil(restored.lastFingerprint)
+    }
+
+    func testConfigurationSortsMacrosByOrderAndAllowsGaps() throws {
+        let settings = AppSettings.shared
+        let previous = settings.macroScripts
+        defer { settings.macroScripts = previous }
+        settings.macroScripts = [
+            MacroScript(order: 0, name: "First", scriptPath: "", inlineScript: "cat"),
+            MacroScript(order: 40, name: "Second", scriptPath: "", inlineScript: "cat"),
+        ]
+        let document = SettingsConfigurationDocument(settings: settings)
+        XCTAssertEqual(document.macros.map(\.order), [0, 40])
+        let encoded = try JSONEncoder().encode(document)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object["macros"] = Array(try XCTUnwrap(object["macros"] as? [[String: Any]]).reversed())
+        let reordered = try JSONSerialization.data(withJSONObject: object)
+
+        let plan = try JSONDecoder()
+            .decode(SettingsConfigurationDocument.self, from: reordered)
+            .validatedPlan()
+
+        XCTAssertEqual(plan.macros.map(\.name), ["First", "Second"])
+        XCTAssertEqual(plan.macros.compactMap(\.order), [0, 40])
+    }
+
+    func testConfigurationRejectsDuplicateOrder() throws {
+        let settings = AppSettings.shared
+        let previous = settings.macroScripts
+        defer { settings.macroScripts = previous }
+        settings.macroScripts = [
+            MacroScript(order: 10, name: "First", scriptPath: "", inlineScript: "cat"),
+            MacroScript(order: 20, name: "Second", scriptPath: "", inlineScript: "cat"),
+        ]
+        let encoded = try JSONEncoder().encode(SettingsConfigurationDocument(settings: settings))
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        var macros = try XCTUnwrap(object["macros"] as? [[String: Any]])
+        macros[1]["order"] = 10
+        object["macros"] = macros
+        let duplicateOrder = try JSONSerialization.data(withJSONObject: object)
+
+        XCTAssertThrowsError(
+            try JSONDecoder()
+                .decode(SettingsConfigurationDocument.self, from: duplicateOrder)
+                .validatedPlan()
+        )
+    }
+
+    func testMissingConfigurationMigratesCurrentSettingsWithExplicitOrders() throws {
+        let settings = AppSettings.shared
+        let previous = settings.macroScripts
+        defer { settings.macroScripts = previous }
+        settings.macroScripts = [
+            MacroScript(name: "First", scriptPath: "", inlineScript: "cat"),
+            MacroScript(name: "Second", scriptPath: "", inlineScript: "cat"),
+        ]
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("config.json")
+        let adapter = SettingsConfigurationAdapter(settings: settings, fileURL: fileURL)
+
+        adapter.loadInitialConfiguration()
+
+        let document = try JSONDecoder().decode(
+            SettingsConfigurationDocument.self,
+            from: Data(contentsOf: fileURL)
+        )
+        XCTAssertEqual(document.macros.map(\.order), [10, 20])
+        XCTAssertEqual(settings.macroScripts.compactMap(\.order), [10, 20])
+        XCTAssertNil(adapter.status.errorMessage)
+    }
+
+    func testInvalidExistingConfigurationIsNotOverwritten() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("config.json")
+        let malformed = Data("{ invalid json".utf8)
+        try malformed.write(to: fileURL)
+        let adapter = SettingsConfigurationAdapter(settings: AppSettings.shared, fileURL: fileURL)
+
+        adapter.loadInitialConfiguration()
+
+        XCTAssertEqual(try Data(contentsOf: fileURL), malformed)
+        XCTAssertNotNil(adapter.status.errorMessage)
+    }
+
+    func testMonitoredSettingsChangeWritesWithoutActorIsolationCrash() async throws {
+        let settings = AppSettings.shared
+        let previousMaxItemSize = settings.maxItemSizeMB
+        defer { settings.maxItemSizeMB = previousMaxItemSize }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("config.json")
+        let adapter = SettingsConfigurationAdapter(settings: settings, fileURL: fileURL)
+        adapter.loadInitialConfiguration()
+        adapter.startMonitoring(canApplyExternalChanges: { true })
+
+        let updatedMaxItemSize = previousMaxItemSize == 10 ? 11 : 10
+        settings.maxItemSizeMB = updatedMaxItemSize
+        try await Task.sleep(for: .seconds(1))
+        adapter.stopMonitoring()
+
+        let document = try JSONDecoder().decode(
+            SettingsConfigurationDocument.self,
+            from: Data(contentsOf: fileURL)
+        )
+        XCTAssertEqual(document.settings.maxItemSizeMB, updatedMaxItemSize)
+    }
+}
+
 @MainActor
 final class PasteCoordinatorTests: XCTestCase {
     func testCompletedOcrUsesCachedTextWithoutRecognitionOrProgress() async {
@@ -112,10 +313,8 @@ final class PasteCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.notifier.notifications.first?.body, "Macro script timed out (>5s).")
     }
 
-    func testMacroDebugUsesProductionInputWithoutPasteSideEffects() async throws {
+    func testMacroDebugUsesFixedTextInputWithoutPasteSideEffects() async throws {
         let harness = TestHarness()
-        let item = makeClipboardItem(kind: "text", sourceBundleID: "com.example.source")
-        harness.repository.fullText[item.id] = "source text"
         let expected = MacroDebugReport(
             command: "/bin/sh /tmp/macro.sh",
             environment: ["CB_ITEM_KIND": "text"],
@@ -138,14 +337,19 @@ final class PasteCoordinatorTests: XCTestCase {
         )
         await harness.macroRunner.setDebugResponse(expected)
 
-        let report = try await harness.coordinator.debugMacro(macro: makeMacro(), item: item)
+        let report = try await harness.coordinator.debugMacro(
+            macro: makeMacro(),
+            inputText: "fixed test input"
+        )
 
         XCTAssertTrue(report.succeeded)
         XCTAssertEqual(report.standardOutput, "debug output")
         let calls = await harness.macroRunner.debugCalls
         XCTAssertEqual(calls.count, 1)
-        XCTAssertEqual(calls.first?.input.text, "source text")
-        XCTAssertEqual(calls.first?.input.sourceBundleID, "com.example.source")
+        XCTAssertEqual(calls.first?.input.text, "fixed test input")
+        XCTAssertFalse(calls.first?.input.isImage ?? true)
+        XCTAssertNil(calls.first?.input.imageData)
+        XCTAssertNil(calls.first?.input.sourceBundleID)
         XCTAssertEqual(calls.first?.verifyFingerprint, true)
         XCTAssertNil(harness.pasteboard.string)
         XCTAssertEqual(harness.activator.callCount, 0)
