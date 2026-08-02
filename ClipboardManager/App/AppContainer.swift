@@ -3,6 +3,14 @@ import Foundation
 
 @MainActor
 struct AppLaunchConfiguration {
+    struct ConfigurationLocation {
+        let fileURL: URL
+        let sourceDescription: String
+        let allowsLocationChanges: Bool
+        let errorMessage: String?
+        let createsParentDirectory: Bool
+    }
+
     static let e2eBundleID = "com.xshoji.ClipboardManager.E2E"
     static let e2eDefaultsDomain = "com.xshoji.ClipboardManager.E2E"
     static let e2eTemporaryDirectoryName = "com.xshoji.ClipboardManager.E2E"
@@ -11,13 +19,20 @@ struct AppLaunchConfiguration {
 
     let isE2E: Bool
     let storeURL: URL
+    let configurationLocation: ConfigurationLocation
     let pasteboard: NSPasteboard
 
     static func resolve() -> AppLaunchConfiguration {
         guard Bundle.main.bundleIdentifier == e2eBundleID else {
+            let configurationLocation = resolveProductionConfigurationLocation(
+                environment: ProcessInfo.processInfo.environment,
+                homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
+                persistedCustomPath: SettingsConfigurationBootstrap.customPath()
+            )
             return AppLaunchConfiguration(
                 isE2E: false,
                 storeURL: PersistenceController.productionStoreURL,
+                configurationLocation: configurationLocation,
                 pasteboard: .general
             )
         }
@@ -34,8 +49,123 @@ struct AppLaunchConfiguration {
         return AppLaunchConfiguration(
             isE2E: true,
             storeURL: storeURL,
+            configurationLocation: ConfigurationLocation(
+                fileURL: storeURL.deletingLastPathComponent().appendingPathComponent("config.json"),
+                sourceDescription: "E2E isolated path",
+                allowsLocationChanges: false,
+                errorMessage: nil,
+                createsParentDirectory: false
+            ),
             pasteboard: NSPasteboard(name: NSPasteboard.Name(pasteboardName))
         )
+    }
+
+    static func resolveProductionConfigurationLocation(
+        environment: [String: String],
+        homeDirectory: URL,
+        persistedCustomPath: String? = nil,
+        fileManager: FileManager = .default
+    ) -> ConfigurationLocation {
+        if let path = environment["CLIPBOARD_MANAGER_CONFIG_PATH"] {
+            let fileURL = URL(fileURLWithPath: path, isDirectory: false).standardizedFileURL
+            let error = validateExplicitConfigurationPath(
+                path,
+                fileURL: fileURL,
+                fileManager: fileManager
+            )
+            return ConfigurationLocation(
+                fileURL: fileURL,
+                sourceDescription: "CLIPBOARD_MANAGER_CONFIG_PATH",
+                allowsLocationChanges: false,
+                errorMessage: error,
+                createsParentDirectory: false
+            )
+        }
+
+        if let path = persistedCustomPath {
+            let fileURL = URL(fileURLWithPath: path, isDirectory: false).standardizedFileURL
+            let error = validateExplicitConfigurationPath(
+                path,
+                fileURL: fileURL,
+                fileManager: fileManager,
+                pathLabel: "The custom configuration path"
+            )
+            return ConfigurationLocation(
+                fileURL: fileURL,
+                sourceDescription: "Custom location",
+                allowsLocationChanges: true,
+                errorMessage: error,
+                createsParentDirectory: false
+            )
+        }
+
+        if let path = environment["XDG_CONFIG_HOME"],
+           !path.isEmpty,
+           (path as NSString).isAbsolutePath {
+            return ConfigurationLocation(
+                fileURL: URL(fileURLWithPath: path, isDirectory: true)
+                    .appendingPathComponent("clipboard-manager", isDirectory: true)
+                    .appendingPathComponent("config.json", isDirectory: false),
+                sourceDescription: "XDG_CONFIG_HOME",
+                allowsLocationChanges: true,
+                errorMessage: nil,
+                createsParentDirectory: true
+            )
+        }
+
+        return ConfigurationLocation(
+            fileURL: homeDirectory
+                .appendingPathComponent(".config", isDirectory: true)
+                .appendingPathComponent("clipboard-manager", isDirectory: true)
+                .appendingPathComponent("config.json", isDirectory: false),
+            sourceDescription: "Default (~/.config)",
+            allowsLocationChanges: true,
+            errorMessage: nil,
+            createsParentDirectory: true
+        )
+    }
+
+    private static func validateExplicitConfigurationPath(
+        _ path: String,
+        fileURL: URL,
+        fileManager: FileManager,
+        pathLabel: String = "CLIPBOARD_MANAGER_CONFIG_PATH"
+    ) -> String? {
+        guard !path.isEmpty, (path as NSString).isAbsolutePath else {
+            return "\(pathLabel) must be a non-empty absolute path ending in config.json. Configuration synchronization is disabled."
+        }
+        guard fileURL.lastPathComponent == "config.json" else {
+            return "\(pathLabel) must end in config.json. Configuration synchronization is disabled."
+        }
+
+        let parent = fileURL.deletingLastPathComponent()
+        var parentIsDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: parent.path, isDirectory: &parentIsDirectory),
+              parentIsDirectory.boolValue else {
+            return "The parent directory specified by \(pathLabel) does not exist. Configuration synchronization is disabled."
+        }
+
+        if let attributes = try? fileManager.attributesOfItem(atPath: fileURL.path),
+           attributes[.type] as? FileAttributeType == .typeSymbolicLink {
+            return "\(pathLabel) must point directly to a regular file, not a symbolic link. Configuration synchronization is disabled."
+        }
+
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: fileURL.path, isDirectory: &isDirectory) else {
+            return nil
+        }
+        guard !isDirectory.boolValue else {
+            return "\(pathLabel) must point to a regular file, not a directory. Configuration synchronization is disabled."
+        }
+        do {
+            let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
+            guard values.isRegularFile == true else {
+                return "\(pathLabel) must point directly to a regular file. Configuration synchronization is disabled."
+            }
+        } catch {
+            return "The file specified by \(pathLabel) could not be inspected. Configuration synchronization is disabled."
+        }
+        return nil
     }
 
     private static func validateE2EStorePath(_ rawPath: String) -> URL {
@@ -115,12 +245,13 @@ final class AppContainer {
         let settings = AppSettings.shared
         configuration.applyE2EDefaults(to: settings)
         self.settings = settings
-        let configurationFileURL = configuration.isE2E
-            ? configuration.storeURL.deletingLastPathComponent().appendingPathComponent("config.json")
-            : SettingsConfigurationAdapter.productionFileURL
         let settingsConfiguration = SettingsConfigurationAdapter(
             settings: settings,
-            fileURL: configurationFileURL
+            fileURL: configuration.configurationLocation.fileURL,
+            locationDescription: configuration.configurationLocation.sourceDescription,
+            allowsLocationChanges: configuration.configurationLocation.allowsLocationChanges,
+            startupError: configuration.configurationLocation.errorMessage,
+            createsParentDirectory: configuration.configurationLocation.createsParentDirectory
         )
         settingsConfiguration.loadInitialConfiguration()
         self.settingsConfiguration = settingsConfiguration

@@ -42,6 +42,415 @@ final class MacroScriptTests: XCTestCase {
 
 @MainActor
 final class SettingsConfigurationTests: XCTestCase {
+    func testSettingsViewModelUsesInjectedRelaunchAction() throws {
+        let adapter = SettingsConfigurationAdapter(
+            settings: AppSettings.shared,
+            fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("config.json")
+        )
+        let viewModel = SettingsViewModel(
+            settings: AppSettings.shared,
+            configurationManager: adapter
+        )
+        var wasRequested = false
+        viewModel.onRelaunchRequested = {
+            wasRequested = true
+        }
+
+        try viewModel.requestRelaunch()
+
+        XCTAssertTrue(wasRequested)
+    }
+
+    func testExplicitConfigurationPathTakesPrecedenceOverXDGConfigHome() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let customFileURL = directory.appendingPathComponent("config.json")
+
+        let location = AppLaunchConfiguration.resolveProductionConfigurationLocation(
+            environment: [
+                "CLIPBOARD_MANAGER_CONFIG_PATH": customFileURL.path,
+                "XDG_CONFIG_HOME": "/tmp/ignored-xdg-config",
+            ],
+            homeDirectory: URL(fileURLWithPath: "/Users/example", isDirectory: true)
+        )
+
+        XCTAssertEqual(location.fileURL, customFileURL)
+        XCTAssertEqual(location.sourceDescription, "CLIPBOARD_MANAGER_CONFIG_PATH")
+        XCTAssertNil(location.errorMessage)
+        XCTAssertFalse(location.allowsLocationChanges)
+        XCTAssertFalse(location.createsParentDirectory)
+    }
+
+    func testPersistedCustomLocationTakesPrecedenceOverXDGConfigHome() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let customFileURL = directory.appendingPathComponent("config.json")
+
+        let location = AppLaunchConfiguration.resolveProductionConfigurationLocation(
+            environment: ["XDG_CONFIG_HOME": "/tmp/ignored-xdg-config"],
+            homeDirectory: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            persistedCustomPath: customFileURL.path
+        )
+
+        XCTAssertEqual(location.fileURL, customFileURL)
+        XCTAssertEqual(location.sourceDescription, "Custom location")
+        XCTAssertTrue(location.allowsLocationChanges)
+        XCTAssertNil(location.errorMessage)
+        XCTAssertFalse(location.createsParentDirectory)
+    }
+
+    func testExplicitEnvironmentPathTakesPrecedenceOverPersistedCustomLocation() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let environmentFileURL = directory.appendingPathComponent("config.json")
+
+        let location = AppLaunchConfiguration.resolveProductionConfigurationLocation(
+            environment: ["CLIPBOARD_MANAGER_CONFIG_PATH": environmentFileURL.path],
+            homeDirectory: directory,
+            persistedCustomPath: "/tmp/ignored-custom/config.json"
+        )
+
+        XCTAssertEqual(location.fileURL, environmentFileURL)
+        XCTAssertEqual(location.sourceDescription, "CLIPBOARD_MANAGER_CONFIG_PATH")
+    }
+
+    func testInvalidPersistedCustomLocationDoesNotFallBackToXDG() {
+        let missingFileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("config.json")
+        let location = AppLaunchConfiguration.resolveProductionConfigurationLocation(
+            environment: ["XDG_CONFIG_HOME": "/tmp/ignored-xdg-config"],
+            homeDirectory: URL(fileURLWithPath: "/Users/example", isDirectory: true),
+            persistedCustomPath: missingFileURL.path
+        )
+
+        XCTAssertEqual(location.sourceDescription, "Custom location")
+        XCTAssertNotNil(location.errorMessage)
+        XCTAssertEqual(location.fileURL, missingFileURL)
+    }
+
+    func testConfigurationUsesXDGConfigHomeWhenSpecified() {
+        let location = AppLaunchConfiguration.resolveProductionConfigurationLocation(
+            environment: ["XDG_CONFIG_HOME": "/tmp/custom-config"],
+            homeDirectory: URL(fileURLWithPath: "/Users/example", isDirectory: true)
+        )
+
+        XCTAssertEqual(location.fileURL.path, "/tmp/custom-config/clipboard-manager/config.json")
+        XCTAssertEqual(location.sourceDescription, "XDG_CONFIG_HOME")
+        XCTAssertNil(location.errorMessage)
+        XCTAssertTrue(location.createsParentDirectory)
+    }
+
+    func testConfigurationFallsBackToDotConfigForInvalidXDGConfigHome() {
+        let homeDirectory = URL(fileURLWithPath: "/Users/example", isDirectory: true)
+
+        for environment in [[:], ["XDG_CONFIG_HOME": ""], ["XDG_CONFIG_HOME": "relative/path"]] {
+            let location = AppLaunchConfiguration.resolveProductionConfigurationLocation(
+                environment: environment,
+                homeDirectory: homeDirectory
+            )
+            XCTAssertEqual(location.fileURL.path, "/Users/example/.config/clipboard-manager/config.json")
+            XCTAssertEqual(location.sourceDescription, "Default (~/.config)")
+            XCTAssertNil(location.errorMessage)
+            XCTAssertTrue(location.createsParentDirectory)
+        }
+    }
+
+    func testInvalidExplicitConfigurationPathDoesNotFallBackToDefault() {
+        let homeDirectory = URL(fileURLWithPath: "/Users/example", isDirectory: true)
+        let location = AppLaunchConfiguration.resolveProductionConfigurationLocation(
+            environment: [
+                "CLIPBOARD_MANAGER_CONFIG_PATH": "relative/config.json",
+                "XDG_CONFIG_HOME": "/tmp/ignored-xdg-config",
+            ],
+            homeDirectory: homeDirectory
+        )
+
+        XCTAssertEqual(location.sourceDescription, "CLIPBOARD_MANAGER_CONFIG_PATH")
+        XCTAssertNotNil(location.errorMessage)
+        XCTAssertFalse(location.createsParentDirectory)
+        XCTAssertNotEqual(
+            location.fileURL.path,
+            homeDirectory.appendingPathComponent(".config/clipboard-manager/config.json").path
+        )
+    }
+
+    func testExplicitConfigurationPathRequiresExistingParentAndConfigFileName() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let missingParentLocation = AppLaunchConfiguration.resolveProductionConfigurationLocation(
+            environment: [
+                "CLIPBOARD_MANAGER_CONFIG_PATH": directory.appendingPathComponent("config.json").path,
+            ],
+            homeDirectory: directory
+        )
+        XCTAssertNotNil(missingParentLocation.errorMessage)
+
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let wrongNameLocation = AppLaunchConfiguration.resolveProductionConfigurationLocation(
+            environment: [
+                "CLIPBOARD_MANAGER_CONFIG_PATH": directory.appendingPathComponent("settings.json").path,
+            ],
+            homeDirectory: directory
+        )
+        XCTAssertNotNil(wrongNameLocation.errorMessage)
+    }
+
+    func testExplicitConfigurationPathRejectsSymbolicLink() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let targetURL = directory.appendingPathComponent("target.json")
+        try Data("{}".utf8).write(to: targetURL)
+        let linkURL = directory.appendingPathComponent("config.json")
+        try FileManager.default.createSymbolicLink(at: linkURL, withDestinationURL: targetURL)
+
+        let location = AppLaunchConfiguration.resolveProductionConfigurationLocation(
+            environment: ["CLIPBOARD_MANAGER_CONFIG_PATH": linkURL.path],
+            homeDirectory: directory
+        )
+
+        XCTAssertNotNil(location.errorMessage)
+    }
+
+    func testExplicitConfigurationPathRejectsDanglingSymbolicLink() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let linkURL = directory.appendingPathComponent("config.json")
+        try FileManager.default.createSymbolicLink(
+            at: linkURL,
+            withDestinationURL: directory.appendingPathComponent("missing.json")
+        )
+
+        let location = AppLaunchConfiguration.resolveProductionConfigurationLocation(
+            environment: ["CLIPBOARD_MANAGER_CONFIG_PATH": linkURL.path],
+            homeDirectory: directory
+        )
+
+        XCTAssertNotNil(location.errorMessage)
+    }
+
+    func testExplicitConfigurationPathCreatesFileWithoutCreatingParent() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("config.json")
+        let adapter = SettingsConfigurationAdapter(
+            settings: AppSettings.shared,
+            fileURL: fileURL,
+            createsParentDirectory: false
+        )
+
+        adapter.loadInitialConfiguration()
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+        XCTAssertNil(adapter.status.errorMessage)
+    }
+
+    func testPreparingNewCustomLocationWritesConfigurationThenPersistsPath() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let defaultsName = "SettingsConfigurationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let currentFileURL = directory.appendingPathComponent("current.json")
+        let candidateURL = directory.appendingPathComponent("config.json")
+        let adapter = SettingsConfigurationAdapter(
+            settings: AppSettings.shared,
+            fileURL: currentFileURL,
+            bootstrapDefaults: defaults
+        )
+
+        let result = try await adapter.prepareCustomLocation(
+            at: candidateURL,
+            useExistingFile: false
+        )
+
+        guard case .readyForRestart = result else {
+            return XCTFail("Expected a new configuration file to be ready for restart")
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: candidateURL.path))
+        XCTAssertEqual(SettingsConfigurationBootstrap.customPath(defaults: defaults), candidateURL.path)
+        XCTAssertTrue(adapter.hasPersistedCustomLocation)
+    }
+
+    func testExclusiveNewConfigurationWritePreservesExistingFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let candidateURL = directory.appendingPathComponent("config.json")
+        let existingData = Data("preserve me".utf8)
+        try existingData.write(to: candidateURL)
+
+        let hash = try SettingsConfigurationAdapter.writeNewConfiguration(
+            SettingsConfigurationDocument(settings: AppSettings.shared),
+            to: candidateURL
+        )
+
+        XCTAssertNil(hash)
+        XCTAssertEqual(try Data(contentsOf: candidateURL), existingData)
+    }
+
+    func testPreparingExistingCustomLocationRequiresConfirmationWithoutOverwriting() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let defaultsName = "SettingsConfigurationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let candidateURL = directory.appendingPathComponent("config.json")
+        let originalData = try JSONEncoder().encode(
+            SettingsConfigurationDocument(settings: AppSettings.shared)
+        )
+        try originalData.write(to: candidateURL)
+        let adapter = SettingsConfigurationAdapter(
+            settings: AppSettings.shared,
+            fileURL: directory.appendingPathComponent("current.json"),
+            bootstrapDefaults: defaults
+        )
+
+        let initialResult = try await adapter.prepareCustomLocation(
+            at: candidateURL,
+            useExistingFile: false
+        )
+
+        guard case .requiresExistingFileConfirmation = initialResult else {
+            return XCTFail("Expected an existing configuration file to require confirmation")
+        }
+        XCTAssertNil(SettingsConfigurationBootstrap.customPath(defaults: defaults))
+        XCTAssertEqual(try Data(contentsOf: candidateURL), originalData)
+
+        let confirmedResult = try await adapter.prepareCustomLocation(
+            at: candidateURL,
+            useExistingFile: true
+        )
+        guard case .readyForRestart = confirmedResult else {
+            return XCTFail("Expected the confirmed configuration file to be ready for restart")
+        }
+        XCTAssertEqual(SettingsConfigurationBootstrap.customPath(defaults: defaults), candidateURL.path)
+        XCTAssertEqual(try Data(contentsOf: candidateURL), originalData)
+    }
+
+    func testInvalidExistingCustomLocationIsNotPersistedOrOverwritten() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let defaultsName = "SettingsConfigurationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let candidateURL = directory.appendingPathComponent("config.json")
+        let invalidData = Data("{ invalid json".utf8)
+        try invalidData.write(to: candidateURL)
+        let adapter = SettingsConfigurationAdapter(
+            settings: AppSettings.shared,
+            fileURL: directory.appendingPathComponent("current.json"),
+            bootstrapDefaults: defaults
+        )
+
+        do {
+            _ = try await adapter.prepareCustomLocation(
+                at: candidateURL,
+                useExistingFile: false
+            )
+            XCTFail("Expected an invalid existing configuration to be rejected")
+        } catch {
+            XCTAssertNil(SettingsConfigurationBootstrap.customPath(defaults: defaults))
+            XCTAssertEqual(try Data(contentsOf: candidateURL), invalidData)
+        }
+    }
+
+    func testEnvironmentManagedLocationRejectsGUIChange() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let defaultsName = "SettingsConfigurationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let candidateURL = directory.appendingPathComponent("config.json")
+        let adapter = SettingsConfigurationAdapter(
+            settings: AppSettings.shared,
+            fileURL: directory.appendingPathComponent("current.json"),
+            allowsLocationChanges: false,
+            bootstrapDefaults: defaults
+        )
+
+        do {
+            _ = try await adapter.prepareCustomLocation(
+                at: candidateURL,
+                useExistingFile: false
+            )
+            XCTFail("Expected an environment-managed location to reject GUI changes")
+        } catch {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: candidateURL.path))
+            XCTAssertNil(SettingsConfigurationBootstrap.customPath(defaults: defaults))
+        }
+    }
+
+    func testResetCustomLocationOnlyRemovesBootstrapPath() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let defaultsName = "SettingsConfigurationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let fileURL = directory.appendingPathComponent("config.json")
+        try Data("preserved".utf8).write(to: fileURL)
+        SettingsConfigurationBootstrap.setCustomPath(fileURL.path, defaults: defaults)
+        let adapter = SettingsConfigurationAdapter(
+            settings: AppSettings.shared,
+            fileURL: fileURL,
+            bootstrapDefaults: defaults
+        )
+
+        adapter.resetCustomLocation()
+
+        XCTAssertNil(SettingsConfigurationBootstrap.customPath(defaults: defaults))
+        XCTAssertEqual(try Data(contentsOf: fileURL), Data("preserved".utf8))
+    }
+
+    func testStartupErrorDisablesConfigurationWithoutWritingFile() async {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = directory.appendingPathComponent("config.json")
+        let adapter = SettingsConfigurationAdapter(
+            settings: AppSettings.shared,
+            fileURL: fileURL,
+            startupError: "Invalid explicit configuration path",
+            createsParentDirectory: false
+        )
+
+        adapter.loadInitialConfiguration()
+        adapter.startMonitoring(canApplyExternalChanges: { true })
+
+        XCTAssertEqual(adapter.status.errorMessage, "Invalid explicit configuration path")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+        do {
+            try await adapter.reloadFromDisk()
+            XCTFail("Expected an invalid explicit path to disable reload")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Invalid explicit configuration path")
+        }
+    }
+
     func testInlineMacroRoundTripIncludesCodeAndTestInputWithoutTrustData() throws {
         let code = """
         #!/bin/sh

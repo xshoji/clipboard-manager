@@ -71,6 +71,47 @@ dotfiles or other Git repository. Inline code, reusable Test Inputs, and stable
 Macro ordering are included. File-backed Macros store only their external script
 path; the script file and its dependencies remain externally managed.
 
+Use **Settings → App Settings → Configuration → Change Location…** to choose an
+existing `config.json` or a folder for a new one. New files are initialized from
+the current settings. Existing files are validated, then require confirmation
+that their contents will replace the current ClipboardManager settings before
+they become the source of truth. ClipboardManager offers to restart immediately
+after a new file is prepared; accepting an existing file or resetting the
+location restarts the app automatically. Choosing **Later** for a new file leaves
+the change pending until the next restart. The previous file is never deleted
+automatically. The selected path is local bootstrap metadata stored outside
+`config.json`, so it is not carried between machines with the JSON file.
+**Reset Location** returns to XDG or the default location.
+
+Set `XDG_CONFIG_HOME` to an absolute directory path before launching the app to
+use a different configuration root. The file is then stored at
+`$XDG_CONFIG_HOME/clipboard-manager/config.json`. For apps launched from Finder
+or at login, set the variable in the user launch environment first:
+
+```bash
+launchctl setenv XDG_CONFIG_HOME "$HOME/path/to/config"
+```
+
+Restart ClipboardManager after changing the variable. Unset it with
+`launchctl unsetenv XDG_CONFIG_HOME` to return to the default path.
+
+For environment-managed installations, place `config.json` at an exact location
+by creating its parent directory and setting `CLIPBOARD_MANAGER_CONFIG_PATH`.
+This takes precedence over both the GUI selection and `XDG_CONFIG_HOME` and
+disables location changes in Settings:
+
+```bash
+mkdir -p "$HOME/dotfiles/clipboard-manager"
+launchctl setenv CLIPBOARD_MANAGER_CONFIG_PATH \
+  "$HOME/dotfiles/clipboard-manager/config.json"
+```
+
+The value must be an absolute path ending in `config.json`. Its parent directory
+must already exist, and the file itself must not be a symbolic link. Invalid
+explicit paths disable configuration synchronization rather than silently using
+the default file. Restart ClipboardManager after changing the value, and use
+`launchctl unsetenv CLIPBOARD_MANAGER_CONFIG_PATH` to remove the override.
+
 ### Image editing via Preview.app
 Hit Edit on an image entry and it opens in Preview — the same editor
 you already know, launched as a real external process. `Cmd+S` saves

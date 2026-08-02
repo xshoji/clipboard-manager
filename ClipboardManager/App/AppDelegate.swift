@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SwiftUI
 import os
 
@@ -23,11 +24,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
     }
 
     override init() {
+        Self.waitForPreviousInstanceIfNeeded()
         let launchConfiguration = AppLaunchConfiguration.resolve()
         launchConfiguration.prepareUserDefaults()
         self.launchConfiguration = launchConfiguration
         self.container = AppContainer(configuration: launchConfiguration)
         super.init()
+        container.settingsViewModel.onRelaunchRequested = { [weak self] in
+            guard let self else {
+                throw SettingsConfigurationError.invalidData(
+                    "ClipboardManager could not be restarted automatically. Quit and reopen the app to apply the new configuration location."
+                )
+            }
+            try self.relaunch()
+        }
         container.coordinator.mainWindow.onInstallHotkeys = { [weak self] in self?.installWindowScopedHotkeys() }
         container.coordinator.mainWindow.onUninstallHotkeys = { [weak self] in self?.uninstallWindowScopedHotkeys() }
         container.coordinator.mainWindow.onClearHistory = { [weak self] in self?.confirmClearHistory() }
@@ -171,6 +181,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
         // An accessory (menu-bar) app should not terminate when the last window closes.
         // Also do not terminate when the main window is hidden via NSApp.hide(nil).
         return false
+    }
+
+    func relaunch() throws {
+        let bundleURL = Bundle.main.bundleURL
+        Self.logger.notice("Automatic relaunch requested for \(bundleURL.path, privacy: .public)")
+        guard bundleURL.pathExtension == "app" else {
+            throw SettingsConfigurationError.invalidData(
+                "ClipboardManager could not be restarted automatically. Quit and reopen the app to apply the new configuration location."
+            )
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.createsNewApplicationInstance = true
+        var environment = ProcessInfo.processInfo.environment
+        environment["CM_RELAUNCH_WAIT_FOR_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+        configuration.environment = environment
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { _, error in
+            if let error {
+                Self.logger.error("Automatic relaunch failed: \(error.localizedDescription, privacy: .public)")
+            } else {
+                Self.logger.notice("Launch Services accepted the automatic relaunch request")
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            Self.logger.notice("Terminating the current instance for automatic relaunch")
+            NSApp.terminate(nil)
+        }
+    }
+
+    private static func waitForPreviousInstanceIfNeeded() {
+        guard let rawPID = ProcessInfo.processInfo.environment["CM_RELAUNCH_WAIT_FOR_PID"],
+              let processID = Int32(rawPID),
+              processID > 0 else {
+            return
+        }
+
+        let deadline = Date().addingTimeInterval(15)
+        while kill(processID, 0) == 0, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
     }
 
     /// Ordered resource cleanup at termination. Without this, Carbon event handlers,

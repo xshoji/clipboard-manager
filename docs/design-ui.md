@@ -139,7 +139,10 @@ row separators are used; sections do not add manual dividers.
 
 ### 7.3 Canonical Configuration
 
-- App Settings displays the canonical configuration path, `~/.config/clipboard-manager/config.json`, with actions to open it, reveal it in Finder, or reload it.
+- App Settings displays the resolved canonical configuration path and its source: E2E isolation, `CLIPBOARD_MANAGER_CONFIG_PATH`, a persistent GUI-selected custom location, `XDG_CONFIG_HOME`, or the default `~/.config` location. It provides actions to open the file, reveal it in Finder, reload it, choose another `config.json`, or reset the local custom location.
+- Change Location uses an open panel that accepts either an existing `config.json` or a folder where a new one should be created; it must not show a save-panel replacement warning. Choosing a missing file writes the current normalized configuration before persisting the local path, then presents Restart Now and Later actions. Choosing an existing file validates it and asks whether to replace the current ClipboardManager settings with the found file and restart, without overwriting either configuration file. Reset likewise confirms and restarts automatically. Choosing Later leaves the new path visibly pending until the next restart; old files are never deleted automatically.
+- `CLIPBOARD_MANAGER_CONFIG_PATH` disables GUI location changes because the environment has higher precedence. The GUI-selected path itself is local bootstrap metadata and is excluded from the canonical JSON.
+- Invalid explicit paths display the validation error and leave configuration synchronization disabled; the app does not silently switch to XDG or the default file.
 - Settings and Macro changes update that file automatically. External file replacements, including Git checkouts, are monitored and validated before being applied.
 - The configuration contains application settings, Macro settings, explicit stable Macro order, inline code, and each Macro's Test Input. Clipboard history, macOS permissions, debug results, and local Macro trust fingerprints are excluded.
 - File-backed Macros include only their external script path. The script content and its dependencies are not copied.

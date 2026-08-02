@@ -1,7 +1,14 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
+import os
 
 struct SettingsView: View {
+    private static let logger = Logger(
+        subsystem: "com.xshoji.ClipboardManager",
+        category: "Relaunch"
+    )
+
     @Environment(AppSettings.self) private var settings
     @Environment(SettingsViewModel.self) private var viewModel
     @State private var retention: Int
@@ -11,6 +18,9 @@ struct SettingsView: View {
     @State private var selectedSection: SettingsSection = .application
     @State private var isAccessibilityGranted = false
     @State private var configurationAlert: ConfigurationAlert?
+    @State private var existingConfigurationCandidate: URL?
+    @State private var isExistingConfigurationConfirmationPresented = false
+    @State private var isResetConfigurationLocationConfirmationPresented = false
 
     private enum SettingsSection: String, CaseIterable, Identifiable {
         case application
@@ -60,6 +70,7 @@ struct SettingsView: View {
         let id = UUID()
         let title: String
         let message: String
+        var restartFileURL: URL?
     }
 
     init() {
@@ -325,6 +336,10 @@ struct SettingsView: View {
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .accessibilityIdentifier("settings.configuration.path")
+                Text("Location: \(viewModel.configurationLocationDescription)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("settings.configuration.location")
                 HStack {
                     Button("Open Config File") {
                         NSWorkspace.shared.open(viewModel.configurationFileURL)
@@ -336,12 +351,48 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.configuration.reveal")
                     Button("Reload Config", action: reloadConfiguration)
                         .accessibilityIdentifier("settings.configuration.reload")
+                }
+                .disabled(viewModel.isConfigurationOperationInProgress)
+                HStack {
+                    Button("Change Location…", action: chooseConfigurationLocation)
+                        .accessibilityIdentifier("settings.configuration.changeLocation")
+                        .disabled(!viewModel.allowsConfigurationLocationChanges)
+                    Button("Reset Location") {
+                        isResetConfigurationLocationConfirmationPresented = true
+                    }
+                    .accessibilityIdentifier("settings.configuration.resetLocation")
+                    .disabled(
+                        !viewModel.allowsConfigurationLocationChanges
+                            || !viewModel.hasPersistedCustomConfigurationLocation
+                    )
                     if viewModel.isConfigurationOperationInProgress {
                         ProgressView()
                             .controlSize(.small)
                     }
                 }
                 .disabled(viewModel.isConfigurationOperationInProgress)
+                if !viewModel.allowsConfigurationLocationChanges {
+                    Text("The location is controlled by \(viewModel.configurationLocationDescription) and cannot be changed here.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let pendingURL = viewModel.pendingConfigurationFileURL {
+                    Label(
+                        "Will use \(pendingURL.path) after restart.",
+                        systemImage: "arrow.clockwise"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("settings.configuration.pendingLocation")
+                } else if viewModel.isConfigurationLocationResetPending {
+                    Label(
+                        "The XDG or default location will be used after restart.",
+                        systemImage: "arrow.clockwise"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("settings.configuration.pendingLocation")
+                }
                 if let error = viewModel.configurationStatus.errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
@@ -356,14 +407,53 @@ struct SettingsView: View {
         } header: {
             Text("Configuration")
         } footer: {
-            Text("This JSON file is the source of truth and is updated automatically. Inline code and Test Inputs are included; external script files are referenced by path only. External changes are validated before being applied.")
+            Text("This JSON file is the source of truth and is updated automatically. Its location is stored locally and is not included in the JSON. Location changes take effect after restart; the current file is never deleted automatically.")
         }
         .alert(item: $configurationAlert) { alert in
-            Alert(
-                title: Text(alert.title),
-                message: Text(alert.message),
-                dismissButton: .default(Text("OK"))
-            )
+            if alert.restartFileURL != nil {
+                Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    primaryButton: .default(Text("Restart Now")) {
+                        restartApplication()
+                    },
+                    secondaryButton: .cancel(Text("Later"))
+                )
+            } else {
+                Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    dismissButton: .default(Text("OK"))
+                )
+            }
+        }
+        .confirmationDialog(
+            "Apply Found Configuration and Restart?",
+            isPresented: $isExistingConfigurationConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Apply Config and Restart") {
+                confirmExistingConfigurationLocation()
+            }
+            Button("Cancel", role: .cancel) {
+                existingConfigurationCandidate = nil
+            }
+        } message: {
+            if let candidate = existingConfigurationCandidate {
+                Text("A config.json was found at \(candidate.path). Replace the current ClipboardManager settings with this file and restart? The current configuration file will not be deleted or overwritten.")
+            }
+        }
+        .confirmationDialog(
+            "Reset Configuration Location and Restart?",
+            isPresented: $isResetConfigurationLocationConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Reset and Restart", role: .destructive) {
+                resetConfigurationLocation()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("ClipboardManager will restart and use the XDG or default location. The current configuration file will not be deleted.")
         }
     }
 
@@ -376,6 +466,128 @@ struct SettingsView: View {
                     title: "Reload Failed",
                     message: error.localizedDescription
                 )
+            }
+        }
+    }
+
+    private func chooseConfigurationLocation() {
+        guard viewModel.unsavedMacroIDs.isEmpty else {
+            configurationAlert = ConfigurationAlert(
+                title: "Unsaved Macro Edits",
+                message: "Save or discard unsaved Macro edits before changing the configuration location."
+            )
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "Choose Configuration Location"
+        panel.message = "Choose an existing config.json to apply, or choose a folder for a new config.json."
+        panel.prompt = "Choose"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        let currentDirectory = viewModel.configurationFileURL.deletingLastPathComponent()
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(
+            atPath: currentDirectory.path,
+            isDirectory: &isDirectory
+        ), isDirectory.boolValue {
+            panel.directoryURL = currentDirectory
+        } else {
+            panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+        }
+        let completionHandler: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let selectedURL = panel.url else { return }
+            let values = try? selectedURL.resourceValues(forKeys: [.isDirectoryKey])
+            let fileURL = values?.isDirectory == true
+                ? selectedURL.appendingPathComponent("config.json", isDirectory: false)
+                : selectedURL
+            Task { @MainActor in
+                await prepareConfigurationLocation(fileURL, useExistingFile: false)
+            }
+        }
+        if let settingsWindow = NSApp.keyWindow {
+            panel.beginSheetModal(for: settingsWindow, completionHandler: completionHandler)
+        } else {
+            panel.begin(completionHandler: completionHandler)
+        }
+    }
+
+    private func prepareConfigurationLocation(
+        _ fileURL: URL,
+        useExistingFile: Bool,
+        restartAfterSuccess: Bool = false
+    ) async {
+        do {
+            let result = try await viewModel.prepareCustomConfigurationLocation(
+                at: fileURL,
+                useExistingFile: useExistingFile
+            )
+            switch result {
+            case .readyForRestart:
+                isExistingConfigurationConfirmationPresented = false
+                existingConfigurationCandidate = nil
+                if restartAfterSuccess {
+                    restartApplication()
+                } else {
+                    configurationAlert = ConfigurationAlert(
+                        title: "Restart ClipboardManager?",
+                        message: "Restart now to use \(fileURL.path). The current configuration file will not be deleted.",
+                        restartFileURL: fileURL
+                    )
+                }
+            case .requiresExistingFileConfirmation:
+                existingConfigurationCandidate = fileURL
+                isExistingConfigurationConfirmationPresented = true
+            }
+        } catch {
+            isExistingConfigurationConfirmationPresented = false
+            existingConfigurationCandidate = nil
+            configurationAlert = ConfigurationAlert(
+                title: "Location Change Failed",
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    private func confirmExistingConfigurationLocation() {
+        guard let fileURL = existingConfigurationCandidate else { return }
+        existingConfigurationCandidate = nil
+        Task { @MainActor in
+            await prepareConfigurationLocation(
+                fileURL,
+                useExistingFile: true,
+                restartAfterSuccess: true
+            )
+        }
+    }
+
+    private func resetConfigurationLocation() {
+        do {
+            try viewModel.resetCustomConfigurationLocation()
+            restartApplication()
+        } catch {
+            configurationAlert = ConfigurationAlert(
+                title: "Location Reset Failed",
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    private func restartApplication() {
+        Self.logger.notice("Restart action invoked from Settings")
+        do {
+            try viewModel.requestRelaunch()
+        } catch {
+            Self.logger.error("Restart request failed: \(error.localizedDescription, privacy: .public)")
+            let failureAlert = ConfigurationAlert(
+                title: "Restart Failed",
+                message: error.localizedDescription
+            )
+            DispatchQueue.main.async {
+                configurationAlert = failureAlert
             }
         }
     }
