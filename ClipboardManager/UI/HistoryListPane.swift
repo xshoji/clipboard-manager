@@ -40,12 +40,11 @@ struct HistoryListPane: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .historyWindowDidClose)) { _ in
-            // Drop search-field focus so the window does not reopen with the cursor
-            // already in the search field (and so the Delete key monitor does not
-            // depend on a stale `searchFocused` value). Move focus to the list so
-            // the arrow keys select history entries on reopen; without this, no
-            // view owns focus and arrow keys produce the system beep.
-            // `MainView` clears `query` and `selectedEntity` in parallel.
+            // Reset transient list presentation so reopening always starts with
+            // the complete history. Drop search-field focus and move focus to the
+            // list so arrow keys work immediately on the next appearance.
+            // `MainView` clears `query` and `selectedItem` in parallel.
+            showsImagesOnly = false
             searchFocused = false
             listFocused = true
         }

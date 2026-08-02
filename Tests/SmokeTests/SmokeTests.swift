@@ -297,6 +297,74 @@ final class SmokeUITests: XCTestCase {
                        "Display should revert to '(none)' after failed registration, got '\(revertedDisplay.value as? String ?? "")'")
     }
 
+    /// Verifies that the global Macro Picker shortcut sends subsequent typing
+    /// to the picker's search field rather than the history search field. This
+    /// requires E2E coverage because the regression is a race between SwiftUI
+    /// focus updates and AppKit first-responder routing.
+    func testGlobalMacroPickerFocusesMacroSearch() throws {
+        let app = makeApp()
+        app.launch()
+
+        let settingsWindow = app.windows["settingsWindow"]
+        XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
+
+        // Register a shortcut distinct from the window-scoped Cmd+M action so
+        // this key event can only exercise the global open-only callback.
+        let recordButton = app.buttons["globalMacroPickerHotkey.record"]
+        XCTAssertTrue(exists(recordButton, timeout: 5), "Global Macro Picker Record button not found")
+        recordButton.click()
+        XCTAssertTrue(waitForValue(recordButton, equals: "Recording", timeout: 5),
+                      "Global Macro Picker recorder did not enter recording state")
+        app.typeKey("c", modifierFlags: [.command, .shift])
+        let display = app.staticTexts["globalMacroPickerHotkey.display"]
+        XCTAssertTrue(waitForValue(display, equals: "⇧⌘C", timeout: 5),
+                      "Global Macro Picker shortcut should be registered as ⇧⌘C")
+
+        settingsWindow.buttons.element(boundBy: 0).click()
+        XCTAssertTrue(waitForNonExistence(settingsWindow, timeout: 5),
+                      "Settings window should close before testing picker focus")
+
+        try seedClipboardHistory(app: app, text: "E2EMacroPickerFocus")
+        let historySearch = app.textFields["searchField"]
+        XCTAssertTrue(exists(historySearch, timeout: 5), "History search field not found")
+        XCTAssertEqual(historySearch.value as? String ?? "", "",
+                       "History search should start empty")
+
+        app.typeKey("c", modifierFlags: [.command, .shift])
+        let macroSearch = app.textFields["macroPicker.searchField"]
+        XCTAssertTrue(exists(macroSearch, timeout: 5),
+                      "Global shortcut did not open the Macro Picker")
+        Thread.sleep(forTimeInterval: Self.uiPump)
+
+        // Type through the application so the current first responder decides
+        // which field receives the character. Directly targeting macroSearch
+        // would mask the focus regression by clicking/focusing it first.
+        app.typeKey("z", modifierFlags: [])
+        XCTAssertTrue(waitForValue(macroSearch, equals: "z", timeout: 3),
+                      "Typing after the global shortcut should reach Macro search")
+        XCTAssertEqual(app.textFields["searchField"].value as? String ?? "", "",
+                       "Global Macro Picker shortcut must not focus history search")
+
+        // Close the history window while the picker is still presented, then
+        // reopen it through the normal history global shortcut. A fresh window
+        // appearance must show only the history UI, never the stale picker.
+        let mainWindow = app.windows.firstMatch
+        XCTAssertTrue(exists(mainWindow, timeout: 5), "Main window not found while Macro Picker is open")
+        mainWindow.buttons.element(boundBy: 0).click()
+        XCTAssertTrue(waitForNonExistence(mainWindow, timeout: 5),
+                      "Main window should close while Macro Picker is open")
+
+        app.typeKey("x", modifierFlags: [.command, .control, .option, .shift])
+        XCTAssertTrue(exists(app.windows.firstMatch, timeout: 5),
+                      "Normal global shortcut did not reopen the main window")
+        XCTAssertFalse(app.textFields["macroPicker.searchField"].exists,
+                       "Reopened main window must not retain the Macro Picker")
+        XCTAssertTrue(exists(app.scrollViews["historyList"], timeout: 5),
+                      "Reopened main window should show the history list")
+        XCTAssertEqual(app.textFields["searchField"].value as? String ?? "", "",
+                       "Reopened main window should reset history search")
+    }
+
     /// Exercises the macro script CRUD pipeline end-to-end in a single session:
     /// Add → Edit name → Discard-close guard (reopen and verify discard) →
     /// Change interpreter preset → Script-file source. The app is launched

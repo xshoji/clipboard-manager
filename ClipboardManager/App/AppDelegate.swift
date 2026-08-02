@@ -85,7 +85,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
         // Optional second global hotkey: open the history window and immediately show the Macro Picker.
         let macroModalRegistered = hotkeyManager.registerMacroModalHotkey { [weak self] in
             guard let self else { return }
-            self.container.coordinator.showMainWindow(focusSearch: true)
+            // Do not request history-search focus on this path. That focus update
+            // can land after the picker appears and steal the first responder from
+            // its search field.
+            self.container.coordinator.showMainWindow(focusSearch: false)
             // Open the overlay directly via a dedicated *open-only* notification.
             // We do NOT route through `runMacroPickerAction()` ( which posts
             // `.macroPickerTriggered` ) for two reasons:

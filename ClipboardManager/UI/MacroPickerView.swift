@@ -41,6 +41,7 @@ struct MacroPickerView: View {
                 .padding(.horizontal, 14)
                 .padding(.top, 8)
                 .focused($searchFieldFocused)
+                .accessibilityIdentifier("macroPicker.searchField")
                 .onKeyPress(.upArrow) {
                     guard !filteredMacros.isEmpty else { return .ignored }
                     if selectedIndex <= 0 {

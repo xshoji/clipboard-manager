@@ -110,11 +110,12 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .historyWindowDidClose)) { _ in
             // The history window is being closed. Reset the in-window state now so
             // the *next* time the window is shown the user starts from a fresh
-            // list (no search query, no stale selection). Doing this on close
-            // rather than on reopen avoids flashing the previous search results
-            // for a frame and showing the detail of a filtered-list item.
+            // list (no transient overlay, search query, or stale selection). Doing
+            // this on close rather than on reopen avoids flashing the previous
+            // Macro Picker or search results for a frame.
             // The selection itself is moved back to the latest entry on reopen
             // via `.resetSelectionToTop` (posted by `AppDelegate.showMainWindow`).
+            macroPickerPresented = false
             query = ""
             viewModel.select(nil)
         }
