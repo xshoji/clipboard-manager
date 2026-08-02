@@ -111,13 +111,13 @@ final class PasteCoordinator {
         }
     }
 
-    func debugMacro(macro: MacroScript, item: ClipboardItem) async throws -> MacroDebugReport {
-        guard let input = await macroInput(for: item) else {
-            return .notLaunched(
-                command: "\(macro.interpreter) \(macro.inlineScript == nil ? macro.scriptPath : "<inline-script>")",
-                errorMessage: "The selected history item has no available input data."
-            )
-        }
+    func debugMacro(macro: MacroScript, inputText: String) async throws -> MacroDebugReport {
+        let input = MacroInput(
+            isImage: false,
+            imageData: nil,
+            text: inputText,
+            sourceBundleID: nil
+        )
         return try await macroRunner.debugRunAsync(
             script: macro,
             input: input,

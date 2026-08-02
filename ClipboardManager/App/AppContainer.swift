@@ -106,6 +106,7 @@ final class AppContainer {
     let pasteCoordinator: PasteCoordinator
     let historyViewModel: HistoryViewModel
     let settingsViewModel: SettingsViewModel
+    let settingsConfiguration: SettingsConfigurationManaging
     let hotkeyManager: HotkeyManager
     let menuBarController: MenuBarController
     let coordinator: AppCoordinator
@@ -114,6 +115,15 @@ final class AppContainer {
         let settings = AppSettings.shared
         configuration.applyE2EDefaults(to: settings)
         self.settings = settings
+        let configurationFileURL = configuration.isE2E
+            ? configuration.storeURL.deletingLastPathComponent().appendingPathComponent("config.json")
+            : SettingsConfigurationAdapter.productionFileURL
+        let settingsConfiguration = SettingsConfigurationAdapter(
+            settings: settings,
+            fileURL: configurationFileURL
+        )
+        settingsConfiguration.loadInitialConfiguration()
+        self.settingsConfiguration = settingsConfiguration
         // Compose the persistence stack explicitly so `ClipboardRepository`
         // (ApplicationServices) never references `PersistenceController` /
         // `ClipboardDataActor` (Infrastructure) directly. The adapter is the
@@ -138,8 +148,11 @@ final class AppContainer {
             notifier: AppNotifierAdapter()
         )
         historyViewModel = HistoryViewModel(repository: repository, pasteCoordinator: pasteCoordinator)
-        settingsViewModel = SettingsViewModel(settings: settings)
         hotkeyManager = HotkeyManager(settings: settings)
+        settingsViewModel = SettingsViewModel(
+            settings: settings,
+            configurationManager: settingsConfiguration
+        )
         menuBarController = MenuBarController(settings: settings)
         coordinator = AppCoordinator(settings: settings, historyViewModel: historyViewModel, settingsViewModel: settingsViewModel)
     }

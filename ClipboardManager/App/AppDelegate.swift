@@ -3,7 +3,7 @@ import SwiftUI
 import os
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeApplying {
     private static let logger = Logger(subsystem: "com.xshoji.ClipboardManager", category: "AppDelegate")
 
     let container: AppContainer
@@ -112,6 +112,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // and unregistered when it is hidden ( design: only effective while ClipboardManager's history UI is visible ).
         startObservingMacroScriptsChanges()
         startObservingActionHotkeysChanges()
+        container.settingsConfiguration.attach(runtimeManager: self)
+        container.settingsConfiguration.startMonitoring { [weak self] in
+            self?.container.settingsViewModel.unsavedMacroIDs.isEmpty ?? false
+        }
         menuBarController.onShow = { [weak self] in self?.container.coordinator.showMainWindow(focusSearch: false) }
         menuBarController.onSearch = { [weak self] in self?.container.coordinator.showMainWindow(focusSearch: true) }
         menuBarController.onSettings = { [weak self] in self?.container.coordinator.showSettings() }
@@ -179,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 4. Stop observing app activation (NSWorkspace observer).
     /// 5. Flush any pending ModelContext changes to disk (logged, not user-notified).
     func applicationWillTerminate(_ notification: Notification) {
+        container.settingsConfiguration.stopMonitoring()
         monitor.stop()
         PreviewImageEditor.shared.teardownAllSessions()
         hotkeyManager.unregister()
@@ -259,8 +264,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager.unregisterAllActionHotkeys()
     }
 
-    private func installMacroHotkeys() {
+    func reinstallConfigurationHotkeys() -> Bool {
+        let mainSucceeded = hotkeyManager.reinstall()
+        let globalPickerSucceeded = hotkeyManager.reinstallMacroModalHotkey()
+        guard mainWindowController?.window?.isVisible == true else {
+            return mainSucceeded && globalPickerSucceeded
+        }
+        let macrosSucceeded = installMacroHotkeys()
+        let actionsSucceeded = installActionHotkeys()
+        return mainSucceeded && globalPickerSucceeded && macrosSucceeded && actionsSucceeded
+    }
+
+    @discardableResult
+    private func installMacroHotkeys() -> Bool {
         hotkeyManager.unregisterAllMacroHotkeys()
+        var allSucceeded = true
         for macro in settings.macroScripts {
             // macOS physical key code 0 corresponds to the A key, so it cannot be used to mean "unset".
             guard macro.hotkeyModifiers != 0 else { continue }
@@ -270,15 +288,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 keyCode: macro.hotkeyCode,
                 modifiers: macro.hotkeyModifiers
             ) { [weak self] in
-                self?.runMacroFromHotkey(macroID: id, original: macro)
+                self?.runMacroFromHotkey(macroID: macro.id)
             }
             if !ok {
                 Self.logger.error("Macro hotkey registration failed for \(macro.name, privacy: .public)")
+                allSucceeded = false
             }
         }
+        return allSucceeded
     }
 
-    private func installActionHotkeys() {
+    @discardableResult
+    private func installActionHotkeys() -> Bool {
         hotkeyManager.unregisterAllActionHotkeys()
         var anyFailed = false
 
@@ -333,12 +354,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 userInfo: ["succeeded": false]
             )
         }
+        return !anyFailed
     }
 
     /// If no history item is selected, only beeps and does nothing.
-    private func runMacroFromHotkey(macroID: UInt32, original: MacroScript) {
-        // Refetch the latest Macro after settings changes (the captured `original` may be a stale snapshot).
-        guard let macro = settings.macroScripts.first(where: { Self.stableMacroID(for: $0.id) == macroID }) else { return }
+    private func runMacroFromHotkey(macroID: UUID) {
+        // Refetch by the full UUID after settings changes. Carbon uses a truncated
+        // UInt32 event ID, but it must never determine which script is executed.
+        guard let macro = settings.macroScripts.first(where: { $0.id == macroID }) else { return }
         guard let item = container.historyViewModel.selectedItem else {
             NSSound.beep()
             return
