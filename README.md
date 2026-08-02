@@ -71,17 +71,18 @@ dotfiles or other Git repository. Inline code, reusable Test Inputs, and stable
 Macro ordering are included. File-backed Macros store only their external script
 path; the script file and its dependencies remain externally managed.
 
-Use **Settings → App Settings → Configuration → Change Location…** to choose an
-existing `config.json` or a folder for a new one. New files are initialized from
-the current settings. Existing files are validated, then require confirmation
-that their contents will replace the current ClipboardManager settings before
-they become the source of truth. ClipboardManager offers to restart immediately
-after a new file is prepared; accepting an existing file or resetting the
-location restarts the app automatically. Choosing **Later** for a new file leaves
-the change pending until the next restart. The previous file is never deleted
-automatically. The selected path is local bootstrap metadata stored outside
-`config.json`, so it is not carried between machines with the JSON file.
-**Reset Location** returns to XDG or the default location.
+Use **Settings → App Settings → Configuration → Change and Reload Config…** to
+choose an existing `config.json` or a folder for a new one. New files are
+initialized from the current settings. Existing files are validated, then
+require confirmation that their contents will replace the current
+ClipboardManager settings before they become the source of truth.
+ClipboardManager offers to restart immediately after a new file is prepared;
+accepting an existing file or resetting the location restarts the app
+automatically. Choosing **Later** for a new file leaves the change pending until
+the next restart. The previous file is never deleted automatically. The selected
+path is local bootstrap metadata stored outside `config.json`, so it is not
+carried between machines with the JSON file. **Reset Location** returns to XDG
+or the default location.
 
 Set `XDG_CONFIG_HOME` to an absolute directory path before launching the app to
 use a different configuration root. The file is then stored at
