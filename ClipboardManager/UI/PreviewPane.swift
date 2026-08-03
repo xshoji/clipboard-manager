@@ -17,12 +17,22 @@ struct PreviewPane: View {
     /// re-selecting an HTML item.
     @State private var loadedHTML: LoadedHTML? = nil
 
+    private struct PreviewRevision: Hashable {
+        let id: UUID
+        let createdAt: Date
+        let contentHash: String?
+    }
+
     private struct LoadedHTML {
-        let itemID: UUID
+        let revision: PreviewRevision
         let attributed: NSAttributedString
     }
 
     private static let previewCharLimit = 2_000
+
+    private var revision: PreviewRevision? {
+        item.map { PreviewRevision(id: $0.id, createdAt: $0.createdAt, contentHash: $0.contentHash) }
+    }
 
     /// Scroll axes for the text preview. In `nowrap` mode the text overflows
     /// horizontally, so enable horizontal scrolling to reveal the full content.
@@ -52,13 +62,15 @@ struct PreviewPane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.appBackground)
-        .onChange(of: item?.id) { _, _ in
+        .onChange(of: revision) { _, _ in
             isExpanded = false
             fullText = nil
-        }
-        .task(id: item?.id) {
             previewImage = nil
-            guard let item else { return }
+            loadedHTML = nil
+        }
+        .task(id: revision) {
+            previewImage = nil
+            guard let item, let revision else { return }
             if item.isImage, let data = await viewModel.imageData(id: item.id) {
                 previewImage = ThumbnailImageCache.image(
                     forData: data,
@@ -71,7 +83,7 @@ struct PreviewPane: View {
                 // or returns partial output when called off-main.
                 let result = Self.parseHTML(data)
                 guard !Task.isCancelled, let result else { return }
-                loadedHTML = LoadedHTML(itemID: item.id, attributed: result)
+                loadedHTML = LoadedHTML(revision: revision, attributed: result)
             }
         }
     }
@@ -146,7 +158,7 @@ struct PreviewPane: View {
     private func attributedHTML(for entity: ClipboardItem) -> NSAttributedString {
         guard entity.isHtml,
               let loadedHTML,
-              loadedHTML.itemID == entity.id
+              loadedHTML.revision == revision
         else { return NSAttributedString(string: "") }
         return loadedHTML.attributed
     }

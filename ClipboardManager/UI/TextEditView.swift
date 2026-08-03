@@ -4,13 +4,15 @@ import AppKit
 struct TextEditView: View {
     let original: ClipboardItem
     let viewModel: HistoryViewModel
+    let initialText: String?
     @State private var draft: String
     @Environment(\.dismiss) private var dismiss
 
-    init(original: ClipboardItem, viewModel: HistoryViewModel) {
+    init(original: ClipboardItem, viewModel: HistoryViewModel, initialText: String? = nil) {
         self.original = original
         self.viewModel = viewModel
-        _draft = State(initialValue: "")
+        self.initialText = initialText
+        _draft = State(initialValue: initialText ?? "")
     }
 
     var body: some View {
@@ -36,6 +38,10 @@ struct TextEditView: View {
             .padding()
         }
         .frame(minWidth: 480, minHeight: 360)
-        .task { draft = await viewModel.fullText(id: original.id) ?? "" }
+        .task {
+            if initialText == nil {
+                draft = await viewModel.fullText(id: original.id) ?? ""
+            }
+        }
     }
 }

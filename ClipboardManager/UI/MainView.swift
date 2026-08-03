@@ -20,9 +20,13 @@ struct MainView: View {
     /// in this view via the `editingItem` sheet — only the image-edit side
     /// effect is hoisted out (review #4).
     let onEditImage: (ClipboardItem) -> Void
+    let onEditCurrentImage: (CurrentClipboardSnapshot) -> Void
     @State private var editingItem: ClipboardItem?
+    @State private var editingCurrentText: String?
     @State private var sidebarVisible: Bool
     @State private var macroPickerPresented: Bool = false
+    @State private var fixedMacroTarget: ClipboardActionTarget?
+    @State private var macroPreparationID: UUID?
     @State private var isOcrInProgress: Bool = false
     /// Responder that owned keyboard focus before the Macro Picker overlay was
     /// shown. Restored on dismiss so focus does not get "lost" after Esc (the
@@ -35,7 +39,8 @@ struct MainView: View {
         onClearHistory: @escaping () -> Void,
         onShowSettings: @escaping () -> Void,
         onActivatePreviousApp: @escaping () -> Void,
-        onEditImage: @escaping (ClipboardItem) -> Void
+        onEditImage: @escaping (ClipboardItem) -> Void,
+        onEditCurrentImage: @escaping (CurrentClipboardSnapshot) -> Void
     ) {
         self.focusSearch = focusSearch
         self.viewModel = viewModel
@@ -43,6 +48,7 @@ struct MainView: View {
         self.onShowSettings = onShowSettings
         self.onActivatePreviousApp = onActivatePreviousApp
         self.onEditImage = onEditImage
+        self.onEditCurrentImage = onEditCurrentImage
         _sidebarVisible = State(initialValue: AppSettings.shared.isSidebarVisible)
     }
 
@@ -77,7 +83,10 @@ struct MainView: View {
                         macroPickerPresented = false
                         runMacro(macro)
                     },
-                    onCancel: { macroPickerPresented = false }
+                    onCancel: {
+                        macroPickerPresented = false
+                        clearFixedMacroTarget()
+                    }
                 )
                 .transition(.opacity)
            }
@@ -105,7 +114,7 @@ struct MainView: View {
         }
         .animation(.easeInOut(duration: 0.15), value: isOcrInProgress)
         .sheet(item: $editingItem) { item in
-            TextEditView(original: item, viewModel: viewModel)
+            TextEditView(original: item, viewModel: viewModel, initialText: editingCurrentText)
         }
         .onReceive(NotificationCenter.default.publisher(for: .historyWindowDidClose)) { _ in
             // The history window is being closed. Reset the in-window state now so
@@ -116,6 +125,9 @@ struct MainView: View {
             // The selection itself is moved back to the latest entry on reopen
             // via `.resetSelectionToTop` (posted by `AppDelegate.showMainWindow`).
             macroPickerPresented = false
+            macroPreparationID = nil
+            clearFixedMacroTarget()
+            editingCurrentText = nil
             query = ""
             viewModel.select(nil)
         }
@@ -132,7 +144,13 @@ struct MainView: View {
                 NSSound.beep()
                 return
             }
-            macroPickerPresented.toggle()
+            if macroPickerPresented || macroPreparationID != nil {
+                macroPreparationID = nil
+                macroPickerPresented = false
+                clearFixedMacroTarget()
+            } else {
+                prepareMacroPicker()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .macroPickerRequested)) { _ in
             // Fired by the *global* Macro Picker hotkey ( optional second global
@@ -141,11 +159,8 @@ struct MainView: View {
             // reopening an already-visible window never closes the overlay.
             // See AppDelegate for why a dedicated notification is used instead of
             // `.macroPickerTriggered`.
-            guard viewModel.selectedItem != nil else {
-                NSSound.beep()
-                return
-            }
-            macroPickerPresented = true
+            guard !macroPickerPresented else { return }
+            prepareMacroPicker(preferCurrent: true)
         }
        .onReceive(NotificationCenter.default.publisher(for: .ocrProgressDidChange)) { note in
            if let v = note.userInfo?["inProgress"] as? Bool {
@@ -165,10 +180,20 @@ struct MainView: View {
     /// branch here means `FooterBar` only needs a single `onEdit` callback and
     /// neither view references `PreviewImageEditor` directly (review #4).
     private func edit(_ item: ClipboardItem) {
-        if item.isImage {
-            onEditImage(item)
-        } else {
-            editingItem = item
+        Task { @MainActor in
+            guard let target = await viewModel.resolveActionTarget(for: item) else { return }
+            switch target {
+            case .current(let snapshot) where snapshot.isImage:
+                onEditCurrentImage(snapshot)
+            case .current(let snapshot):
+                editingCurrentText = snapshot.text
+                editingItem = snapshot.clipboardItem()
+            case .history(let historyItem) where historyItem.isImage:
+                onEditImage(historyItem)
+            case .history(let historyItem):
+                editingCurrentText = nil
+                editingItem = historyItem
+            }
         }
     }
 
@@ -178,10 +203,35 @@ struct MainView: View {
     /// background Task so the main thread is not blocked (review #4), and
     /// `PasteCoordinator` handles success / failure fallback.
     private func runMacro(_ macro: MacroScript) {
-        guard let item = viewModel.selectedItem else { return }
         Task { @MainActor in
-            _ = await viewModel.runMacro(macro: macro, item: item)
+            if let target = fixedMacroTarget {
+                _ = await viewModel.runMacro(macro: macro, target: target)
+            }
+            clearFixedMacroTarget()
         }
+    }
+
+    private func prepareMacroPicker(preferCurrent: Bool = false) {
+        let selected = viewModel.selectedItem
+        guard preferCurrent || selected != nil else { NSSound.beep(); return }
+        let preparationID = UUID()
+        macroPreparationID = preparationID
+        Task { @MainActor in
+            let target = await viewModel.resolveActionTarget(for: selected, preferCurrent: preferCurrent)
+            guard macroPreparationID == preparationID else { return }
+            guard let target else {
+                macroPreparationID = nil
+                NSSound.beep()
+                return
+            }
+            fixedMacroTarget = target
+            macroPreparationID = nil
+            macroPickerPresented = true
+        }
+    }
+
+    private func clearFixedMacroTarget() {
+        fixedMacroTarget = nil
     }
 
     /// Restores keyboard focus to the responder that owned it before the Macro

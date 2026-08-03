@@ -169,6 +169,31 @@ final class PreviewImageEditor {
     // MARK: - Public entry
 
     func editImage(item: ClipboardItem) {
+        guard reserveEditSession() else { return }
+        Task {
+            guard let data = await repository?.fetchImageData(id: item.id), !data.isEmpty else {
+                isEditing = false
+                AppNotifier.notify(
+                    title: "Image cannot be edited",
+                    body: "The selected item has no image data.",
+                    deduplicationKey: "preview-edit-no-data"
+                )
+                return
+            }
+            preparePreviewSession(data: data, entityID: item.id)
+        }
+    }
+
+    func editImage(snapshot: CurrentClipboardSnapshot) {
+        guard reserveEditSession() else { return }
+        guard let data = snapshot.imageData, !data.isEmpty else {
+            isEditing = false
+            return
+        }
+        preparePreviewSession(data: data, entityID: snapshot.id)
+    }
+
+    private func reserveEditSession() -> Bool {
         // Gate on the internal editing-status flag. Unlike file-existence checks,
         // this flag is reliably reset by the window-close monitoring teardown, so a
         // stale `.ClipboardManagerEdit.<ext>` file left behind by a previous session
@@ -184,22 +209,14 @@ final class PreviewImageEditor {
             } else {
                 alert.runModal()
             }
-            return
+            return false
         }
 
         isEditing = true
+        return true
+    }
 
-        Task {
-        guard let data = await repository?.fetchImageData(id: item.id), !data.isEmpty else {
-            isEditing = false
-            AppNotifier.notify(
-                title: "Image cannot be edited",
-                body: "The selected item has no image data.",
-                deduplicationKey: "preview-edit-no-data"
-            )
-            return
-        }
-
+    private func preparePreviewSession(data: Data, entityID: UUID) {
         let ext = fileExtension(for: data)
         // Fixed working file path: ~/Downloads/.ClipboardManagerEdit.<ext>
         // Because concurrent edits are rejected by `isEditing` above, a single fixed path
@@ -235,7 +252,6 @@ final class PreviewImageEditor {
         }
 
         let originalHash = HashUtil.sha256Hex(of: data)
-        let entityID = item.id
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
         NSWorkspace.shared.open(
@@ -252,7 +268,6 @@ final class PreviewImageEditor {
                     originalHash: originalHash
                 )
             }
-        }
         }
     }
 

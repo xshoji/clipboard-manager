@@ -803,6 +803,47 @@ final class PasteCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.notifier.notifications.isEmpty)
     }
 
+    func testCurrentTextMacroUsesSnapshotPayloadWithoutRepositoryLookup() async {
+        let harness = TestHarness()
+        let snapshot = makeCurrentTextSnapshot(text: "live clipboard")
+        await harness.macroRunner.setResponse(.success(.init(data: Data("transformed".utf8), isImage: false)))
+
+        let succeeded = await harness.coordinator.runMacro(macro: makeMacro(), snapshot: snapshot)
+
+        XCTAssertTrue(succeeded)
+        let calls = await harness.macroRunner.calls
+        XCTAssertEqual(calls.first?.input.text, "live clipboard")
+        XCTAssertEqual(calls.first?.input.sourceBundleID, "com.example.current")
+        XCTAssertEqual(harness.pasteboard.string, "transformed")
+        XCTAssertTrue(harness.repository.fullText.isEmpty)
+        XCTAssertTrue(harness.pasteboard.recordedItems.isEmpty)
+    }
+
+    func testCurrentMacroFailureRestoresSnapshotWithoutRecordingHistory() async {
+        let harness = TestHarness()
+        let snapshot = makeCurrentTextSnapshot(text: "live original")
+        await harness.macroRunner.setResponse(.failure(.timeout))
+
+        let succeeded = await harness.coordinator.runMacro(macro: makeMacro(), snapshot: snapshot)
+
+        XCTAssertFalse(succeeded)
+        XCTAssertEqual(harness.pasteboard.string, "live original")
+        XCTAssertTrue(harness.pasteboard.recordedItems.isEmpty)
+        XCTAssertEqual(harness.activator.callCount, 1)
+    }
+
+    func testPastingCurrentTextRecordsExactSnapshotPayload() {
+        let harness = TestHarness()
+        let snapshot = makeCurrentTextSnapshot(text: "live clipboard")
+
+        let succeeded = harness.coordinator.pasteStandard(snapshot: snapshot, rich: true, activate: false)
+
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(harness.pasteboard.string, "live clipboard")
+        XCTAssertEqual(harness.pasteboard.recordedItems.map(\.text), ["live clipboard"])
+        XCTAssertEqual(harness.pasteboard.recordedItems.first?.contentHash, snapshot.contentHash)
+    }
+
     func testMacroFailureRestoresOriginalAndNotifies() async {
         let harness = TestHarness()
         let item = makeClipboardItem(kind: "text")
@@ -1169,6 +1210,150 @@ final class HistoryViewModelTests: XCTestCase {
         await viewModel.reload()
         XCTAssertEqual(viewModel.selectedItem, first)
     }
+
+    func testCurrentClipboardIsFirstAndOnlyOneMatchingHistoryItemIsHidden() async {
+        let harness = TestHarness()
+        let reader = CurrentClipboardReaderFake(snapshot: makeCurrentTextSnapshot(text: "current"))
+        let newestMatch = makeClipboardItem(kind: "text", textPreview: "current", contentHash: reader.snapshot?.contentHash)
+        let olderMatch = makeClipboardItem(kind: "text", textPreview: "older duplicate", contentHash: reader.snapshot?.contentHash)
+        let previous = makeClipboardItem(kind: "text", textPreview: "previous", contentHash: "previous")
+        harness.repository.items = [newestMatch, previous, olderMatch]
+        let viewModel = HistoryViewModel(
+            repository: harness.repository,
+            pasteCoordinator: harness.coordinator,
+            currentReader: reader
+        )
+
+        await viewModel.reload()
+        await viewModel.refreshCurrentClipboard()
+
+        XCTAssertTrue(viewModel.items.first?.isCurrent == true)
+        XCTAssertEqual(viewModel.items.dropFirst().map(\.id), [previous.id, olderMatch.id])
+        XCTAssertEqual(viewModel.historyItems, [newestMatch, previous, olderMatch])
+    }
+
+    func testCurrentSelectionFollowsClipboardWhileHistorySelectionIsPreserved() async {
+        let harness = TestHarness()
+        let firstSnapshot = makeCurrentTextSnapshot(text: "first", changeCount: 1)
+        let reader = CurrentClipboardReaderFake(snapshot: firstSnapshot)
+        let history = makeClipboardItem(kind: "text", textPreview: "history", contentHash: "history")
+        harness.repository.items = [history]
+        let viewModel = HistoryViewModel(
+            repository: harness.repository,
+            pasteCoordinator: harness.coordinator,
+            currentReader: reader
+        )
+        await viewModel.reload()
+        await viewModel.refreshCurrentClipboard()
+        viewModel.select(viewModel.items.first)
+
+        reader.snapshot = makeCurrentTextSnapshot(text: "second", changeCount: 2)
+        await viewModel.refreshCurrentClipboard()
+
+        XCTAssertTrue(viewModel.selectedItem?.isCurrent == true)
+        XCTAssertEqual(viewModel.selectedItem?.textPreview, "second")
+
+        viewModel.select(history)
+        reader.snapshot = makeCurrentTextSnapshot(text: "third", changeCount: 3)
+        await viewModel.refreshCurrentClipboard()
+
+        XCTAssertEqual(viewModel.selectedItem?.id, history.id)
+    }
+
+    func testMissingCurrentClipboardFallsBackToNewestHistory() async {
+        let harness = TestHarness()
+        let newest = makeClipboardItem(kind: "text", textPreview: "newest")
+        harness.repository.items = [newest]
+        let viewModel = HistoryViewModel(
+            repository: harness.repository,
+            pasteCoordinator: harness.coordinator,
+            currentReader: CurrentClipboardReaderFake(snapshot: nil)
+        )
+
+        await viewModel.reload()
+        await viewModel.refreshCurrentClipboard()
+
+        XCTAssertEqual(viewModel.items, [newest])
+        XCTAssertEqual(viewModel.selectedItem, newest)
+    }
+
+    func testOlderObservationCannotRestoreCurrentAfterNewerConcealedObservation() async {
+        let harness = TestHarness()
+        let reader = CurrentClipboardReaderFake(snapshot: makeCurrentTextSnapshot(text: "visible", changeCount: 100))
+        let history = makeClipboardItem(kind: "text", textPreview: "history")
+        harness.repository.items = [history]
+        let viewModel = HistoryViewModel(
+            repository: harness.repository,
+            pasteCoordinator: harness.coordinator,
+            currentReader: reader
+        )
+        await viewModel.reload()
+
+        reader.publish(.init(changeCount: 100, snapshot: makeCurrentTextSnapshot(text: "visible", changeCount: 100)))
+        reader.publish(.init(changeCount: 101, snapshot: nil))
+        reader.publish(.init(changeCount: 100, snapshot: makeCurrentTextSnapshot(text: "stale", changeCount: 100)))
+        await Task.yield()
+
+        XCTAssertNil(viewModel.currentSnapshot)
+        XCTAssertEqual(viewModel.items, [history])
+    }
+
+    func testActionResolverUsesFreshCurrentForStaleTopAndPreservesOlderHistorySelection() async {
+        let harness = TestHarness()
+        let reader = CurrentClipboardReaderFake(snapshot: makeCurrentTextSnapshot(text: "live", changeCount: 2))
+        let staleTop = makeClipboardItem(kind: "text", textPreview: "stale top", contentHash: "stale")
+        let older = makeClipboardItem(kind: "text", textPreview: "older", contentHash: "older")
+        harness.repository.items = [staleTop, older]
+        let viewModel = HistoryViewModel(
+            repository: harness.repository,
+            pasteCoordinator: harness.coordinator,
+            currentReader: reader
+        )
+        await viewModel.reload()
+
+        let topTarget = await viewModel.resolveActionTarget(for: staleTop)
+        let olderTarget = await viewModel.resolveActionTarget(for: older)
+
+        if case .current(let snapshot) = topTarget {
+            XCTAssertEqual(snapshot.text, "live")
+        } else {
+            XCTFail("Expected stale top to resolve to Current Clipboard")
+        }
+        if case .history(let item) = olderTarget {
+            XCTAssertEqual(item.id, older.id)
+        } else {
+            XCTFail("Expected an explicitly selected older row to remain history-backed")
+        }
+    }
+
+    func testCurrentImageReusesOcrCacheFromMergedHistoryItem() async throws {
+        let harness = TestHarness()
+        let imageData = Data([1, 2, 3])
+        let hash = HashUtil.sha256Hex(of: imageData)
+        let history = makeClipboardItem(kind: "image", contentHash: hash, ocrTextLowercased: "cached text")
+        let snapshot = CurrentClipboardSnapshot(
+            changeCount: 2,
+            kind: "image",
+            imageData: imageData,
+            contentHash: hash
+        )
+        harness.repository.items = [history]
+        harness.repository.ocrResults[history.id] = .init(status: "completed", text: "cached text")
+        let viewModel = HistoryViewModel(
+            repository: harness.repository,
+            pasteCoordinator: harness.coordinator,
+            currentReader: CurrentClipboardReaderFake(snapshot: snapshot)
+        )
+        await viewModel.reload()
+        await viewModel.refreshCurrentClipboard()
+
+        await viewModel.runOcr(item: try XCTUnwrap(viewModel.items.first))
+
+        XCTAssertEqual(harness.pasteboard.string, "cached text")
+        let ocrCallCount = await harness.ocr.callCount
+        XCTAssertEqual(ocrCallCount, 0)
+        XCTAssertTrue(harness.repository.ocrUpdates.isEmpty)
+    }
 }
 
 final class HistoryFilterTests: XCTestCase {
@@ -1306,7 +1491,7 @@ private final class SettingsFake: PasteCoordinatorSettings {
 }
 
 @MainActor
-private final class RepositoryFake: ClipboardRepositoryPort {
+private final class RepositoryFake: ClipboardRepositoryPort, ClipboardHistoryWriting {
     var items: [ClipboardItem] = []
     var textContent: [UUID: ClipboardTextContent] = [:]
     var imageData: [UUID: Data] = [:]
@@ -1355,6 +1540,36 @@ private final class PasteboardSpy: PasteboardSuppressing {
 
     deinit {
         pasteboard.releaseGlobally()
+    }
+}
+
+private final class CurrentClipboardReaderFake: CurrentClipboardReading, @unchecked Sendable {
+    private let lock: NSLock
+    private var storedSnapshot: CurrentClipboardSnapshot?
+    private var handler: (@Sendable (CurrentClipboardObservation) -> Void)?
+
+    init(snapshot: CurrentClipboardSnapshot?) {
+        lock = NSLock()
+        storedSnapshot = snapshot
+    }
+
+    var snapshot: CurrentClipboardSnapshot? {
+        get { lock.withLock { storedSnapshot } }
+        set { lock.withLock { storedSnapshot = newValue } }
+    }
+
+    func currentClipboardObservation() async -> CurrentClipboardObservation? {
+        let snapshot = snapshot
+        return CurrentClipboardObservation(changeCount: snapshot?.changeCount ?? 0, snapshot: snapshot)
+    }
+
+    @MainActor
+    func setCurrentClipboardHandler(_ handler: @escaping @Sendable (CurrentClipboardObservation) -> Void) {
+        lock.withLock { self.handler = handler }
+    }
+
+    func publish(_ observation: CurrentClipboardObservation) {
+        lock.withLock { handler }?(observation)
     }
 }
 
@@ -1486,4 +1701,73 @@ private func makeClipboardItem(
 
 private func makeMacro() -> MacroScript {
     MacroScript(name: "Test Macro", scriptPath: "", inlineScript: "cat")
+}
+
+private func makeCurrentTextSnapshot(text: String, changeCount: Int = 1) -> CurrentClipboardSnapshot {
+    CurrentClipboardSnapshot(
+        changeCount: changeCount,
+        kind: "text",
+        text: text,
+        sourceBundleID: "com.example.current",
+        contentHash: HashUtil.sha256Hex(of: Data(text.utf8))
+    )
+}
+
+final class CurrentClipboardSnapshotTests: XCTestCase {
+    func testSnapshotUsesStableVirtualRowIDAndKeepsFullPayloadOutOfClipboardItem() {
+        let html = Data("<b>Hello</b>".utf8)
+        let snapshot = CurrentClipboardSnapshot(changeCount: 42, kind: "text", text: "Hello",
+            html: html, sourceBundleID: "com.example.Source", contentHash: "hash")
+
+        let item = snapshot.clipboardItem()
+
+        XCTAssertEqual(snapshot.id, CurrentClipboardSnapshot.currentID)
+        XCTAssertEqual(item.id, CurrentClipboardSnapshot.currentID)
+        XCTAssertTrue(item.isCurrent)
+        XCTAssertEqual(item.textPreview, "Hello")
+        XCTAssertTrue(item.isHtml)
+        XCTAssertEqual(snapshot.html, html)
+    }
+}
+
+@MainActor
+final class ClipboardMonitorSnapshotTests: XCTestCase {
+    func testSnapshotPrefersHtmlAndUsesPlainTextHash() {
+        let harness = TestHarness()
+        let pasteboard = NSPasteboard(name: .init("ClipboardMonitorSnapshotTests.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.setData(Data("<b>Hello</b>".utf8), forType: .init("public.html"))
+        pasteboard.setString("Hello", forType: .string)
+        let monitor = ClipboardMonitor(
+            repository: harness.repository,
+            settings: AppSettings.shared,
+            automaticOcr: AutomaticOcrProcessor(repository: harness.repository),
+            pasteboard: pasteboard
+        )
+
+        let snapshot = monitor.makeSnapshot(from: pasteboard, changeCount: pasteboard.changeCount)
+
+        XCTAssertEqual(snapshot?.kind, "text")
+        XCTAssertEqual(snapshot?.text, "Hello")
+        XCTAssertEqual(snapshot?.html, Data("<b>Hello</b>".utf8))
+        XCTAssertEqual(snapshot?.contentHash, HashUtil.sha256Hex(of: Data("Hello".utf8)))
+    }
+
+    func testSnapshotRejectsConcealedClipboard() {
+        let harness = TestHarness()
+        let pasteboard = NSPasteboard(name: .init("ClipboardMonitorSnapshotTests.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.setString("secret", forType: .string)
+        pasteboard.setString("1", forType: .init("org.nspasteboard.ConcealedType"))
+        let monitor = ClipboardMonitor(
+            repository: harness.repository,
+            settings: AppSettings.shared,
+            automaticOcr: AutomaticOcrProcessor(repository: harness.repository),
+            pasteboard: pasteboard
+        )
+
+        XCTAssertNil(monitor.makeSnapshot(from: pasteboard, changeCount: pasteboard.changeCount))
+    }
 }

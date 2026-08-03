@@ -129,7 +129,7 @@ ClipboardManager/
 
 | Function | Implementation | Overview |
 |---|---|---|
-| Clipboard monitoring | `ClipboardMonitor` | Polls `NSPasteboard.changeCount` at 0.25s, saves on change |
+| Clipboard monitoring | `ClipboardMonitor` | Polls `NSPasteboard.changeCount` at 0.25s, publishes a non-persisted Current Clipboard snapshot immediately, and saves eligible external changes |
 | Global hotkey | `HotkeyManager` | Registers hotkeys via Carbon `RegisterEventHotKey` |
 | Macro script execution | `MacroRunner` | Launches scripts via `Process`, passes IO file paths via env vars (§4.2) |
 | Preview.app image editing | `PreviewImageEditor` | Launches Preview.app as an external process, detects edit completion, saves edited image (§4.3) |
@@ -251,6 +251,24 @@ final class ClipboardEntity {
    Before each insert, deletes any existing entities with the same `contentHash` so the newly copied item bubbles up to the top without stacking duplicates. Guarantees at most one entry per `contentHash` in the database.
 
 > **Note**: The previous ring-buffer approach (`DedupCache`, `dedupCacheSize` default 100) skipped any duplicate within the last `dedupCacheSize` entries and prevented the same content from re-entering history until the ring evicted it. It was removed because users expect the same content to re-enter history once anything else has been copied in between; the two-layer approach above preserves "don't save the same copy twice in a row" (Layer 1) while allowing re-entry after intervening copies (Layer 2 only dedupes within the database, not across an in-memory window).
+
+#### Current Clipboard snapshot
+
+- `ClipboardMonitor` normalizes each eligible pasteboard value into a complete
+  `CurrentClipboardSnapshot` on its utility queue. The snapshot and persistence
+  insert share the same normalized payload and content hash.
+- `HistoryViewModel` prepends the snapshot as a virtual Current Clipboard row and
+  hides one persisted row with the same hash. Persisted rows remain unchanged in
+  SwiftData.
+- Current actions use the snapshot payload directly; persisted-history actions
+  continue to lazy-load full payloads by UUID through `ClipboardRepository`.
+  OCR may reuse status and recognized text from the same-hash persisted row that
+  was merged into Current Clipboard, avoiding duplicate Vision work while the
+  snapshot remains the source image for any uncached recognition.
+- Macro Picker refreshes and fixes its target before opening, so a pasteboard or
+  repository update while the picker is visible cannot change the Macro input.
+- App-owned suppressed writes update Current Clipboard but remain excluded from
+  persisted history. Concealed and auto-generated payloads are excluded from both.
 
 #### Automatic image OCR
 

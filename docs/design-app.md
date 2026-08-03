@@ -21,6 +21,14 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 
 #### 2.1.2 History Search
 
+- The first row is a virtual **Current Clipboard** item backed directly by the
+  current eligible `NSPasteboard` payload; it does not wait for persistence.
+- Rows below Current Clipboard are persisted history in reverse chronological
+  order. The persisted row matching Current Clipboard is merged out of the list,
+  so the second visible row represents the previous captured content.
+- Concealed, auto-generated, empty, unsupported, and oversized pasteboard payloads
+  are never exposed as Current Clipboard; the newest eligible history row remains
+  first in those cases.
 - Incremental search (real-time filtering).
 - Search target is the full text of history entries.
 - Image history is searchable via metadata such as the source app name and, when

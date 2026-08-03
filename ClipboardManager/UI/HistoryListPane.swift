@@ -35,8 +35,8 @@ struct HistoryListPane: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .resetSelectionToTop)) { _ in
             // Reset selection to the latest (topmost) item when the window is reshown.
-            if !filteredItems.isEmpty {
-                selectedItem = filteredItems.first
+            if !viewModel.items.isEmpty {
+                selectedItem = viewModel.items.first
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .historyWindowDidClose)) { _ in
@@ -294,7 +294,7 @@ struct HistoryListPane: View {
     /// After deletion, selection moves to the next entry (or the previous one if the
     /// deleted entry was last), so repeated Delete presses keep trimming the list.
     private func deleteSelected() {
-        guard selectedItem != nil else { return }
+        guard selectedItem?.isCurrent == false else { return }
         showDeleteConfirmation = true
     }
 
@@ -340,7 +340,7 @@ struct HistoryListPane: View {
                 // across the app (main search field, Settings, Macro Edit sheet,
                 // TextEdit, etc.) regardless of which window owns it.
                 if Self.isEditingText() { return false }
-                guard selectedItem != nil else { return false }
+                guard selectedItem?.isCurrent == false else { return true }
                 deleteSelected()
                 return true
             }
@@ -365,7 +365,7 @@ struct HistoryListPane: View {
     }
 
     private func confirmDelete() {
-        guard let entity = selectedItem else { return }
+        guard let entity = selectedItem, !entity.isCurrent else { return }
         let nextSelection: ClipboardItem? = {
             guard let idx = indexByID[entity.id] else { return nil }
             if idx + 1 < filteredItems.count {

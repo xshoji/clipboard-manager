@@ -66,6 +66,7 @@ struct FooterBar: View {
     private var moreMenu: some View {
         Menu {
             Button("Delete") { deleteSelected() }
+                .disabled(selected.wrappedValue?.isCurrent != false)
             Divider()
             Button("Clear All History") { onClearAll() }
             Divider()
@@ -135,12 +136,13 @@ struct FooterBar: View {
 
     private func describe(_ entity: ClipboardItem) async -> String {
         var s = "Kind: \(entity.kind)\n"
+        if entity.isCurrent { s = "Item: Current Clipboard\n" + s }
         s += "Created: \(entity.createdAt)\n"
         if let b = entity.sourceBundleID { s += "Source: \(b)\n" }
         if let h = entity.contentHash { s += "Hash: \(h)\n" }
         if let count = entity.textCharacterCount { s += "Length: \(count) chars\n" }
         if entity.isHtml { s += "Format: HTML\n" }
-        if entity.isImage, let count = await viewModel.imageByteCount(id: entity.id) { s += "Image size: \(count) bytes\n" }
+        if let count = await viewModel.itemByteCount(id: entity.id) { s += "Size: \(count) bytes\n" }
         return s
     }
 }

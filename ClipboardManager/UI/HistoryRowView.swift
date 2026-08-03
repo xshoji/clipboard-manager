@@ -38,6 +38,11 @@ struct HistoryRowView: View {
         HStack(alignment: .top, spacing: 10) {
             icon
             VStack(alignment: .leading, spacing: 2) {
+                if entity.isCurrent {
+                    Text("Current Clipboard")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(selected ? Color.white.opacity(0.9) : Color.accentColor)
+                }
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(selected ? Color.white : Color.primary)

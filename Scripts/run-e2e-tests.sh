@@ -4,6 +4,9 @@
 #
 # Prerequisites:
 #   - `brew install xcodegen` (project.yml → .xcodeproj generation)
+#   - UI Automation must be allowed without an interactive authentication
+#     prompt. Configure it once with:
+#       sudo automationmodetool enable-automationmode-without-authentication
 #   - The terminal / IDE running this script must have Accessibility permission
 #     (System Settings → Privacy & Security → Accessibility).
 #   - The first time the E2E app is launched, macOS will prompt for Accessibility
@@ -37,6 +40,21 @@ cd "$ROOT_DIR"
 if ! command -v xcodegen >/dev/null 2>&1; then
     echo "error: xcodegen is not installed. Run 'brew install xcodegen' first." >&2
     exit 1
+fi
+
+# macOS otherwise asks testmanagerd to authenticate interactively when XCTest
+# enables Automation Mode. A non-interactive shell cannot answer that request,
+# so XCTest waits for 60 seconds and reports "Timed out while enabling
+# automation mode" before any test case starts. Fail fast with the setup command
+# instead of presenting that misleading test failure.
+if command -v automationmodetool >/dev/null 2>&1; then
+    AUTOMATION_MODE_STATUS="$(LC_ALL=C automationmodetool 2>&1)"
+    if grep -Fq "requires user authentication" <<<"$AUTOMATION_MODE_STATUS"; then
+        echo "error: macOS requires interactive authentication to enable UI Automation." >&2
+        echo "       Configure this machine once, then rerun the E2E tests:" >&2
+        echo "       sudo automationmodetool enable-automationmode-without-authentication" >&2
+        exit 1
+    fi
 fi
 
 # The production app owns global hotkeys and can receive focus while XCUITest

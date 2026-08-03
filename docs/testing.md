@@ -53,9 +53,21 @@ gitignored. `project.yml` is their source of truth.
 
 1. macOS 14 or later and Xcode 15 or later.
 2. XcodeGen installed with `brew install xcodegen`.
-3. Accessibility permission for the terminal or IDE that invokes the tests.
-4. Accessibility permission for the E2E app bundle when macOS prompts for it.
-5. Optionally, a Personal Team ID passed as `DEVELOPMENT_TEAM=...` to keep the
+3. UI Automation allowed without interactive authentication. Configure this
+   machine once with:
+
+   ```bash
+   sudo automationmodetool enable-automationmode-without-authentication
+   ```
+
+   Without this setting, a non-interactive run cannot answer macOS's "Enable UI
+   Automation" authentication request. XCTest then waits for 60 seconds and
+   fails before any test starts with `Timed out while enabling automation mode`.
+   `Scripts/run-e2e-tests.sh` detects that state and exits immediately with the
+   setup command.
+4. Accessibility permission for the terminal or IDE that invokes the tests.
+5. Accessibility permission for the E2E app bundle when macOS prompts for it.
+6. Optionally, a Personal Team ID passed as `DEVELOPMENT_TEAM=...` to keep the
    E2E app's TCC identity stable across rebuilds.
 
 Example:
