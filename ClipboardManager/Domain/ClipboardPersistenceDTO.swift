@@ -41,3 +41,71 @@ struct NewClipboardItem: Sendable {
     var contentHash: String? = nil
     var ocrStatus: String? = nil
 }
+
+/// Complete, non-persisted representation of the pasteboard at one change count.
+/// The fixed ID represents the virtual "Current Clipboard" row across updates.
+struct CurrentClipboardSnapshot: Identifiable, Hashable, Sendable {
+    static let currentID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+
+    let id: UUID
+    let changeCount: Int
+    let observedAt: Date
+    let kind: String
+    let text: String?
+    let richText: Data?
+    let html: Data?
+    let imageData: Data?
+    let thumbnail: Data?
+    let sourceBundleID: String?
+    let contentHash: String
+
+    init(changeCount: Int, observedAt: Date = Date(), kind: String, text: String? = nil,
+         richText: Data? = nil, html: Data? = nil, imageData: Data? = nil,
+         thumbnail: Data? = nil, sourceBundleID: String? = nil, contentHash: String) {
+        id = Self.currentID
+        self.changeCount = changeCount
+        self.observedAt = observedAt
+        self.kind = kind
+        self.text = text
+        self.richText = richText
+        self.html = html
+        self.imageData = imageData
+        self.thumbnail = thumbnail
+        self.sourceBundleID = sourceBundleID
+        self.contentHash = contentHash
+    }
+
+    var isImage: Bool { kind == "image" }
+    var byteCount: Int { imageData?.count ?? html?.count ?? richText?.count ?? text?.utf8.count ?? 0 }
+
+    func clipboardItem(matchingHistory: ClipboardItem? = nil) -> ClipboardItem {
+        let builtPreview = text.map(TextPreviewBuilder.build(from:))
+        let preview = builtPreview?.text
+        return ClipboardItem(id: id, createdAt: observedAt, kind: kind,
+            textPreview: preview, textPreviewLowercased: preview?.lowercased(),
+            isTextPreviewTruncated: builtPreview?.isTruncated ?? false,
+            textCharacterCount: text?.count, thumbnail: thumbnail, isHtml: html != nil,
+            sourceBundleID: sourceBundleID, contentHash: contentHash,
+            ocrTextLowercased: matchingHistory?.ocrTextLowercased)
+    }
+
+    func newClipboardItem() -> NewClipboardItem {
+        NewClipboardItem(kind: kind, text: text, richText: richText, html: html,
+            imageData: imageData, thumbnail: thumbnail, sourceBundleID: sourceBundleID,
+            contentHash: contentHash)
+    }
+}
+
+/// One stable observation of the pasteboard. A nil snapshot with a newer change
+/// count explicitly clears Current Clipboard for concealed or unsupported content.
+struct CurrentClipboardObservation: Sendable {
+    let changeCount: Int
+    let snapshot: CurrentClipboardSnapshot?
+}
+
+/// Fully resolved input for an action. Current Clipboard carries its immutable
+/// payload, while persisted history retains the lightweight repository-backed DTO.
+enum ClipboardActionTarget: Sendable {
+    case current(CurrentClipboardSnapshot)
+    case history(ClipboardItem)
+}

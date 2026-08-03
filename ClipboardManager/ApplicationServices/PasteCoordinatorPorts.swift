@@ -31,6 +31,16 @@ protocol PasteboardSuppressing: AnyObject {
     ) -> Int
 }
 
+protocol CurrentClipboardReading: AnyObject, Sendable {
+    func currentClipboardObservation() async -> CurrentClipboardObservation?
+    @MainActor func setCurrentClipboardHandler(_ handler: @escaping @Sendable (CurrentClipboardObservation) -> Void)
+}
+
+final class EmptyCurrentClipboardReader: CurrentClipboardReading, @unchecked Sendable {
+    func currentClipboardObservation() async -> CurrentClipboardObservation? { nil }
+    @MainActor func setCurrentClipboardHandler(_ handler: @escaping @Sendable (CurrentClipboardObservation) -> Void) {}
+}
+
 /// Port protocol for on-device OCR recognition.
 ///
 /// Infrastructure's `OcrRecognizer` provides a concrete adapter; `PasteCoordinator`

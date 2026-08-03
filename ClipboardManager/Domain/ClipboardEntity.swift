@@ -1,29 +1,6 @@
 import Foundation
 import SwiftData
 
-private enum TextPreviewBuilder {
-    static let lineLimit = 100
-    static let characterLimit = 16_000
-
-    static func build(from text: String) -> (text: String, isTruncated: Bool) {
-        var end = text.startIndex
-        var lineCount = 0
-        var characterCount = 0
-
-        while end < text.endIndex,
-              lineCount < lineLimit,
-              characterCount < characterLimit {
-            if text[end].isNewline {
-                lineCount += 1
-            }
-            end = text.index(after: end)
-            characterCount += 1
-        }
-
-        return (String(text[..<end]), end < text.endIndex)
-    }
-}
-
 /// Current model namespace. Keeping the nested model's short name as
 /// `ClipboardEntity` preserves the persisted entity identity across schema versions.
 enum ClipboardEntitySchemaV3 {
