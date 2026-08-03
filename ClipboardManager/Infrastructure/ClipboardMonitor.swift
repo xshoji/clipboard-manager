@@ -29,7 +29,7 @@ import os.lock
 /// queue. All mutable state is only touched on the serial `pollQueue`
 /// (`lastChangeCount`, `lastSavedContentHash`, `suppressedChangeCounts`, `isRunning`,
 /// `isObservingSettings`, `timer`).
-final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
+final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, CurrentClipboardReading {
     private static let logger = Logger(subsystem: "com.xshoji.ClipboardManager", category: "ClipboardMonitor")
 
     /// Shared instance set by AppDelegate at launch.
@@ -80,6 +80,8 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
     /// data) and generating thumbnails can take tens of ms; running on a utility queue
     /// keeps the main actor responsive (review #6).
     private let pollQueue = DispatchQueue(label: "com.xshoji.ClipboardManager.clipboardPoll", qos: .utility)
+    private typealias CurrentClipboardHandler = @Sendable (CurrentClipboardObservation) -> Void
+    private let currentClipboardHandlerLock = OSAllocatedUnfairLock<CurrentClipboardHandler?>(initialState: nil)
 
     init(
         repository: ClipboardHistoryWriting,
@@ -105,6 +107,12 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
             // is treating the launch state as "new" and skipping via `suppressedChangeCounts`.
             self.lastChangeCount = self.pasteboard.changeCount
             self.restartTimer()
+        }
+        pollQueue.async { [weak self] in
+            guard let self else { return }
+            if let observation = self.captureCurrentClipboard() {
+                self.publishCurrent(observation)
+            }
         }
 
         guard !isObservingSettings else { return }
@@ -183,11 +191,12 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
     /// suppressed, and removes any pre-registered entries above it (orphans that
     /// could suppress future user copies). Must be called on the main actor
     /// **immediately after** the pasteboard write completes.
-    func finalizeSuppressionAfterWrite(preChangeCount pre: Int) {
+    @discardableResult
+    func finalizeSuppressionAfterWrite(preChangeCount pre: Int) -> Int {
+        let post = pasteboard.changeCount
         // Uses an unfair lock instead of `pollQueue.sync` so the main actor is never
         // blocked by heavy poll-queue work (image hashing, thumbnail generation).
         suppressedChangeCountsLock.withLock { set in
-            let post = pasteboard.changeCount
             // Ensure the actual post-write changeCount is suppressed even if the
             // write produced more bumps than the pre-registered range covered.
             set.insert(post)
@@ -208,6 +217,7 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
                 set.remove(c)
             }
         }
+        return post
     }
 
     /// Performs a pasteboard write that is excluded from history recording.
@@ -237,8 +247,29 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
         let pre = pasteboard.changeCount
         suppressChangeCountRange((pre + 1)..<(pre + 3))
         write(pasteboard)
-        finalizeSuppressionAfterWrite(preChangeCount: pre)
+        let post = finalizeSuppressionAfterWrite(preChangeCount: pre)
+        pollQueue.async { [weak self] in
+            guard let self else { return }
+            if self.pasteboard.changeCount > post {
+                self.suppressedChangeCountsLock.withLock { $0.remove(post) }
+            }
+            self.poll()
+        }
         return pre
+    }
+
+    @MainActor
+    func setCurrentClipboardHandler(_ handler: @escaping @Sendable (CurrentClipboardObservation) -> Void) {
+        currentClipboardHandlerLock.withLock { $0 = handler }
+    }
+
+    func currentClipboardObservation() async -> CurrentClipboardObservation? {
+        await withCheckedContinuation { continuation in
+            pollQueue.async { [weak self] in
+                guard let self else { continuation.resume(returning: nil); return }
+                continuation.resume(returning: self.captureCurrentClipboard())
+            }
+        }
     }
 
     /// Writes without exposing a partially-written pasteboard, then records the exact
@@ -256,166 +287,97 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
     }
 
     private func poll() {
-        let pb = pasteboard
-        let count = pb.changeCount
-        guard count != lastChangeCount else { return }
-        lastChangeCount = count
+        guard pasteboard.changeCount != lastChangeCount,
+              let observation = captureCurrentClipboard(notifyWhenOversized: true),
+              observation.changeCount != lastChangeCount else { return }
+        lastChangeCount = observation.changeCount
 
-        if suppressedChangeCountsLock.withLock({ $0.remove(count) != nil }) {
-            return
-        }
-
-        // Do not save temporary/concealed copies from password managers.
-        // - org.nspasteboard.ConcealedType: set by 1Password, Keychain Access, etc.
-        // - org.nspasteboard.AutoGeneratedType: auto-generated passwords, etc.
-        // If present, do not persist to clipboard history (review #1).
-        if isConcealedPasteboard(pb) {
-            return
-        }
-
-        // Prefer images. Heaviest path (pb.data(forType: .png) + thumbnail) runs here
-        // on the utility queue, off the main actor (review #6).
-        if let pngData = pb.data(forType: .png), !pngData.isEmpty {
-            prepareImageSave(pb, pngData)
-            return
-        }
-        if let tiffData = pb.data(forType: .tiff), !tiffData.isEmpty,
-           let pngData = Self.pngData(fromTiff: tiffData), !pngData.isEmpty {
-            prepareImageSave(pb, pngData)
-            return
-        }
-        if let rtfData = pb.data(forType: .rtfd), !rtfData.isEmpty {
-            prepareTextSave(pb, rich: rtfData)
-            return
-        }
-        if let rtfData = pb.data(forType: .rtf), !rtfData.isEmpty {
-            prepareTextSave(pb, rich: rtfData)
-            return
-        }
-        let htmlType = NSPasteboard.PasteboardType("public.html")
-        if let htmlData = pb.data(forType: htmlType), !htmlData.isEmpty {
-            let plain = Self.plainText(fromHTML: htmlData) ?? pb.string(forType: .string) ?? ""
-            prepareTextSave(pb, plain: plain, html: htmlData)
-            return
-        }
-        if let text = pb.string(forType: .string), !text.isEmpty {
-            prepareTextSave(pb, plain: text)
-            return
-        }
+        let suppressed = suppressedChangeCountsLock.withLock { $0.remove(observation.changeCount) != nil }
+        publishCurrent(observation)
+        let snapshot = observation.snapshot
+        guard !suppressed, let snapshot, lastSavedContentHash != snapshot.contentHash else { return }
+        insertPreparedItem(snapshot.newClipboardItem(), purpose: snapshot.isImage ? "saveImage" : "saveText")
     }
 
-    /// Performs size check, hashing, dedup record, and thumbnail generation on the poll
-    /// queue, then hops to the main actor for the SwiftData insert (ModelContext is
-    /// `@MainActor`). Splitting the heavy work from the main-actor save means the UI
-    /// thread is only briefly touched for the final insert (review #6).
-    private func prepareImageSave(_ pb: NSPasteboard, _ data: Data) {
-        if data.count > settings.maxItemSizeMB * 1024 * 1024 {
-            Self.logger.info("image exceeded maxItemSizeMB (\(self.settings.maxItemSizeMB)MB), skipped")
-            DispatchQueue.main.async {
-                AppNotifier.notify(
-                    title: "Clipboard item not saved",
-                    body: "The copied image exceeds the \(self.settings.maxItemSizeMB) MB size limit.",
-                    deduplicationKey: "clipboard-item-size-limit"
-                )
+    private func publishCurrent(_ observation: CurrentClipboardObservation) {
+        guard let handler = currentClipboardHandlerLock.withLock({ $0 }) else { return }
+        DispatchQueue.main.async { handler(observation) }
+    }
+
+    /// Copies a pasteboard owner generation only when its change count stays stable
+    /// across all representation reads. A bounded retry handles an owner change that
+    /// races the first attempt without ever mixing concealed and ordinary payloads.
+    private func captureCurrentClipboard(
+        notifyWhenOversized: Bool = false
+    ) -> CurrentClipboardObservation? {
+        for _ in 0..<3 {
+            let before = pasteboard.changeCount
+            let snapshot = makeSnapshot(
+                from: pasteboard,
+                changeCount: before,
+                notifyWhenOversized: notifyWhenOversized
+            )
+            let after = pasteboard.changeCount
+            if before == after {
+                return CurrentClipboardObservation(changeCount: after, snapshot: snapshot)
             }
-            return
         }
-        let hash = HashUtil.sha256Hex(of: data)
-        // Skip-on-identical-immediate: avoid a needless SwiftData write for a copy that
-        // is byte-identical to the most recently saved entry (e.g. re-copying the same
-        // image, or app-internal pasteboard re-writes that bump `changeCount` without
-        // changing content). `removeDuplicates` would also handle this on insert, but
-        // short-circuiting here keeps the heavy thumbnail path and the main-actor
-        // insert/save off the critical path entirely.
-        if lastSavedContentHash == hash { return }
-
-        // Thumbnail generation (lockFocus → tiffRepresentation) is heavy: run it here
-        // on the utility queue instead of the main actor (review #6).
-        let thumb = ThumbnailGenerator.thumbnailData(from: data, maxEdge: 64)
-        let sourceBundle = pb.string(forType: NSPasteboard.PasteboardType("org.nspasteboard.sourceApp.bundleID"))
-
-        insertEntity(
-            kind: "image",
-            text: nil,
-            richText: nil,
-            imageData: data,
-            thumbnail: thumb,
-            sourceBundleID: sourceBundle,
-            contentHash: hash,
-            purpose: "saveImage"
-        )
+        return nil
     }
 
-    private func prepareTextSave(_ pb: NSPasteboard, plain: String? = nil, rich: Data? = nil, html: Data? = nil) {
-        let text = plain ?? pb.string(forType: .string) ?? ""
-        if text.isEmpty { return }
+    /// Reads each pasteboard representation once and derives the complete snapshot
+    /// from that immutable payload, preserving the monitor's format priority.
+    func makeSnapshot(
+        from pb: NSPasteboard,
+        changeCount: Int,
+        notifyWhenOversized: Bool = false
+    ) -> CurrentClipboardSnapshot? {
+        guard !isConcealedPasteboard(pb) else { return nil }
         let maxBytes = settings.maxItemSizeMB * 1024 * 1024
-        if text.utf8.count > maxBytes || (rich?.count ?? 0) > maxBytes || (html?.count ?? 0) > maxBytes {
-            Self.logger.info("text exceeded maxItemSizeMB (\(self.settings.maxItemSizeMB)MB), skipped")
-            DispatchQueue.main.async {
-                AppNotifier.notify(
-                    title: "Clipboard item not saved",
-                    body: "The copied text exceeds the \(self.settings.maxItemSizeMB) MB size limit.",
-                    deduplicationKey: "clipboard-item-size-limit"
-                )
+        let source = pb.string(forType: NSPasteboard.PasteboardType("org.nspasteboard.sourceApp.bundleID"))
+        let image: Data? = {
+            if let png = pb.data(forType: .png), !png.isEmpty { return png }
+            if let tiff = pb.data(forType: .tiff), !tiff.isEmpty { return Self.pngData(fromTiff: tiff) }
+            return nil
+        }()
+        if let image {
+            guard image.count <= maxBytes else {
+                if notifyWhenOversized { notifySizeLimit() }
+                return nil
             }
-            return
+            return .init(changeCount: changeCount, kind: "image", imageData: image,
+                thumbnail: ThumbnailGenerator.thumbnailData(from: image, maxEdge: 64),
+                sourceBundleID: source, contentHash: HashUtil.sha256Hex(of: image))
         }
-        // contentHash is derived from the plain-text representation. This means HTML
-        // copies that share the same plain text but differ in markup (e.g. re-copied
-        // from a different app with different styling) are treated as duplicates and
-        // only the first copy is kept. This is an accepted tradeoff: the vast majority
-        // of use-cases care about the text content, not the markup. See
-        // docs/design-implementation.md §3.1 (review #2).
-        let hash = HashUtil.sha256Hex(of: Data(text.utf8))
-        // Skip-on-identical-immediate: see `prepareImageSave` for the rationale. Avoids
-        // a needless SwiftData write + `removeDuplicates` fetch when the copy is
-        // byte-identical to the most recently saved entry.
-        if lastSavedContentHash == hash { return }
-
-        let sourceBundle = pb.string(forType: NSPasteboard.PasteboardType("org.nspasteboard.sourceApp.bundleID"))
-
-        insertEntity(
-            kind: "text",
-            text: text,
-            richText: rich,
-            html: html,
-            imageData: nil,
-            thumbnail: nil,
-            sourceBundleID: sourceBundle,
-            contentHash: hash,
-            purpose: "saveText"
-        )
+        let rich: Data?
+        if let data = pb.data(forType: .rtfd), !data.isEmpty { rich = data }
+        else if let data = pb.data(forType: .rtf), !data.isEmpty { rich = data }
+        else { rich = nil }
+        let htmlType = NSPasteboard.PasteboardType("public.html")
+        let html: Data? = {
+            guard rich == nil, let data = pb.data(forType: htmlType), !data.isEmpty else { return nil }
+            return data
+        }()
+        let text = html.flatMap(Self.plainText(fromHTML:)) ?? pb.string(forType: .string) ?? ""
+        guard !text.isEmpty, text.utf8.count <= maxBytes,
+              (rich?.count ?? 0) <= maxBytes, (html?.count ?? 0) <= maxBytes else {
+            if notifyWhenOversized { notifySizeLimit() }
+            return nil
+        }
+        return .init(changeCount: changeCount, kind: "text", text: text, richText: rich,
+            html: html, sourceBundleID: source,
+            contentHash: HashUtil.sha256Hex(of: Data(text.utf8)))
     }
 
-    /// Shared main-actor insert path for both image and text saves. The caller has
-    /// already finished the type-specific heavy work (size check, hashing, thumbnail
-    /// generation) on the poll queue; this helper hops to the main actor only for the
-    /// SwiftData insert + save + dedup enforcement (ModelContext is `@MainActor`).
-    private func insertEntity(
-        kind: String,
-        text: String?,
-        richText: Data?,
-        html: Data? = nil,
-        imageData: Data?,
-        thumbnail: Data?,
-        sourceBundleID: String?,
-        contentHash: String,
-        purpose: String
-    ) {
-        insertPreparedItem(
-            .init(
-                kind: kind,
-                text: text,
-                richText: richText,
-                html: html,
-                imageData: imageData,
-                thumbnail: thumbnail,
-                sourceBundleID: sourceBundleID,
-                contentHash: contentHash
-            ),
-            purpose: purpose
-        )
+    private func notifySizeLimit() {
+        Self.logger.info("clipboard item exceeded maxItemSizeMB (\(self.settings.maxItemSizeMB)MB), skipped")
+        DispatchQueue.main.async {
+            AppNotifier.notify(
+                title: "Clipboard item not saved",
+                body: "The copied item exceeds the \(self.settings.maxItemSizeMB) MB size limit.",
+                deduplicationKey: "clipboard-item-size-limit"
+            )
+        }
     }
 
     /// Must be called on `pollQueue`; image thumbnail generation and hashing have
