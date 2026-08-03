@@ -39,6 +39,28 @@ final class SettingsViewModel {
     func startSaveCycle() { expected = unsavedMacroIDs.count; completed = 0 }
     func recordSaveSettlement() { completed += 1; if expected > 0 && completed >= expected { NotificationCenter.default.post(name: .macroSaveSettleComplete, object: nil) } }
 
+    func moveMacro(id: UUID, to targetIndex: Int) {
+        var macros = settings.macroScripts
+        guard let sourceIndex = macros.firstIndex(where: { $0.id == id }),
+              macros.indices.contains(targetIndex),
+              sourceIndex != targetIndex else { return }
+
+        let existingOrders = macros.compactMap(\.order)
+        let hasStableOrders = existingOrders.count == macros.count
+            && existingOrders.allSatisfy { $0 >= 0 && $0 <= Int.max - 10 }
+            && zip(existingOrders, existingOrders.dropFirst()).allSatisfy { $0.0 < $0.1 }
+        let positionOrders = hasStableOrders
+            ? existingOrders
+            : macros.indices.map { ($0 + 1) * 10 }
+
+        let moved = macros.remove(at: sourceIndex)
+        macros.insert(moved, at: targetIndex)
+        for index in macros.indices {
+            macros[index].order = positionOrders[index]
+        }
+        settings.macroScripts = macros
+    }
+
     func reloadConfiguration() async throws {
         guard unsavedMacroIDs.isEmpty else {
             throw SettingsConfigurationError.invalidData(

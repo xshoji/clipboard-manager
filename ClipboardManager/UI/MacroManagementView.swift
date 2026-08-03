@@ -41,8 +41,35 @@ struct MacroManagementView: View {
                                     )
                                     .padding(8)
                                 } label: {
-                                    Label(macro.name, systemImage: "terminal.fill")
-                                        .font(.headline)
+                                    HStack {
+                                        Label(macro.name, systemImage: "terminal.fill")
+                                            .font(.headline)
+
+                                        Spacer()
+
+                                        ControlGroup {
+                                            Button {
+                                                viewModel.moveMacro(id: macro.id, to: index - 1)
+                                            } label: {
+                                                Image(systemName: "chevron.up")
+                                            }
+                                            .disabled(index == 0)
+                                            .help("Move Macro up")
+                                            .accessibilityLabel("Move \(macro.name) up")
+                                            .accessibilityIdentifier("macro.\(index).moveUp")
+
+                                            Button {
+                                                viewModel.moveMacro(id: macro.id, to: index + 1)
+                                            } label: {
+                                                Image(systemName: "chevron.down")
+                                            }
+                                            .disabled(index == settings.macroScripts.count - 1)
+                                            .help("Move Macro down")
+                                            .accessibilityLabel("Move \(macro.name) down")
+                                            .accessibilityIdentifier("macro.\(index).moveDown")
+                                        }
+                                        .controlSize(.small)
+                                    }
                                 }
                             }
                         }
