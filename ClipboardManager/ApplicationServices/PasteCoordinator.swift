@@ -48,6 +48,20 @@ final class PasteCoordinator {
         return wrote
     }
 
+    @discardableResult
+    func pasteStandard(snapshot: CurrentClipboardSnapshot, rich: Bool, activate: Bool = true) -> Bool {
+        if snapshot.isImage, let data = snapshot.imageData {
+            historyWrite(recording: snapshot.newClipboardItem()) {
+                $0.clearContents()
+                $0.setData(data, forType: .png)
+            }
+        } else {
+            writeSnapshotText(snapshot, rich: rich, recordOutput: true)
+        }
+        if activate { activatePreviousApp() }
+        return snapshot.imageData != nil || snapshot.text != nil
+    }
+
     func runOcr(item: ClipboardItem) async {
         if let cached = await repository.fetchOcrResult(id: item.id) {
             if cached.status == "completed" {
@@ -71,6 +85,51 @@ final class PasteCoordinator {
         let text = await ocr.recognizeText(in: data, languages: settings.ocrLanguages)
         repository.updateOcrResult(id: item.id, text: text)
         pasteOcrTextOrNotify(text, source: item)
+    }
+
+    func runOcr(
+        snapshot: CurrentClipboardSnapshot,
+        matchingHistory: ClipboardItem? = nil
+    ) async {
+        if let matchingHistory,
+           let cached = await repository.fetchOcrResult(id: matchingHistory.id) {
+            if cached.status == "completed" {
+                pasteOcrTextOrNotify(cached.text, source: matchingHistory)
+                return
+            }
+            if cached.status == "pending" {
+                notifier.notify(
+                    title: "OCR",
+                    body: "Text recognition is still running. Try again shortly.",
+                    deduplicationKey: "ocr-still-running"
+                )
+                return
+            }
+        }
+        guard let data = snapshot.imageData else { return }
+        NotificationCenter.default.post(name: .ocrProgressDidChange, object: nil, userInfo: ["inProgress": true])
+        defer { NotificationCenter.default.post(name: .ocrProgressDidChange, object: nil, userInfo: ["inProgress": false]) }
+        let text = await ocr.recognizeText(in: data, languages: settings.ocrLanguages)
+        if let matchingHistory {
+            repository.updateOcrResult(id: matchingHistory.id, text: text)
+            pasteOcrTextOrNotify(text, source: matchingHistory)
+            return
+        }
+        let recognized = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !recognized.isEmpty else {
+            notifier.notify(title: "OCR", body: "No text was recognized in the image.", deduplicationKey: nil); return
+        }
+        let output = text ?? ""
+        historyWrite(recording: NewClipboardItem(
+            kind: "text",
+            text: output,
+            sourceBundleID: snapshot.sourceBundleID,
+            contentHash: HashUtil.sha256Hex(of: Data(output.utf8))
+        )) {
+            $0.clearContents()
+            $0.setString(output, forType: .string)
+        }
+        activatePreviousApp()
     }
 
     private func pasteOcrTextOrNotify(_ text: String?, source: ClipboardItem) {
@@ -112,6 +171,69 @@ final class PasteCoordinator {
             default: notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil)
             }
             return false
+        }
+    }
+
+    @discardableResult
+    func runMacro(macro: MacroScript, snapshot: CurrentClipboardSnapshot) async -> Bool {
+        let input = MacroInput(isImage: snapshot.isImage, imageData: snapshot.imageData,
+            text: snapshot.text, sourceBundleID: snapshot.sourceBundleID)
+        do {
+            let output = try await macroRunner.runAsync(script: macro, input: input,
+                verifyFingerprint: settings.macroSameDirectoryFingerprint)
+            suppressedWrite { pb in
+                pb.clearContents()
+                if output.isImage { pb.setData(output.data, forType: .png) }
+                else { pb.setString(String(data: output.data, encoding: .utf8) ?? "", forType: .string) }
+            }
+            activatePreviousApp(); return true
+        } catch is CancellationError { return false }
+        catch {
+            let message = (error as? MacroRunningError)?.description ?? error.localizedDescription
+            if settings.macroFailureBehavior == "restoreOriginalAndNotify" {
+                pasteOriginal(snapshot)
+                activatePreviousApp()
+            }
+            if settings.macroFailureBehavior != "silentlySkip" {
+                notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil)
+            }
+            return false
+        }
+    }
+
+    private func writeSnapshotText(
+        _ snapshot: CurrentClipboardSnapshot,
+        rich: Bool,
+        recordOutput: Bool
+    ) {
+        let write: (NSPasteboard) -> Void = { pb in
+            pb.clearContents()
+            if rich, let html = snapshot.html { pb.setData(html, forType: .init("public.html")); pb.setString(snapshot.text ?? "", forType: .string) }
+            else if rich, let data = snapshot.richText, let type = Self.richTextType(data) { pb.setData(data, forType: type); pb.setString(snapshot.text ?? "", forType: .string) }
+            else { pb.setString(snapshot.text ?? "", forType: .string) }
+        }
+        guard recordOutput, let text = snapshot.text, !text.isEmpty else {
+            suppressedWrite(write)
+            return
+        }
+        historyWrite(recording: NewClipboardItem(
+            kind: "text",
+            text: text,
+            richText: rich ? snapshot.richText : nil,
+            html: rich ? snapshot.html : nil,
+            sourceBundleID: snapshot.sourceBundleID,
+            contentHash: snapshot.contentHash
+        ), write)
+    }
+
+    private func pasteOriginal(_ snapshot: CurrentClipboardSnapshot) {
+        if snapshot.isImage, let data = snapshot.imageData {
+            suppressedWrite {
+                $0.clearContents()
+                $0.setData(data, forType: .png)
+            }
+        } else {
+            writeSnapshotText(snapshot, rich: true, recordOutput: false)
         }
     }
 
