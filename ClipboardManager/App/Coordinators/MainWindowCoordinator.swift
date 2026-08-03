@@ -22,6 +22,9 @@ final class MainWindowCoordinator: MainWindowLifecycle {
     var onEditImage: (ClipboardItem) -> Void = { item in
         PreviewImageEditor.shared.editImage(item: item)
     }
+    var onEditCurrentImage: (CurrentClipboardSnapshot) -> Void = { snapshot in
+        PreviewImageEditor.shared.editImage(snapshot: snapshot)
+    }
 
     init(settings: AppSettings, viewModel: HistoryViewModel) {
         self.settings = settings
@@ -36,13 +39,17 @@ final class MainWindowCoordinator: MainWindowLifecycle {
             if staysAtLastUserOrigin || windowController?.lastUserFrame == nil { position(panel) }
         }
         viewModel.start()
+        viewModel.select(nil)
+        Task {
+            await viewModel.refreshAndSelectLatest()
+            NotificationCenter.default.post(name: .resetSelectionToTop, object: nil)
+        }
         windowController?.applyLevel()
         NSApp.activate(ignoringOtherApps: true)
         windowController?.showWindow(nil)
         windowController?.window?.makeKeyAndOrderFront(nil)
         onInstallHotkeys()
         if focusSearch { NotificationCenter.default.post(name: .focusSearchField, object: nil) }
-        NotificationCenter.default.post(name: .resetSelectionToTop, object: nil)
     }
 
     private func makeWindow(focusSearch: Bool) {
@@ -70,7 +77,8 @@ final class MainWindowCoordinator: MainWindowLifecycle {
             onClearHistory: { [weak self] in self?.confirmClearHistory() },
             onShowSettings: { [weak self] in self?.onShowSettings() },
             onActivatePreviousApp: activatePreviousApp,
-            onEditImage: onEditImage).environment(settings)
+            onEditImage: onEditImage,
+            onEditCurrentImage: onEditCurrentImage).environment(settings)
         panel.contentView = NSHostingView(rootView: content)
         let controller = MainWindowController(window: panel, settings: settings)
         controller.lifecycle = self

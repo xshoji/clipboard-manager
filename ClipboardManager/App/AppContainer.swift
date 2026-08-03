@@ -278,7 +278,7 @@ final class AppContainer {
             activator: AppActivator.shared,
             notifier: AppNotifierAdapter()
         )
-        historyViewModel = HistoryViewModel(repository: repository, pasteCoordinator: pasteCoordinator)
+        historyViewModel = HistoryViewModel(repository: repository, pasteCoordinator: pasteCoordinator, currentReader: monitor)
         hotkeyManager = HotkeyManager(settings: settings)
         settingsViewModel = SettingsViewModel(
             settings: settings,

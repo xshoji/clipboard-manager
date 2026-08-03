@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
         container.coordinator.mainWindow.onClearHistory = { [weak self] in self?.confirmClearHistory() }
         if launchConfiguration.isE2E {
             container.coordinator.mainWindow.onEditImage = { _ in }
+            container.coordinator.mainWindow.onEditCurrentImage = { _ in }
         }
     }
 
@@ -425,7 +426,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
         let macroRef = macro
         let itemRef = item
         Task { @MainActor in
-            _ = await self.container.historyViewModel.runMacro(macro: macroRef, item: itemRef)
+            let viewModel = self.container.historyViewModel
+            guard let target = await viewModel.resolveActionTarget(for: itemRef) else { return }
+            _ = await viewModel.runMacro(macro: macroRef, target: target)
         }
     }
 
