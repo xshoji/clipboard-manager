@@ -61,6 +61,29 @@ final class SettingsConfigurationTests: XCTestCase {
         XCTAssertTrue(wasRequested)
     }
 
+    func testSettingsViewModelMovesMacroAndPreservesStableOrderSlots() {
+        let settings = AppSettings.shared
+        let previous = settings.macroScripts
+        defer { settings.macroScripts = previous }
+        let first = MacroScript(order: 10, name: "First", scriptPath: "", inlineScript: "cat")
+        let second = MacroScript(order: 30, name: "Second", scriptPath: "", inlineScript: "cat")
+        let third = MacroScript(order: 50, name: "Third", scriptPath: "", inlineScript: "cat")
+        settings.macroScripts = [first, second, third]
+        let adapter = SettingsConfigurationAdapter(
+            settings: settings,
+            fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("config.json")
+        )
+        let viewModel = SettingsViewModel(settings: settings, configurationManager: adapter)
+
+        viewModel.moveMacro(id: third.id, to: 1)
+
+        XCTAssertEqual(settings.macroScripts.map(\.name), ["First", "Third", "Second"])
+        XCTAssertEqual(settings.macroScripts.compactMap(\.order), [10, 30, 50])
+        let document = SettingsConfigurationDocument(settings: settings)
+        XCTAssertEqual(document.macros.map(\.name), ["First", "Third", "Second"])
+        XCTAssertEqual(document.macros.map(\.order), [10, 30, 50])
+    }
+
     func testExplicitConfigurationPathTakesPrecedenceOverXDGConfigHome() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -652,6 +675,40 @@ final class SettingsConfigurationTests: XCTestCase {
 
 @MainActor
 final class PasteCoordinatorTests: XCTestCase {
+    func testStandardRichPasteRecordsActualRichOutput() async {
+        let harness = TestHarness()
+        let item = makeClipboardItem(kind: "text", contentHash: "history-hash")
+        let html = Data("<b>history text</b>".utf8)
+        harness.repository.textContent[item.id] = .init(text: "history text", richText: nil, html: html)
+
+        let succeeded = await harness.coordinator.pasteStandard(item: item, rich: true)
+
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(harness.pasteboard.string, "history text")
+        XCTAssertEqual(harness.pasteboard.recordedItems.map(\.text), ["history text"])
+        XCTAssertEqual(harness.pasteboard.recordedItems[0].html, html)
+        XCTAssertEqual(harness.activator.callCount, 1)
+    }
+
+    func testPlainTextPasteRecordsOnlyTheActualPlainOutput() async {
+        let harness = TestHarness()
+        let item = makeClipboardItem(kind: "text", contentHash: "original-hash")
+        harness.repository.textContent[item.id] = .init(
+            text: "formatted text",
+            richText: Data("rich payload".utf8),
+            html: Data("<b>formatted text</b>".utf8)
+        )
+
+        let succeeded = await harness.coordinator.pasteStandard(item: item, rich: false)
+
+        XCTAssertTrue(succeeded)
+        let recorded = harness.pasteboard.recordedItems[0]
+        XCTAssertEqual(recorded.text, "formatted text")
+        XCTAssertNil(recorded.richText)
+        XCTAssertNil(recorded.html)
+        XCTAssertEqual(recorded.contentHash, HashUtil.sha256Hex(of: Data("formatted text".utf8)))
+    }
+
     func testCompletedOcrUsesCachedTextWithoutRecognitionOrProgress() async {
         let harness = TestHarness()
         let item = makeClipboardItem(kind: "image")
@@ -674,6 +731,7 @@ final class PasteCoordinatorTests: XCTestCase {
         let ocrCallCount = await harness.ocr.callCount
         XCTAssertEqual(ocrCallCount, 0)
         XCTAssertTrue(harness.repository.ocrUpdates.isEmpty)
+        XCTAssertEqual(harness.pasteboard.recordedItems.map(\.text), ["cached text"])
         XCTAssertEqual(harness.activator.callCount, 1)
         XCTAssertTrue(harness.notifier.notifications.isEmpty)
         XCTAssertTrue(progressEvents.values.isEmpty)
@@ -720,6 +778,7 @@ final class PasteCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.repository.ocrUpdates.first?.id, item.id)
         XCTAssertEqual(harness.repository.ocrUpdates.first?.text, "recognized text")
         XCTAssertEqual(harness.pasteboard.string, "recognized text")
+        XCTAssertEqual(harness.pasteboard.recordedItems.map(\.text), ["recognized text"])
         XCTAssertEqual(progressEvents.values, [true, false])
     }
 
@@ -739,6 +798,7 @@ final class PasteCoordinatorTests: XCTestCase {
         XCTAssertEqual(calls.first?.input.sourceBundleID, "com.example.source")
         XCTAssertEqual(calls.first?.verifyFingerprint, true)
         XCTAssertEqual(harness.pasteboard.string, "transformed")
+        XCTAssertTrue(harness.pasteboard.recordedItems.isEmpty)
         XCTAssertEqual(harness.activator.callCount, 1)
         XCTAssertTrue(harness.notifier.notifications.isEmpty)
     }
@@ -754,10 +814,25 @@ final class PasteCoordinatorTests: XCTestCase {
 
         XCTAssertFalse(succeeded)
         XCTAssertEqual(harness.pasteboard.string, "original text")
+        XCTAssertTrue(harness.pasteboard.recordedItems.isEmpty)
         XCTAssertEqual(harness.activator.callCount, 1)
         XCTAssertEqual(harness.notifier.notifications.count, 1)
         XCTAssertEqual(harness.notifier.notifications.first?.title, "Macro failed")
         XCTAssertEqual(harness.notifier.notifications.first?.body, "Macro script timed out.")
+    }
+
+    func testImageMacroFailureFallbackDoesNotRecordHistory() async {
+        let harness = TestHarness()
+        let item = makeClipboardItem(kind: "image")
+        harness.repository.imageData[item.id] = Data([1, 2, 3])
+        await harness.macroRunner.setResponse(.failure(.timeout))
+
+        let succeeded = await harness.coordinator.runMacro(macro: makeMacro(), item: item)
+
+        XCTAssertFalse(succeeded)
+        XCTAssertTrue(harness.pasteboard.recordedItems.isEmpty)
+        XCTAssertEqual(harness.pasteboard.suppressedWriteCount, 1)
+        XCTAssertEqual(harness.activator.callCount, 1)
     }
 
     func testMacroDebugUsesFixedTextInputWithoutPasteSideEffects() async throws {
@@ -1260,11 +1335,22 @@ private final class PasteboardSpy: PasteboardSuppressing {
 
     var string: String? { pasteboard.string(forType: .string) }
     private(set) var suppressedWriteCount = 0
+    private(set) var recordedItems: [NewClipboardItem] = []
 
+    @MainActor
     func performSuppressedPasteboardWrite(_ write: (NSPasteboard) -> Void) -> Int {
         suppressedWriteCount += 1
         write(pasteboard)
         return pasteboard.changeCount
+    }
+
+    @MainActor
+    func performHistoryPasteboardWrite(
+        recording item: NewClipboardItem,
+        _ write: (NSPasteboard) -> Void
+    ) -> Int {
+        recordedItems.append(item)
+        return performSuppressedPasteboardWrite(write)
     }
 
     deinit {

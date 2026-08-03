@@ -66,6 +66,7 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
   - Rationale: Synthetic `Cmd+V` goes through `AXUIElement` API and requires accessibility permission, which adds friction to first-run setup.
   - Extension candidate: A "send synthetic `Cmd+V`" option can be added via settings (future). In that case, an accessibility permission grant flow is provided separately (see `docs/design-implementation.md §6`).
 - After paste, **the previous app is automatically brought to front** so the user can immediately press `Cmd+V`.
+- Pasting or copying from history records the exact output payload as the newest history item. Rich paste retains its rich payload, Plain Text stores only text, and OCR stores recognized text. Macro execution and its failure fallback are excluded from this history update because Macro output follows a separate transformation workflow. Existing entries with the same content hash are replaced through normal deduplication.
 
 #### 2.2.2 Paste Macro (Clipboard Transform Script)
 

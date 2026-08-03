@@ -34,14 +34,14 @@ final class PasteCoordinator {
         let wrote: Bool
         if item.isImage {
             guard let data = await repository.fetchImageData(id: item.id) else { return false }
-            suppressedWrite { pasteboard in
+            historyWrite(recording: imageHistoryItem(data: data, source: item)) { pasteboard in
                 pasteboard.clearContents()
                 pasteboard.setData(data, forType: .png)
             }
             wrote = true
         } else {
             guard let content = await repository.fetchTextContent(id: item.id, includeRich: rich) else { return false }
-            writeText(content, rich: rich)
+            writeText(content, rich: rich, source: item)
             wrote = true
         }
         if activate { activatePreviousApp() }
@@ -51,7 +51,7 @@ final class PasteCoordinator {
     func runOcr(item: ClipboardItem) async {
         if let cached = await repository.fetchOcrResult(id: item.id) {
             if cached.status == "completed" {
-                pasteOcrTextOrNotify(cached.text)
+                pasteOcrTextOrNotify(cached.text, source: item)
                 return
             }
             if cached.status == "pending" {
@@ -70,16 +70,20 @@ final class PasteCoordinator {
         defer { NotificationCenter.default.post(name: .ocrProgressDidChange, object: nil, userInfo: ["inProgress": false]) }
         let text = await ocr.recognizeText(in: data, languages: settings.ocrLanguages)
         repository.updateOcrResult(id: item.id, text: text)
-        pasteOcrTextOrNotify(text)
+        pasteOcrTextOrNotify(text, source: item)
     }
 
-    private func pasteOcrTextOrNotify(_ text: String?) {
+    private func pasteOcrTextOrNotify(_ text: String?, source: ClipboardItem) {
         let recognized = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !recognized.isEmpty else {
             notifier.notify(title: "OCR", body: "No text was recognized in the image.", deduplicationKey: nil)
             return
         }
-        suppressedWrite { pb in pb.clearContents(); pb.setString(text ?? "", forType: .string) }
+        let output = text ?? ""
+        historyWrite(recording: textHistoryItem(text: output, source: source)) { pb in
+            pb.clearContents()
+            pb.setString(output, forType: .string)
+        }
         activatePreviousApp()
     }
 
@@ -141,8 +145,13 @@ final class PasteCoordinator {
         return .init(isImage: false, imageData: nil, text: text, sourceBundleID: item.sourceBundleID)
     }
 
-    private func writeText(_ content: ClipboardTextContent, rich: Bool) {
-        suppressedWrite { pb in
+    private func writeText(
+        _ content: ClipboardTextContent,
+        rich: Bool,
+        source: ClipboardItem,
+        recordOutput: Bool = true
+    ) {
+        let write: (NSPasteboard) -> Void = { pb in
             pb.clearContents()
             if rich, let html = content.html, !html.isEmpty {
                 pb.setData(html, forType: NSPasteboard.PasteboardType("public.html"))
@@ -153,6 +162,23 @@ final class PasteCoordinator {
                 pb.setData(data, forType: type); pb.setString(content.text ?? "", forType: .string)
             } else { pb.setString(content.text ?? "", forType: .string) }
         }
+        guard recordOutput else {
+            suppressedWrite(write)
+            return
+        }
+        guard let text = content.text, !text.isEmpty else {
+            suppressedWrite(write)
+            return
+        }
+        let historyItem = NewClipboardItem(
+            kind: "text",
+            text: text,
+            richText: rich ? content.richText : nil,
+            html: rich ? content.html : nil,
+            sourceBundleID: source.sourceBundleID,
+            contentHash: HashUtil.sha256Hex(of: Data(text.utf8))
+        )
+        historyWrite(recording: historyItem, write)
     }
 
     private func pasteOriginal(_ item: ClipboardItem) async -> Bool {
@@ -164,9 +190,40 @@ final class PasteCoordinator {
             }
         } else {
             guard let content = await repository.fetchTextContent(id: item.id, includeRich: true) else { return false }
-            writeText(content, rich: true)
+            writeText(content, rich: true, source: item, recordOutput: false)
         }
         return true
+    }
+
+    private func textHistoryItem(text: String, source: ClipboardItem) -> NewClipboardItem {
+        NewClipboardItem(
+            kind: "text",
+            text: text,
+            sourceBundleID: source.sourceBundleID,
+            contentHash: HashUtil.sha256Hex(of: Data(text.utf8))
+        )
+    }
+
+    private func imageHistoryItem(data: Data, source: ClipboardItem) -> NewClipboardItem {
+        NewClipboardItem(
+            kind: "image",
+            imageData: data,
+            thumbnail: source.isImage ? source.thumbnail : nil,
+            sourceBundleID: source.sourceBundleID,
+            contentHash: HashUtil.sha256Hex(of: data)
+        )
+    }
+
+    private func historyWrite(recording item: NewClipboardItem, _ body: (NSPasteboard) -> Void) {
+        if item.kind == "text", item.text?.isEmpty != false {
+            suppressedWrite(body)
+            return
+        }
+        if item.kind == "image", item.imageData?.isEmpty != false {
+            suppressedWrite(body)
+            return
+        }
+        pasteboard.performHistoryPasteboardWrite(recording: item, body)
     }
 
     private func suppressedWrite(_ body: (NSPasteboard) -> Void) {

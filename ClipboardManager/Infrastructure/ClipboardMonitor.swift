@@ -232,11 +232,26 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
     /// }
     /// ```
     @discardableResult
+    @MainActor
     func performSuppressedPasteboardWrite(_ write: (NSPasteboard) -> Void) -> Int {
         let pre = pasteboard.changeCount
         suppressChangeCountRange((pre + 1)..<(pre + 3))
         write(pasteboard)
         finalizeSuppressionAfterWrite(preChangeCount: pre)
+        return pre
+    }
+
+    /// Writes without exposing a partially-written pasteboard, then records the exact
+    /// output payload through the same deduplicating insertion path as a monitored copy.
+    @MainActor
+    func performHistoryPasteboardWrite(
+        recording item: NewClipboardItem,
+        _ write: (NSPasteboard) -> Void
+    ) -> Int {
+        let pre = performSuppressedPasteboardWrite(write)
+        pollQueue.async { [weak self] in
+            self?.insertPreparedItem(item, purpose: "historyPaste")
+        }
         return pre
     }
 
@@ -388,14 +403,8 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
         contentHash: String,
         purpose: String
     ) {
-        let id = UUID()
-        let shouldRunAutomaticOcr = kind == "image" && settings.automaticImageOcrEnabled
-        let ocrLanguages = settings.ocrLanguages
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let saved = self.repository.insert(
-                .init(
-                id: id,
+        insertPreparedItem(
+            .init(
                 kind: kind,
                 text: text,
                 richText: richText,
@@ -403,9 +412,30 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
                 imageData: imageData,
                 thumbnail: thumbnail,
                 sourceBundleID: sourceBundleID,
-                contentHash: contentHash,
-                ocrStatus: shouldRunAutomaticOcr ? "pending" : nil
-                ),
+                contentHash: contentHash
+            ),
+            purpose: purpose
+        )
+    }
+
+    /// Must be called on `pollQueue`; image thumbnail generation and hashing have
+    /// already happened for monitored copies, while history-generated image outputs
+    /// receive their thumbnail here before the main-actor insert.
+    private func insertPreparedItem(_ input: NewClipboardItem, purpose: String) {
+        guard let contentHash = input.contentHash else { return }
+        var item = input
+        if item.kind == "image", item.thumbnail == nil, let imageData = item.imageData {
+            item.thumbnail = ThumbnailGenerator.thumbnailData(from: imageData, maxEdge: 64)
+        }
+        let shouldRunAutomaticOcr = item.kind == "image" && settings.automaticImageOcrEnabled
+        if shouldRunAutomaticOcr {
+            item.ocrStatus = "pending"
+        }
+        let ocrLanguages = settings.ocrLanguages
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let saved = self.repository.insert(
+                item,
                 removingDuplicates: true,
                 purpose: purpose
             )
@@ -413,9 +443,9 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing {
                 self.pollQueue.async { [weak self] in
                     self?.lastSavedContentHash = contentHash
                 }
-                if shouldRunAutomaticOcr, let imageData {
+                if shouldRunAutomaticOcr, let imageData = item.imageData {
                     self.automaticOcr.enqueue(
-                        id: id,
+                        id: item.id,
                         imageData: imageData,
                         languages: ocrLanguages
                     )

@@ -96,14 +96,13 @@ struct FooterBar: View {
             }
             return
         }
-        // Register a suppression range BEFORE the write so the utility-queue poll cannot
-        // race with the pasteboard write and save our own write as a history item (review #6).
+        // PasteCoordinator records the exact output format through the race-safe monitor path.
         Task { await viewModel.pasteStandard(item: entity, rich: rich) }
     }
 
     private func justCopy() {
         guard let entity = selected.wrappedValue else { return }
-        // Register a suppression range BEFORE the write (review #6 race note).
+        // Copy records the exact output like Paste without activating another app.
         Task { await viewModel.pasteStandard(item: entity, rich: true, activate: false) }
     }
 

@@ -281,6 +281,9 @@ final class ClipboardEntity {
       Plain       → write text only
       Macro       → write temp file → MacroRunner.run(script, inputFile)
              → read output file → write to pasteboard
+  → Record the exact pasteboard output through ClipboardMonitor's deduplicating insert:
+      Rich retains RTFD / HTML, Plain and OCR store text only
+      Macro output and Macro failure fallback remain monitor-suppressed and do not update history
   → NSApp.activate(ignoringOtherApps: true) to restore previous app
   → User presses Cmd+V to complete paste
 ```

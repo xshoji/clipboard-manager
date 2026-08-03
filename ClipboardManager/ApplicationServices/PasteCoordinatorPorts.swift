@@ -13,15 +13,22 @@ protocol PasteCoordinatorSettings: AnyObject {
 
 extension AppSettings: PasteCoordinatorSettings {}
 
-/// Port protocol for pasteboard writes that suppress the clipboard-monitor's
-/// change detection so app-owned writes do not echo back into history.
+/// Port protocol for race-safe pasteboard writes coordinated with clipboard history.
 ///
 /// Infrastructure's `ClipboardMonitor` conforms; `PasteCoordinator` depends on
 /// this protocol so it does not reference the Infrastructure concrete type
 /// directly.
 protocol PasteboardSuppressing: AnyObject {
     @discardableResult
+    @MainActor
     func performSuppressedPasteboardWrite(_ write: (NSPasteboard) -> Void) -> Int
+
+    @discardableResult
+    @MainActor
+    func performHistoryPasteboardWrite(
+        recording item: NewClipboardItem,
+        _ write: (NSPasteboard) -> Void
+    ) -> Int
 }
 
 /// Port protocol for on-device OCR recognition.
