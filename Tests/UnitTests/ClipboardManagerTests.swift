@@ -1845,3 +1845,20 @@ final class ClipboardMonitorSnapshotTests: XCTestCase {
         XCTAssertNil(monitor.makeSnapshot(from: pasteboard, changeCount: pasteboard.changeCount))
     }
 }
+
+@MainActor
+final class PreviewPaneTests: XCTestCase {
+    func testHtmlPreviewIsNotUsedWhenSourcePlainTextContainsMarkdownLayout() {
+        XCTAssertFalse(PreviewPane.shouldDisplayHTMLPreview(
+            sourceTextPreview: "- First\n- Second",
+            htmlText: "First\nSecond"
+        ))
+    }
+
+    func testHtmlPreviewIsUsedWhenItsTextMatchesSourcePlainText() {
+        XCTAssertTrue(PreviewPane.shouldDisplayHTMLPreview(
+            sourceTextPreview: "Hello world",
+            htmlText: "\nHello world\n"
+        ))
+    }
+}

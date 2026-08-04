@@ -90,20 +90,21 @@ struct PreviewPane: View {
 
     @ViewBuilder
     private func content(_ entity: ClipboardItem) -> some View {
+        let displaysHTML = displaysHTMLPreview(for: entity)
         ZStack {
             // Always mount the AppKit scroll view so selecting an HTML item
             // never triggers `makeNSView` (which causes a layout flash). When
-            // the current item is not HTML, the view is hidden via opacity and
-            // disabled for hit-testing/accessibility. The attributed string is
-            // empty for non-HTML items, so no stale content is visible.
+            // the current item does not use its HTML preview, the view is hidden
+            // via opacity and disabled for hit-testing/accessibility. The attributed
+            // string is empty for non-HTML items, so no stale content is visible.
             AttributedTextView(
                 attributedString: attributedHTML(for: entity),
                 wrapsLines: wrapMode != "nowrap"
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .opacity(entity.isHtml ? 1 : 0)
-            .allowsHitTesting(entity.isHtml)
-            .accessibilityHidden(!entity.isHtml)
+            .opacity(displaysHTML ? 1 : 0)
+            .allowsHitTesting(displaysHTML)
+            .accessibilityHidden(!displaysHTML)
 
             if entity.isImage {
                 if let previewImage {
@@ -116,7 +117,7 @@ struct PreviewPane: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            } else if !entity.isHtml {
+            } else if !displaysHTML {
                 ScrollView(scrollAxes) {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         Text(displayedText(entity))
@@ -151,6 +152,27 @@ struct PreviewPane: View {
                 .defaultScrollAnchor(.topLeading)
             }
         }
+    }
+
+    private func displaysHTMLPreview(for entity: ClipboardItem) -> Bool {
+        guard entity.isHtml,
+              let loadedHTML,
+              loadedHTML.revision == revision
+        else { return false }
+        return Self.shouldDisplayHTMLPreview(
+            sourceTextPreview: entity.textPreview,
+            htmlText: loadedHTML.attributed.string
+        )
+    }
+
+    static func shouldDisplayHTMLPreview(sourceTextPreview: String?, htmlText: String) -> Bool {
+        guard let sourceTextPreview else { return true }
+        let htmlPreview = TextPreviewBuilder.build(from: htmlText).text
+        return normalizedPreviewText(sourceTextPreview) == normalizedPreviewText(htmlPreview)
+    }
+
+    private static func normalizedPreviewText(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Returns the parsed HTML attributed string for the given entity, or an
