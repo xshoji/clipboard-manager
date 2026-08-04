@@ -2,6 +2,61 @@ import AppKit
 import XCTest
 @testable import ClipboardManager
 
+@MainActor
+final class StoreBackupTests: XCTestCase {
+    func testPartialBackupFailureDoesNotReportSuccessOrRemoveOriginalFiles() throws {
+        struct InjectedCopyError: Error {}
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StoreBackupTests-\(UUID().uuidString)", isDirectory: true)
+        let storeURL = root.appendingPathComponent("Clipboard.store")
+        let walURL = URL(fileURLWithPath: storeURL.path + "-wal")
+        let shmURL = URL(fileURLWithPath: storeURL.path + "-shm")
+        let backupDirectory = root.appendingPathComponent("Backups", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("store".utf8).write(to: storeURL)
+        try Data("wal".utf8).write(to: walURL)
+        try Data("shm".utf8).write(to: shmURL)
+
+        let manifest = PersistenceController.backupStoreFiles(
+            at: storeURL,
+            into: backupDirectory
+        ) { source, destination in
+            if source == storeURL {
+                throw InjectedCopyError()
+            }
+            try FileManager.default.copyItem(at: source, to: destination)
+        }
+
+        XCTAssertNil(manifest)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: storeURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: walURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: shmURL.path))
+        let backupNames = try FileManager.default.contentsOfDirectory(atPath: backupDirectory.path)
+        XCTAssertTrue(backupNames.contains { $0.contains("-wal.backup") })
+    }
+
+    func testBackupRequiresMainStoreEvenWhenSidecarExists() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StoreBackupTests-\(UUID().uuidString)", isDirectory: true)
+        let storeURL = root.appendingPathComponent("Clipboard.store")
+        let walURL = URL(fileURLWithPath: storeURL.path + "-wal")
+        let backupDirectory = root.appendingPathComponent("Backups", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("wal".utf8).write(to: walURL)
+
+        let manifest = PersistenceController.backupStoreFiles(
+            at: storeURL,
+            into: backupDirectory
+        )
+
+        XCTAssertNil(manifest)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: walURL.path))
+    }
+}
+
 final class MacroScriptTests: XCTestCase {
     func testDecodesExistingSettingsWithoutTestInput() throws {
         let id = UUID()
@@ -1732,13 +1787,13 @@ final class CurrentClipboardSnapshotTests: XCTestCase {
 
 @MainActor
 final class ClipboardMonitorSnapshotTests: XCTestCase {
-    func testSnapshotPrefersHtmlAndUsesPlainTextHash() {
+    func testSnapshotPreservesSourcePlainTextAlongsideHtml() {
         let harness = TestHarness()
         let pasteboard = NSPasteboard(name: .init("ClipboardMonitorSnapshotTests.\(UUID().uuidString)"))
         defer { pasteboard.releaseGlobally() }
         pasteboard.clearContents()
-        pasteboard.setData(Data("<b>Hello</b>".utf8), forType: .init("public.html"))
-        pasteboard.setString("Hello", forType: .string)
+        pasteboard.setData(Data("<ul><li>First</li><li>Second</li></ul>".utf8), forType: .init("public.html"))
+        pasteboard.setString("- First\n- Second", forType: .string)
         let monitor = ClipboardMonitor(
             repository: harness.repository,
             settings: AppSettings.shared,
@@ -1749,9 +1804,28 @@ final class ClipboardMonitorSnapshotTests: XCTestCase {
         let snapshot = monitor.makeSnapshot(from: pasteboard, changeCount: pasteboard.changeCount)
 
         XCTAssertEqual(snapshot?.kind, "text")
+        XCTAssertEqual(snapshot?.text, "- First\n- Second")
+        XCTAssertEqual(snapshot?.html, Data("<ul><li>First</li><li>Second</li></ul>".utf8))
+        XCTAssertEqual(snapshot?.contentHash, HashUtil.sha256Hex(of: Data("- First\n- Second".utf8)))
+    }
+
+    func testSnapshotExtractsPlainTextFromHtmlWhenSourceDoesNotProvideIt() {
+        let harness = TestHarness()
+        let pasteboard = NSPasteboard(name: .init("ClipboardMonitorSnapshotTests.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.setData(Data("<b>Hello</b>".utf8), forType: .init("public.html"))
+        let monitor = ClipboardMonitor(
+            repository: harness.repository,
+            settings: AppSettings.shared,
+            automaticOcr: AutomaticOcrProcessor(repository: harness.repository),
+            pasteboard: pasteboard
+        )
+
+        let snapshot = monitor.makeSnapshot(from: pasteboard, changeCount: pasteboard.changeCount)
+
         XCTAssertEqual(snapshot?.text, "Hello")
         XCTAssertEqual(snapshot?.html, Data("<b>Hello</b>".utf8))
-        XCTAssertEqual(snapshot?.contentHash, HashUtil.sha256Hex(of: Data("Hello".utf8)))
     }
 
     func testSnapshotRejectsConcealedClipboard() {

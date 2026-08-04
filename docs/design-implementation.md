@@ -182,7 +182,7 @@ final class ClipboardEntity {
 | ocrStatus | String? | Automatic OCR state (`pending` or `completed`); nil for entries not scheduled for automatic OCR |
 
 > **Edit handling**: Results edited in `TextEditView` are **saved as a new Entity with `kind = "text"` and `richText = nil`** (per `design-app.md §2.1.4`). The original rich text history remains as a separate Entity.
-> **HTML format handling**: When a clipboard entry provides HTML (via `public.html` pasteboard type) without RTF/RTFD, the raw HTML `Data` is stored in the `html` attribute and the plain-text representation (extracted from the HTML) is stored in `text`. This covers apps that expose HTML but not RTF (e.g. web browsers, some email clients). At paste time, if `html` is present it is written to the pasteboard as `public.html` alongside the plain text, so the target app can pick up the styled content. The preview pane renders HTML via `NSTextView` + `NSAttributedString(html:)`.
+> **HTML format handling**: When a clipboard entry provides HTML (via `public.html` pasteboard type) without RTF/RTFD, the raw HTML `Data` is stored in the `html` attribute. The source-provided plain-text pasteboard representation is stored in `text`; HTML extraction is used only when that representation is absent. This preserves source-specific plain text such as Markdown instead of regenerating a differently laid-out string from HTML. At paste time, if `html` is present it is written to the pasteboard as `public.html` alongside the plain text, so the target app can pick up the styled content. The preview pane renders HTML via `NSTextView` + `NSAttributedString(html:)`.
 > **Dedup and HTML**: `contentHash` is derived from the **plain-text** representation (`Data(text.utf8)`), not from the HTML markup. This means two copies with identical plain text but different HTML markup (e.g. copied from different apps with different styling) are treated as duplicates — only the first copy is kept. This is an accepted tradeoff: the vast majority of use-cases care about the text content, not the markup. If "same text, different formatting" preservation is needed in the future, the hash would need to incorporate the `html`/`richText` payload (review #2).
 > **Search scale**: For 100,000+ items with full-text search, `LIKE` queries on `text` become heavy, so v2 should consider prefiltering using `contentHash` suffix or introducing SQLite FTS5 (see §9).
 
@@ -348,10 +348,11 @@ Rationale: The Markup sharing service had issues with service identifier instabi
 [Image history selected + Edit button pressed]
   → PreviewImageEditor.editImage(entity):
       1. Create working file:
-         - Copy the original image to `<workDir>/edit.<ext>`
-         - Work directory: ~/Downloads/ClipboardManagerEdit/ (Preview is sandboxed
-           and cannot write to other apps' Application Support; Downloads is
-           user-writable. Hidden attribute is set to keep it out of Finder.)
+         - Copy the original image to `~/Downloads/.ClipboardManagerEdit.<ext>`
+         - Preview is sandboxed and cannot write to other apps' Application Support;
+           Downloads is user-writable. The dot-prefixed file is also marked hidden.
+         - If that fixed path already exists after a failed/interrupted session, reject
+           the new edit and report the recovery path instead of overwriting it.
          - Extension/UTI matches the original (PNG stays PNG, JPEG stays JPEG)
            so Preview offers the correct edit menus and Cmd+S overwrites the file
            without showing a save dialog.
@@ -377,27 +378,27 @@ Rationale: The Markup sharing service had issues with service identifier instabi
             Monitors the Preview PID. Fires when Preview quits. This is the
             safety net when Accessibility permission is not granted (only detects
             on app exit, not window close).
-          e. Idle timeout (final safety net): 5 minutes (was 10 minutes; reduced per
-             review #7) after the last file write, the session is force-finalized and a
-             user notification is posted. Each file change resets the timer, so long
-             editing sessions are not interrupted as long as saves continue.
+          e. Idle timeout (final safety net): 5 minutes after the last file write,
+             monitoring stops and a user notification reports the preserved working-file
+             path. The file is not deleted because Preview may still hold unsaved edits.
       4. On any detector firing:
          - performHashCheck: read the working file, compute SHA256, compare to
            the original hash AND the last saved hash (dedup guard for Preview
-           auto-save). If different, save as a new ClipboardEntity.
-         - teardown: cancel all watchers (file source, AX observer run loop source,
-           window polling work item, timeout work item, NSWorkspace observer),
-           release the AX refcon box, delete the working file, remove the session.
+           auto-save). If different, await insertion as a new ClipboardEntity.
+         - Only after insertion succeeds: update `lastSavedHash`, close the target
+           Preview window, stop watchers, and delete the working file.
+         - On save failure, oversize output, idle timeout, or app termination: stop
+           watchers as needed but preserve the working file for manual recovery.
 ```
 
 Key behaviors:
 - **No save dialog**: Because the working file is a real on-disk file at a user-writable path, Cmd+S in Preview overwrites it directly. No file name modal appears.
-- **Multiple saves per session**: Each Cmd+S within a session saves a new history entry (deduped by `lastSavedHash`). The session continues until window close / app exit / idle timeout.
+- **Save completion boundary**: A Cmd+S result is considered saved only after repository insertion succeeds. The target Preview window then closes automatically. Insert failures keep the window open when possible and always preserve the working file.
 - **Concurrent edits**: Rejected. Because the working file uses a fixed path (`edit.<ext>`), only one edit session may be active at a time. Triggering Edit while another session is active shows an alert and rejects the new edit. This keeps safe-save's inode churn on a constant path and eliminates the "file not found" race that occasionally lost edits.
-- **Accessibility permission**: Required for instant detection on window close (detectors b and c). Without it, only detector d (Preview quit) and e (5-min idle) terminate the session, so monitoring may linger after the window is closed. The app notifies the user to enable Accessibility in Settings → Permissions when AX is not trusted.
-- **Cleanup on launch**: `AppDelegate` calls `PreviewImageEditor.shared.cleanupOrphanedEditFiles()` at startup to delete any `edit.*` files left from a previous crashed session. Additionally, `AppDelegate` starts `PreviewImageEditor.shared.startOrphanCleanupTimer()` which sweeps orphaned files every 5 minutes (review #7), so crashed-session files do not sit in Downloads between launches.
-- **Working file location & naming (review #7)**: Files live under `~/Downloads/.ClipboardManagerEdit/` (dot-prefixed so Finder hides it). The working file uses a fixed name `edit.<ext>` for the active session. Because concurrent edits are rejected, a single fixed path suffices; this also keeps safe-save's inode churn on a constant path, eliminating the "file not found" race that occasionally lost edits. The previously-generated random filename scheme (16-char hex prefix + UUID) was removed in favor of this fixed name. Downloads is kept as the working location because Preview.app is sandboxed and cannot write to another app's Application Support directory without presenting a save dialog, so the in-place `Cmd+S` UX is preserved.
-- **AX refcon lifetime**: The `SessionBox` passed as the AX observer refcon is `Unmanaged.passRetained` so it survives until `teardown` explicitly `release()`s it, even if the session is removed from the dictionary before a late AX callback fires.
+- **Accessibility permission**: Required for instant detection on window close (detectors b and c). Without it, Preview termination finalizes the session; the 5-minute idle timeout safely stops monitoring and preserves the file rather than assuming the edit is complete.
+- **No automatic orphan deletion**: Startup and periodic prefix-based cleanup are intentionally disabled because a file left by a failed save or interrupted shutdown is potentially the only recoverable copy of the edit. A preserved fixed-path file blocks a new edit until the user moves or removes it.
+- **Working file location & naming**: The active file is `~/Downloads/.ClipboardManagerEdit.<ext>` (dot-prefixed and marked hidden). A single fixed path keeps safe-save's inode churn on a constant path. Downloads is used because Preview.app cannot overwrite another app's Application Support file without presenting a save dialog.
+- **AX refcon lifetime**: The `SessionBox` passed as the AX observer refcon is `Unmanaged.passRetained` so it survives until `stopSession` explicitly `release()`s it, even if the session is removed from the dictionary before a late AX callback fires.
 
 ### 4.4 Settings Immediate Reflection
 

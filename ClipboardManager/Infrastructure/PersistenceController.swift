@@ -51,15 +51,15 @@ final class PersistenceController {
 
             let backupDir = url.deletingLastPathComponent()
                 .appendingPathComponent("Backups", isDirectory: true)
-            let backedUp = Self.backupStoreFiles(at: url, into: backupDir)
+            let backupManifest = Self.backupStoreFiles(at: url, into: backupDir)
 
-            if backedUp {
+            if let backupManifest {
                 Self.logger.notice("Backed up existing store files into \(backupDir.path, privacy: .public) before recreating.")
                 AppNotifier.notify(
                     title: "Clipboard store recreated",
                     body: "The clipboard history store could not be opened (corrupted or incompatible). A timestamped backup was saved under Application Support/ClipboardManager/Backups before a new empty store was created. Please contact support if you need to restore previous history."
                 )
-                Self.removeStoreFiles(at: url)
+                Self.removeStoreFiles(in: backupManifest)
                 do {
                     container = try ModelContainer(
                         for: schema,
@@ -98,46 +98,70 @@ final class PersistenceController {
         }
     }
 
-    /// Copies the main store file and its SQLite sidecar files (`-wal`, `-shm`) into
-    /// `backupDir` with a timestamped suffix. Returns `true` if at least one file was
-    /// copied successfully. Returns `false` when no source file exists or every copy
-    /// attempt failed, in which case the caller must NOT delete the original store.
-    private static func backupStoreFiles(at url: URL, into backupDir: URL) -> Bool {
+    struct StoreBackupManifest {
+        let sourceURLs: [URL]
+    }
+
+    /// Copies the main store file and every existing SQLite sidecar (`-wal`, `-shm`)
+    /// into `backupDir` with a timestamped suffix. A manifest is returned only when
+    /// the main store exists and every source captured before copying was backed up.
+    /// The caller must not remove any original file when this method returns `nil`.
+    static func backupStoreFiles(
+        at url: URL,
+        into backupDir: URL,
+        copyItem: ((URL, URL) throws -> Void)? = nil
+    ) -> StoreBackupManifest? {
         let fm = FileManager.default
-        try? fm.createDirectory(at: backupDir, withIntermediateDirectories: true)
+        do {
+            try fm.createDirectory(at: backupDir, withIntermediateDirectories: true)
+        } catch {
+            logger.error("Failed to create backup directory \(backupDir.path, privacy: .public): \(String(describing: error), privacy: .public).")
+            return nil
+        }
+
+        let sourceURLs = storeFileSuffixes.compactMap { suffix -> URL? in
+            let source = URL(fileURLWithPath: url.path + suffix)
+            return fm.fileExists(atPath: source.path) ? source : nil
+        }
+        guard sourceURLs.contains(url) else {
+            logger.error("The main store file does not exist at \(url.path, privacy: .public); refusing to treat sidecar-only backup as successful.")
+            return nil
+        }
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HHmmss"
         let stamp = formatter.string(from: Date())
 
         let baseName = url.lastPathComponent
-        var copiedAny = false
-        for suffix in storeFileSuffixes {
-            let srcPath = url.path + suffix
-            guard fm.fileExists(atPath: srcPath) else { continue }
+        var copiedAll = true
+        for source in sourceURLs {
+            let suffix = String(source.path.dropFirst(url.path.count))
             let dest = backupDir.appendingPathComponent("\(baseName).\(stamp)\(suffix).backup")
             do {
-                try fm.copyItem(at: URL(fileURLWithPath: srcPath), to: dest)
-                copiedAny = true
-                logger.notice("Backed up \(srcPath, privacy: .public) -> \(dest.path, privacy: .public).")
+                if let copyItem {
+                    try copyItem(source, dest)
+                } else {
+                    try fm.copyItem(at: source, to: dest)
+                }
+                logger.notice("Backed up \(source.path, privacy: .public) -> \(dest.path, privacy: .public).")
             } catch {
-                logger.error("Backup copy failed for \(srcPath, privacy: .public): \(String(describing: error), privacy: .public).")
+                copiedAll = false
+                logger.error("Backup copy failed for \(source.path, privacy: .public): \(String(describing: error), privacy: .public).")
             }
         }
-        return copiedAny
+        return copiedAll ? StoreBackupManifest(sourceURLs: sourceURLs) : nil
     }
 
     /// Removes the main store file and its SQLite sidecar files (`-wal`, `-shm`).
-    /// Used only after a successful backup.
-    private static func removeStoreFiles(at url: URL) {
+    /// Only the exact sources captured by a successful backup are eligible for removal.
+    private static func removeStoreFiles(in manifest: StoreBackupManifest) {
         let fm = FileManager.default
-        for suffix in storeFileSuffixes {
-            let path = url.path + suffix
-            if fm.fileExists(atPath: path) {
+        for source in manifest.sourceURLs {
+            if fm.fileExists(atPath: source.path) {
                 do {
-                    try fm.removeItem(atPath: path)
+                    try fm.removeItem(at: source)
                 } catch {
-                    logger.error("Failed to remove \(path, privacy: .public) after backup: \(String(describing: error), privacy: .public).")
+                    logger.error("Failed to remove \(source.path, privacy: .public) after backup: \(String(describing: error), privacy: .public).")
                 }
             }
         }

@@ -82,7 +82,7 @@ The footer is a single horizontal bar with the following actions. Actions operat
 - Auto-dispatches by kind:
   - **Text**: Opens an inline text editor sheet. On save, a new plain text history entry is created (original preserved).
   - **Image**: Launches macOS standard Preview.app as an external process with a pre-prepared working file. When the user saves (Cmd+S) and closes the Preview window, a new image history entry is created with the edited result (original preserved). If there are no changes, no new entry is created.
-- Accessibility permission is recommended for instant detection on Preview window close. Without it, detection falls back to Preview app termination or a 5-minute idle timeout.
+- Accessibility permission is recommended for instant detection on Preview window close. Without it, completion detection falls back to Preview app termination. A 5-minute idle timeout stops monitoring but preserves the working file for recovery.
 
 ### 5.4 More (⋯) Menu
 
@@ -179,7 +179,7 @@ row separators are used; sections do not add manual dividers.
 ## 10. First-Run Experience
 
 - On first launch, request Accessibility permission via a dialog with an "Open System Settings" button.
-- Explain that the permission is recommended for instant detection when closing the Preview window during image editing; without it, the app falls back to Preview app termination or a 5-minute idle timeout.
+- Explain that the permission is recommended for instant detection when closing the Preview window during image editing; without it, completion detection falls back to Preview app termination, while a 5-minute idle timeout preserves the working file and stops monitoring.
 - The app remains usable without the permission, but image edit detection is delayed.
 
 ## 11. UI Requirements Not Covered Here

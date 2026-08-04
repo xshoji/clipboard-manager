@@ -56,7 +56,7 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 - An image history entry can be edited in macOS standard Preview.app (annotations, cropping, etc.).
 - Editing is performed by launching Preview.app as an external process with a pre-prepared working file. When the user saves (Cmd+S) and closes the Preview window, the edited result is saved as **a new history entry** (the original image is preserved). If there are no changes, no new entry is created.
 - Image editing is also invoked via the **Edit button in the footer**. Text/image is auto-dispatched by the selected item's kind.
-- Accessibility permission is recommended for instant detection on window close. Without it, detection falls back to Preview app termination or a 5-minute idle timeout. See `docs/design-implementation.md §4.3` for details.
+- Accessibility permission is recommended for instant detection on window close. Without it, completion detection falls back to Preview app termination. After 5 idle minutes, monitoring stops and the working file is preserved for recovery rather than treated as a completed edit. See `docs/design-implementation.md §4.3` for details.
 
 ### 2.1.6 Retention and Count Settings
 

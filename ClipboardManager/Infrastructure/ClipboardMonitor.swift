@@ -358,7 +358,7 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
             guard rich == nil, let data = pb.data(forType: htmlType), !data.isEmpty else { return nil }
             return data
         }()
-        let text = html.flatMap(Self.plainText(fromHTML:)) ?? pb.string(forType: .string) ?? ""
+        let text = pb.string(forType: .string) ?? html.flatMap(Self.plainText(fromHTML:)) ?? ""
         guard !text.isEmpty, text.utf8.count <= maxBytes,
               (rich?.count ?? 0) <= maxBytes, (html?.count ?? 0) <= maxBytes else {
             if notifyWhenOversized { notifySizeLimit() }

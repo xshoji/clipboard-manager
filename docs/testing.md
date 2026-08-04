@@ -183,9 +183,10 @@ continuing.
 
 ### Preview editing
 
-The E2E host disables Preview image editing, startup orphan cleanup, and the
-periodic orphan-cleanup timer. This prevents tests from opening, replacing, or
-deleting production working files under Downloads.
+The E2E host disables Preview image editing. Production no longer performs
+startup or periodic orphan cleanup because a preserved working file may be the
+only recoverable copy after a failed save or interrupted shutdown. This prevents
+tests from opening or replacing production working files under Downloads.
 
 If Preview editing receives E2E coverage in the future, inject a test-specific
 working directory instead of enabling the production integration.

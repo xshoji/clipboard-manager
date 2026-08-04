@@ -50,11 +50,8 @@
 ### 3.1 Working directory location
 
 - **Question**: Is `~/Downloads/ClipboardManagerEdit` acceptable as the working directory, or should it move to Application Support / a container path?
-- **Default (current)**: `~/Downloads/.ClipboardManagerEdit` (dot-prefixed, hidden). Chosen because Preview.app is sandboxed (`com.apple.security.files.downloads.read-write` + `com.apple.security.files.user-selected.read-write` only — verified via `codesign --entitlements`) and cannot write under another app's Application Support directory without presenting a save dialog.
-- **Hardening (review #7)**:
-  - Directory name is dot-prefixed (`.ClipboardManagerEdit`) so Finder and Open/Save panels do not list it.
-  - Each working file is prefixed with a cryptographically-random 16-char hex string (`<random>_<UUID>_edit.<ext>`) so the filename is not guessable from the entity ID alone.
-  - Working files are also marked `isHidden` on disk as a secondary defense.
+- **Default (current)**: A fixed `~/Downloads/.ClipboardManagerEdit.<ext>` file (dot-prefixed and marked hidden). Chosen because Preview.app is sandboxed (`com.apple.security.files.downloads.read-write` + `com.apple.security.files.user-selected.read-write` only — verified via `codesign --entitlements`) and cannot write under another app's Application Support directory without presenting a save dialog. The fixed path avoids safe-save inode races.
+- **Data-preservation rule**: The app deletes the file only after an unchanged close or successful history insertion. Failed/interrupted edits are preserved, automatic orphan cleanup is disabled, and a preserved file blocks a new edit until the user recovers or removes it.
 - **Implication**: If the app is sandboxed for App Store distribution, a `com.apple.security.files.downloads.read-write` entitlement may be required.
 - **Status**: Open for distribution review. Not blocking v1 non-sandboxed. A full Application Support-based scheme ("make file, copy edits back") was evaluated and rejected because it forces Preview to present a Save dialog on Cmd+S, breaking the in-place save UX.
 
@@ -67,8 +64,8 @@
 ### 3.3 Idle timeout duration
 
 - **Question**: What is the right idle timeout for an edit session that resets on file change?
-- **Default (current)**: 5 minutes (was 10 minutes; reduced per review #7). Reset whenever the working file is written. Fires a user notification when the session times out so the user knows the working file was discarded.
-- **Status**: Reduced. Still tunable via settings as a future option; a confirmation dialog before discarding is a candidate but deferred.
+- **Default (current)**: 5 minutes (was 10 minutes; reduced per review #7). Reset whenever the working file is written. The timeout stops monitoring and reports the preserved working-file path; it does not discard the file because Preview may still contain unsaved edits.
+- **Status**: Reduced. Still tunable via settings as a future option; automatic discard is prohibited unless a separate recovery/confirmation design is approved.
 
 ## 4. Distribution
 
@@ -103,7 +100,7 @@
 ### 5.1 First-run permission copy
 
 - **Question**: What exact wording should the first-run Accessibility permission dialog use?
-- **Default (current)**: Explains that the permission is recommended for instant detection on Preview window close during image editing; without it, detection falls back to Preview app termination or a 5-minute idle timeout.
+- **Default (current)**: Explains that the permission is recommended for instant detection on Preview window close during image editing; without it, completion detection falls back to Preview app termination, while the 5-minute idle timeout preserves the working file and stops monitoring.
 - **Status**: Deferred. Needs localization review.
 
 ### 5.2 Theme support

@@ -149,13 +149,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
             object: nil
         )
 
-        if !launchConfiguration.isE2E {
-            PreviewImageEditor.shared.cleanupOrphanedEditFiles()
-            // Periodically sweep orphaned working files so crashed-session files do not sit in
-            // Downloads between launches (review #7).
-            PreviewImageEditor.shared.startOrphanCleanupTimer()
-        }
-
         // Design-app.md §3: menu bar resident app. At launch we stay in the menu bar only,
         // matching Maccy/Paste behavior. The main window is shown later via the global hotkey,
         // menu bar item, or selection-from-menu. Do NOT steal focus from the user's current app
@@ -233,14 +226,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
     /// and NSWorkspace notification observers would all leak until process exit and could
     /// fire during the tear-down window. Order:
     /// 1. Stop clipboard polling (no new saves while we are shutting down).
-    /// 2. Tear down all Preview edit sessions (AX observers, file watchers, terminate observers).
+    /// 2. Stop all Preview edit sessions while preserving working files for recovery.
     /// 3. Unregister all Carbon hotkeys and the keyboard event handler.
     /// 4. Stop observing app activation (NSWorkspace observer).
     /// 5. Flush any pending ModelContext changes to disk (logged, not user-notified).
     func applicationWillTerminate(_ notification: Notification) {
         container.settingsConfiguration.stopMonitoring()
         monitor.stop()
-        PreviewImageEditor.shared.teardownAllSessions()
+        PreviewImageEditor.shared.stopAllSessionsPreservingWorkFiles()
         hotkeyManager.unregister()
         AppActivator.shared.stopObservingActivatedApplications()
         container.repository.flushOnTerminate()
@@ -310,6 +303,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
     // MARK: - Window-scoped hotkeys ( design: per-Macro + per-action shortcuts are effective only while the history window is visible )
 
     func installWindowScopedHotkeys() {
+        guard mainWindowController?.window?.isKeyWindow == true else { return }
         installMacroHotkeys()
         installActionHotkeys()
     }
@@ -322,7 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
     func reinstallConfigurationHotkeys() -> Bool {
         let mainSucceeded = hotkeyManager.reinstall()
         let globalPickerSucceeded = hotkeyManager.reinstallMacroModalHotkey()
-        guard mainWindowController?.window?.isVisible == true else {
+        guard mainWindowController?.window?.isKeyWindow == true else {
             return mainSucceeded && globalPickerSucceeded
         }
         let macrosSucceeded = installMacroHotkeys()
@@ -496,8 +490,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
     }
 
     @objc private func macroScriptsDidChange() {
-        // Re-register only if the window is currently visible; otherwise the next `showMainWindow` will install them.
-        guard mainWindowController?.window?.isVisible == true else { return }
+        // Re-register only while the history window is key; otherwise
+        // `windowDidBecomeKey` installs the latest configuration.
+        guard mainWindowController?.window?.isKeyWindow == true else { return }
         installMacroHotkeys()
     }
 
@@ -511,7 +506,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
     }
 
     @objc private func actionHotkeysDidChange() {
-        guard mainWindowController?.window?.isVisible == true else { return }
+        guard mainWindowController?.window?.isKeyWindow == true else { return }
         installActionHotkeys()
     }
 
@@ -568,6 +563,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Close on blur (design-ui.md §1: "disappears on blur or Esc")
 
+    func windowDidBecomeKey(_ notification: Notification) {
+        lifecycle?.mainWindowInstallHotkeys()
+    }
+
     func windowDidResignKey(_ notification: Notification) {
         // Close the history panel when it loses key state (e.g., user clicks another app),
         // matching the "peep and dismiss" UX of standard clipboard managers (design-ui.md §1: "disappears on blur or Esc").
@@ -578,13 +577,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // so the user's own Cmd+E ( etc. ) works in other apps. They will be reinstalled
         // on the next showMainWindow.
 
-        // Skip auto-close AND hotkey uninstall while an image edit session in Preview.app
-        // is active. The user edits in another process; auto-closing the history window
-        // or unregistering window-scoped hotkeys here would prevent them from confirming
-        // that the saved image was appended and from using Cmd+E / other action hotkeys
-        // immediately after Preview's window closes. The session is considered active
-        // until Preview's window closes / it quits (PreviewImageEditor sets didFinish
-        // and tears the session down).
+        // Carbon action hotkeys are system-wide registrations. Always release them as soon
+        // as the history panel loses key status so Preview or another app receives Cmd+E,
+        // Cmd+P, and Cmd+M. `windowDidBecomeKey` restores them symmetrically.
+        lifecycle?.mainWindowUninstallHotkeys()
+
+        // Keep the history panel visible while an image edit session is active, but do not
+        // keep its system-wide hotkeys registered in Preview.
         if PreviewImageEditor.shared.hasActiveSession {
             return
         }
@@ -612,7 +611,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
-        lifecycle?.mainWindowUninstallHotkeys()
         if settings.isAlwaysOnTop {
             return
         }
