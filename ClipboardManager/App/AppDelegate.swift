@@ -53,7 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
         AppActivator.shared.startObservingActivatedApplications()
         ClipboardMonitor.shared = monitor
         if !launchConfiguration.isE2E {
-            PreviewImageEditor.shared.configure(repository: container.repository)
+            PreviewImageEditor.shared.configure(
+                repository: container.repository,
+                pasteboard: container.monitor
+            )
         }
         container.repository.start()
         monitor.start()

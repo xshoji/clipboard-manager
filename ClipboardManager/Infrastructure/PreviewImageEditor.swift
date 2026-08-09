@@ -24,9 +24,11 @@ import UniformTypeIdentifiers
 final class PreviewImageEditor {
     static let shared = PreviewImageEditor()
     private var repository: ClipboardRepositoryPort?
+    private var pasteboard: PasteboardSuppressing?
 
-    func configure(repository: ClipboardRepositoryPort) {
+    func configure(repository: ClipboardRepositoryPort, pasteboard: PasteboardSuppressing) {
         self.repository = repository
+        self.pasteboard = pasteboard
     }
 
     /// Carrier for the session identifier passed as AX refcon.
@@ -856,7 +858,7 @@ final class PreviewImageEditor {
     }
 
     private func saveToHistory(data: Data, hash: String) async -> Bool {
-        guard let repository else { return false }
+        guard let repository, let pasteboard else { return false }
         // Thumbnail generation (lockFocus → tiffRepresentation) is heavy for large
         // images; run it on a background task so the main actor is not blocked.
         let thumb = await Task.detached(priority: .userInitiated) {
@@ -868,6 +870,12 @@ final class PreviewImageEditor {
             removingDuplicates: false,
             purpose: "PreviewImageEditor.saveToHistory"
         )
+        if saved {
+            pasteboard.performSuppressedPasteboardWrite {
+                $0.clearContents()
+                $0.setData(data, forType: .png)
+            }
+        }
         if !saved {
             AppNotifier.notify(
                 title: "Edited image not saved",
