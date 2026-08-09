@@ -385,8 +385,10 @@ Rationale: The Markup sharing service had issues with service identifier instabi
          - performHashCheck: read the working file, compute SHA256, compare to
            the original hash AND the last saved hash (dedup guard for Preview
            auto-save). If different, await insertion as a new ClipboardEntity.
-         - Only after insertion succeeds: update `lastSavedHash`, close the target
-           Preview window, stop watchers, and delete the working file.
+         - Only after insertion succeeds: write the edited image to the pasteboard
+           through ClipboardMonitor's suppressed-write path so it becomes Current
+           Clipboard without a duplicate history insertion; then update `lastSavedHash`,
+           close the target Preview window, stop watchers, and delete the working file.
          - On save failure, oversize output, idle timeout, or app termination: stop
            watchers as needed but preserve the working file for manual recovery.
 ```

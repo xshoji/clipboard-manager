@@ -81,7 +81,7 @@ The footer is a single horizontal bar with the following actions. Actions operat
 - Invokes editing of the selected entry.
 - Auto-dispatches by kind:
   - **Text**: Opens an inline text editor sheet. On save, a new plain text history entry is created (original preserved).
-  - **Image**: Launches macOS standard Preview.app as an external process with a pre-prepared working file. When the user saves (Cmd+S) and closes the Preview window, a new image history entry is created with the edited result (original preserved). If there are no changes, no new entry is created.
+  - **Image**: Launches macOS standard Preview.app as an external process with a pre-prepared working file. When the user saves (Cmd+S) and closes the Preview window, a new image history entry is created with the edited result and it becomes the Current Clipboard (original preserved). If there are no changes, no new entry is created.
 - Accessibility permission is recommended for instant detection on Preview window close. Without it, completion detection falls back to Preview app termination. A 5-minute idle timeout stops monitoring but preserves the working file for recovery.
 
 ### 5.4 More (⋯) Menu
