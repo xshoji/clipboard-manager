@@ -4,28 +4,21 @@ struct HistoryRowView: View {
     let entity: ClipboardItem
     let selected: Bool
     private let title: String
-    private let subtitle: String
 
     private static let titleCharLimit = 200
-    private static let subtitleCharLimit = 200
 
     init(entity: ClipboardItem, selected: Bool) {
         self.entity = entity
         self.selected = selected
         if entity.isImage {
             title = "Image\(entity.sourceBundleID.map { "  via \($0)" } ?? "")"
-            subtitle = "Image"
         } else {
             let preview = entity.displayTextPreview
             let lines = preview.split(separator: "\n", omittingEmptySubsequences: false)
             let firstLineRaw = String(lines.first ?? Substring(preview))
                 .trimmingCharacters(in: .whitespaces)
             let firstLine = Self.clamp(firstLineRaw, limit: Self.titleCharLimit)
-            let restRaw = lines.dropFirst().joined(separator: "")
-                .trimmingCharacters(in: .whitespaces)
-            let rest = Self.clamp(restRaw, limit: Self.subtitleCharLimit)
             title = firstLine.isEmpty ? Self.clamp(preview.trimmingCharacters(in: .whitespaces), limit: Self.titleCharLimit) : firstLine
-            subtitle = rest.isEmpty ? Self.formattedDate(entity.createdAt) : rest
         }
     }
 
@@ -38,24 +31,27 @@ struct HistoryRowView: View {
         HStack(alignment: .top, spacing: 10) {
             icon
             VStack(alignment: .leading, spacing: 2) {
-                if entity.isCurrent {
-                    Text("Current Clipboard")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(selected ? Color.white.opacity(0.9) : Color.accentColor)
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(selected ? Color.white : Color.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if entity.isCurrent {
+                        Text("Current Clipboard")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(selected ? Color.white.opacity(0.9) : Color.accentColor)
+                            .lineLimit(1)
+                    }
                 }
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(selected ? Color.white : Color.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text(subtitle)
+                Text(Self.formattedDate(entity.createdAt))
                     .font(.system(size: 11))
                     .foregroundStyle(selected ? Color.white.opacity(0.8) : Color.secondary)
                     .lineLimit(1)
-                    .truncationMode(.tail)
             }
             Spacer(minLength: 0)
         }
+        .frame(height: 40, alignment: .top)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
