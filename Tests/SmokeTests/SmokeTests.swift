@@ -755,9 +755,10 @@ final class SmokeUITests: XCTestCase {
     ///
     /// Strings are unique-ified with a UUID suffix so successive seeds do not
     /// deduplicate into a single history row.
+    @discardableResult
     private func seedClipboardHistory(app: XCUIApplication,
                                       text: String,
-                                      timeout: TimeInterval = 15) throws {
+                                      timeout: TimeInterval = 15) throws -> String {
         let pb = pasteboard
         pb.clearContents()
         let unique = "\(text)-\(UUID().uuidString.prefix(8))"
@@ -771,6 +772,7 @@ final class SmokeUITests: XCTestCase {
         let seededText = list.staticTexts.matching(predicate).firstMatch
         XCTAssertTrue(exists(seededText, timeout: timeout),
                       "Seeded clipboard text did not appear within \(timeout)s; dumping tree:\n\(app.debugDescription)")
+        return unique
     }
 
     /// Writes a unique 4x4 PNG to the case-specific pasteboard and waits until the
@@ -880,8 +882,33 @@ final class SmokeUITests: XCTestCase {
         let mainWindow = app.windows.firstMatch
         XCTAssertTrue(exists(mainWindow, timeout: 10), "Main window did not appear")
 
-        // Seed a single clipboard entry so the history list is non-empty and
-        // the moveSelection(.up) "already at top" branch is reachable.
+        // Verify the Delete key presents its modal confirmation and Return
+        // invokes the destructive default action rather than falling through
+        // to the history list's paste shortcut.
+        let deleteMarker = try seedClipboardHistory(app: app, text: "E2EDeleteSeed")
+        let deletePredicate = NSPredicate(
+            format: "label == %@ OR value == %@",
+            deleteMarker,
+            deleteMarker
+        )
+        let rowToDelete = app.scrollViews["historyList"].staticTexts
+            .matching(deletePredicate).firstMatch
+        rowToDelete.click()
+        app.typeKey(.delete, modifierFlags: [])
+
+        let confirmDeleteButton = app.buttons["deleteHistory.confirm"]
+        XCTAssertTrue(exists(confirmDeleteButton, timeout: 5),
+                      "Delete confirmation alert did not receive keyboard focus")
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(waitForNonExistence(confirmDeleteButton, timeout: 5),
+                      "Return should invoke the alert's Delete action")
+        XCTAssertTrue(waitForNonExistence(
+            app.scrollViews["historyList"].staticTexts.matching(deletePredicate).firstMatch,
+            timeout: 5
+        ), "Deleted history row should disappear after confirming with Return")
+
+        // Seed a clipboard entry so the history list is non-empty and the
+        // moveSelection(.up) "already at top" branch is reachable.
         try seedClipboardHistory(app: app, text: "E2EFocusSeed")
 
         let searchField = app.textFields["searchField"]

@@ -83,6 +83,8 @@ struct HistoryListPane: View {
         }
         .alert("Delete this entry?", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) { confirmDelete() }
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("deleteHistory.confirm")
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(deleteAlertMessage)
