@@ -70,6 +70,11 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 
 - History is saved as **rich text** by default. When a clipboard entry provides HTML (but not RTF/RTFD), the HTML source is preserved and used for rich paste.
 - At paste time, an **option allows pasting as plain text**.
+- HTML is never parsed for in-app preview. The source-provided plain-text
+  representation is shown instead. If an HTML item has no plain-text
+  representation, it remains visible and persisted with a placeholder; rich
+  Paste and Copy remain available, while Plain Text, Edit, and Macro actions
+  are unavailable.
 - **Paste method**: The UI writes the appropriate type (`RTFD` / `public.html` + `NSStringPboardType` / `NSStringPboardType`) to `NSPasteboard`, then **the user presses `Cmd+V` to paste** (synthetic `Cmd+V` events are not sent by default).
   - Rationale: Synthetic `Cmd+V` goes through `AXUIElement` API and requires accessibility permission, which adds friction to first-run setup.
   - Extension candidate: A "send synthetic `Cmd+V`" option can be added via settings (future). In that case, an accessibility permission grant flow is provided separately (see `docs/design-implementation.md §6`).

@@ -56,10 +56,6 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
         await dataActor.fetchFullText(id: id)
     }
 
-    func fetchHtmlContent(id: UUID) async -> Data? {
-        await dataActor.fetchHtmlContent(id: id)
-    }
-
     func fetchOcrResult(id: UUID) async -> ClipboardOcrResult? {
         await dataActor.fetchOcrResult(id: id)
     }
@@ -89,7 +85,8 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
             thumbnail: item.thumbnail,
             sourceBundleID: item.sourceBundleID,
             contentHash: item.contentHash,
-            ocrStatus: item.ocrStatus
+            ocrStatus: item.ocrStatus,
+            textAvailability: item.textAvailability
         ))
         guard persistence.saveContext(context, purpose: purpose) else {
             context.rollback()

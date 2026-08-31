@@ -145,10 +145,12 @@ final class HistoryViewModel {
     func delete(id: UUID) { if id != CurrentClipboardSnapshot.currentID { repository.delete(id: id) } }
     func fullText(id: UUID) async -> String? { id == CurrentClipboardSnapshot.currentID ? currentSnapshot?.text : await repository.fetchFullText(id: id) }
     func imageData(id: UUID) async -> Data? { id == CurrentClipboardSnapshot.currentID ? currentSnapshot?.imageData : await repository.fetchImageData(id: id) }
-    func htmlContent(id: UUID) async -> Data? { id == CurrentClipboardSnapshot.currentID ? currentSnapshot?.html : await repository.fetchHtmlContent(id: id) }
     func imageByteCount(id: UUID) async -> Int? { id == CurrentClipboardSnapshot.currentID ? currentSnapshot?.imageData?.count : await repository.fetchImageData(id: id)?.count }
     func itemByteCount(id: UUID) async -> Int? {
         if id == CurrentClipboardSnapshot.currentID { return currentSnapshot?.byteCount }
+        if let item = items.first(where: { $0.id == id }), let byteCount = item.payloadByteCount {
+            return byteCount
+        }
         if let image = await repository.fetchImageData(id: id) { return image.count }
         return await repository.fetchFullText(id: id)?.utf8.count
     }

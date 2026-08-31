@@ -9,23 +9,11 @@ struct PreviewPane: View {
     @State private var isExpanded: Bool = false
     @State private var fullText: String? = nil
     @State private var previewImage: NSImage? = nil
-    /// Parsed HTML result paired with the item ID it was loaded for, so a stale
-    /// parse from a previous item never bleeds into the current selection. We
-    /// intentionally do NOT clear it in `.task(id:)`: paired with `itemID` it is
-    /// stale-safe, and keeping the previous value acts as a one-item cache that
-    /// prevents a two-phase render (plain-text fallback → AppKit swap-in) when
-    /// re-selecting an HTML item.
-    @State private var loadedHTML: LoadedHTML? = nil
 
     private struct PreviewRevision: Hashable {
         let id: UUID
         let createdAt: Date
         let contentHash: String?
-    }
-
-    private struct LoadedHTML {
-        let revision: PreviewRevision
-        let attributed: NSAttributedString
     }
 
     private static let previewCharLimit = 2_000
@@ -66,123 +54,72 @@ struct PreviewPane: View {
             isExpanded = false
             fullText = nil
             previewImage = nil
-            loadedHTML = nil
         }
         .task(id: revision) {
             previewImage = nil
-            guard let item, let revision else { return }
+            guard let item, revision != nil else { return }
             if item.isImage, let data = await viewModel.imageData(id: item.id) {
                 previewImage = ThumbnailImageCache.image(
                     forData: data,
                     representation: .full,
                     contentHash: item.contentHash
                 )
-            } else if item.isHtml, let data = await viewModel.htmlContent(id: item.id) {
-                // NSAttributedString(html:) MUST run on the main thread: Apple's
-                // HTML importer synchronizes with the main run loop and times out
-                // or returns partial output when called off-main.
-                let result = Self.parseHTML(data)
-                guard !Task.isCancelled, let result else { return }
-                loadedHTML = LoadedHTML(revision: revision, attributed: result)
             }
         }
     }
 
     @ViewBuilder
     private func content(_ entity: ClipboardItem) -> some View {
-        let displaysHTML = displaysHTMLPreview(for: entity)
-        ZStack {
-            // Always mount the AppKit scroll view so selecting an HTML item
-            // never triggers `makeNSView` (which causes a layout flash). When
-            // the current item does not use its HTML preview, the view is hidden
-            // via opacity and disabled for hit-testing/accessibility. The attributed
-            // string is empty for non-HTML items, so no stale content is visible.
-            AttributedTextView(
-                attributedString: attributedHTML(for: entity),
-                wrapsLines: wrapMode != "nowrap"
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .opacity(displaysHTML ? 1 : 0)
-            .allowsHitTesting(displaysHTML)
-            .accessibilityHidden(!displaysHTML)
-
-            if entity.isImage {
-                if let previewImage {
-                    Image(nsImage: previewImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    Text("Image preview unavailable.")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            } else if !displaysHTML {
-                ScrollView(scrollAxes) {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        Text(displayedText(entity))
-                            .font(.system(.body, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                            .lineLimit(isExpanded ? nil : 200)
-                            .fixedSize(horizontal: wrapMode == "nowrap", vertical: false)
-                        if entity.isTextPreviewTruncated == true, !isExpanded {
-                            Button {
-                                expandFullText(entity)
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text("Show all\(entity.textCharacterCount.map { " (\($0) chars)" } ?? "")")
-                                        .font(.system(size: 12, weight: .medium))
-                                }
-                                .padding(.top, 8)
-                            }
-                            .buttonStyle(.borderless)
-                        } else if isExpanded {
-                            Button {
-                                collapse()
-                            } label: {
-                                Text("Show less")
+        if entity.isImage {
+            if let previewImage {
+                Image(nsImage: previewImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Text("Image preview unavailable.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else {
+            ScrollView(scrollAxes) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    Text(displayedText(entity))
+                        .font(.system(.body, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .lineLimit(isExpanded ? nil : 200)
+                        .fixedSize(horizontal: wrapMode == "nowrap", vertical: false)
+                    if entity.isHtml, !entity.canUsePlainText {
+                        Text("The original HTML is preserved for rich paste. Plain Text, Edit, and Macro actions are unavailable because the source did not provide plain text.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 8)
+                    } else if entity.isTextPreviewTruncated == true, !isExpanded {
+                        Button {
+                            expandFullText(entity)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("Show all\(entity.textCharacterCount.map { " (\($0) chars)" } ?? "")")
                                     .font(.system(size: 12, weight: .medium))
-                                    .padding(.top, 8)
                             }
-                            .buttonStyle(.borderless)
+                            .padding(.top, 8)
                         }
+                        .buttonStyle(.borderless)
+                    } else if isExpanded {
+                        Button {
+                            collapse()
+                        } label: {
+                            Text("Show less")
+                                .font(.system(size: 12, weight: .medium))
+                                .padding(.top, 8)
+                        }
+                        .buttonStyle(.borderless)
                     }
                 }
-                .defaultScrollAnchor(.topLeading)
             }
+            .defaultScrollAnchor(.topLeading)
         }
-    }
-
-    private func displaysHTMLPreview(for entity: ClipboardItem) -> Bool {
-        guard entity.isHtml,
-              let loadedHTML,
-              loadedHTML.revision == revision
-        else { return false }
-        return Self.shouldDisplayHTMLPreview(
-            sourceTextPreview: entity.textPreview,
-            htmlText: loadedHTML.attributed.string
-        )
-    }
-
-    static func shouldDisplayHTMLPreview(sourceTextPreview: String?, htmlText: String) -> Bool {
-        guard let sourceTextPreview else { return true }
-        let htmlPreview = TextPreviewBuilder.build(from: htmlText).text
-        return normalizedPreviewText(sourceTextPreview) == normalizedPreviewText(htmlPreview)
-    }
-
-    private static func normalizedPreviewText(_ text: String) -> String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// Returns the parsed HTML attributed string for the given entity, or an
-    /// empty string if the entity is not HTML or the HTML has not been loaded yet.
-    private func attributedHTML(for entity: ClipboardItem) -> NSAttributedString {
-        guard entity.isHtml,
-              let loadedHTML,
-              loadedHTML.revision == revision
-        else { return NSAttributedString(string: "") }
-        return loadedHTML.attributed
     }
 
     private func displayedText(_ entity: ClipboardItem) -> String {
@@ -236,112 +173,4 @@ struct PreviewPane: View {
         return f.string(from: d)
     }
 
-    /// Parses HTML into an `NSAttributedString` on the main thread.
-    /// Apple's HTML importer requires the main run loop and produces unstable
-    /// results (timeouts, partial output) when called from a background queue.
-    /// The importer embeds explicit foreground colors (typically black) that are
-    /// invisible on the app's dark background. We strip them here so the
-    /// `NSTextView.textColor` (set in the view's appearance context) is used
-    /// instead. Bold/italic/size are preserved.
-    private static func parseHTML(_ data: Data) -> NSAttributedString? {
-        guard let attr = try? NSAttributedString(
-            data: data,
-            options: [
-                .documentType: NSAttributedString.DocumentType.html,
-                .characterEncoding: String.Encoding.utf8.rawValue
-            ],
-            documentAttributes: nil
-        ) else { return nil }
-        let mutable = NSMutableAttributedString(attributedString: attr)
-        mutable.removeAttribute(.foregroundColor, range: NSRange(location: 0, length: mutable.length))
-        return mutable
-    }
-}
-
-/// `NSTextView` subclass that refuses to become a key view or first responder,
-/// so the always-mounted AppKit text view never steals keyboard focus from the
-/// SwiftUI history list's arrow-key navigation (which would cause a system beep
-/// and break cursor movement).
-private final class NonKeyTextView: NSTextView {
-    override var canBecomeKeyView: Bool { false }
-}
-
-/// Renders an `NSAttributedString` (e.g. rich HTML) inside SwiftUI using `NSTextView`.
-/// The view is selectable but not editable, so users can copy from the preview.
-/// The returned `NSScrollView` owns scrolling — do NOT wrap this in a SwiftUI
-/// `ScrollView`; the double-scroll-view causes layout collapse.
-///
-/// Keep this view always-mounted (e.g. in a `ZStack` with opacity toggling) so
-/// switching to an HTML item never triggers `makeNSView` (which causes a visible
-/// layout flash). When always-mounted, only `updateNSView` runs, which
-/// efficiently updates the text storage in-place.
-struct AttributedTextView: NSViewRepresentable {
-    let attributedString: NSAttributedString
-    let wrapsLines: Bool
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let textView = NonKeyTextView()
-        let scrollView = NSScrollView()
-        scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = wrapsLines ? false : true
-        scrollView.scrollerStyle = .overlay
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.minSize = NSSize(width: 0, height: 0)
-        textView.isVerticallyResizable = true
-        textView.isRichText = true
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.drawsBackground = false
-        textView.backgroundColor = .clear
-        textView.textColor = NSColor.labelColor
-        configureWrapping(scrollView, textView: textView, wrapsLines: wrapsLines)
-
-        applyText(textView)
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
-        configureWrapping(scrollView, textView: textView, wrapsLines: wrapsLines)
-        applyText(textView)
-    }
-
-    /// Replaces the text storage only when the content actually changed, avoiding
-    /// needless layout passes on every `updateNSView` invocation.
-    private func applyText(_ textView: NSTextView) {
-        guard !textView.attributedString().isEqual(to: attributedString) else { return }
-        let storage = textView.textStorage
-        storage?.beginEditing()
-        storage?.setAttributedString(attributedString)
-        // Re-apply foreground color in the view's current appearance so the HTML
-        // importer's embedded black does not bleed through on dark backgrounds.
-        let fullRange = NSRange(location: 0, length: storage?.length ?? 0)
-        storage?.addAttribute(.foregroundColor, value: NSColor.labelColor, range: fullRange)
-        storage?.endEditing()
-    }
-
-    /// Configures line wrapping vs. horizontal scrolling for the text container.
-    private func configureWrapping(
-        _ scrollView: NSScrollView,
-        textView: NSTextView,
-        wrapsLines: Bool
-    ) {
-        textView.isHorizontallyResizable = !wrapsLines
-        textView.autoresizingMask = [.width]
-
-        guard let container = textView.textContainer else { return }
-        container.heightTracksTextView = false
-        container.widthTracksTextView = wrapsLines
-        container.containerSize = NSSize(
-            width: wrapsLines
-                ? max(scrollView.contentSize.width, 1)
-                : .greatestFiniteMagnitude,
-            height: .greatestFiniteMagnitude
-        )
-        scrollView.hasHorizontalScroller = !wrapsLines
-    }
 }

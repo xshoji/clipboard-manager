@@ -1,4 +1,5 @@
 import AppKit
+import SwiftData
 import XCTest
 @testable import ClipboardManager
 
@@ -54,6 +55,47 @@ final class StoreBackupTests: XCTestCase {
 
         XCTAssertNil(manifest)
         XCTAssertTrue(FileManager.default.fileExists(atPath: walURL.path))
+    }
+}
+
+@MainActor
+final class PersistenceMigrationTests: XCTestCase {
+    func testV3StoreMigratesToV4WithoutDroppingHistory() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent("Clipboard.store")
+        let id = UUID()
+
+        do {
+            let schema = Schema(versionedSchema: SchemaV3.self)
+            let configuration = ModelConfiguration(nil, schema: schema, url: storeURL)
+            let container = try ModelContainer(for: schema, configurations: configuration)
+            container.mainContext.insert(ClipboardEntitySchemaV3.ClipboardEntity(
+                id: id,
+                kind: "text",
+                text: "legacy text",
+                html: Data("<b>legacy text</b>".utf8),
+                contentHash: "legacy-hash"
+            ))
+            try container.mainContext.save()
+        }
+
+        let controller = PersistenceController(settings: .shared, storeURL: storeURL)
+        let migrated = try controller.container.mainContext.fetch(
+            FetchDescriptor<ClipboardEntity>(predicate: #Predicate { $0.id == id })
+        ).first
+
+        XCTAssertEqual(migrated?.text, "legacy text")
+        XCTAssertEqual(migrated?.html, Data("<b>legacy text</b>".utf8))
+        XCTAssertNil(migrated?.textAvailabilityRaw)
+        XCTAssertNil(migrated?.payloadByteCount)
+
+        let dataActor = ClipboardDataActor(modelContainer: controller.container)
+        let item = await dataActor.fetch(id: id)
+        XCTAssertEqual(item?.textAvailability, .unknown)
+        XCTAssertFalse(item?.isHtml ?? true)
     }
 }
 
@@ -762,6 +804,83 @@ final class PasteCoordinatorTests: XCTestCase {
         XCTAssertNil(recorded.richText)
         XCTAssertNil(recorded.html)
         XCTAssertEqual(recorded.contentHash, HashUtil.sha256Hex(of: Data("formatted text".utf8)))
+    }
+
+    func testHtmlOnlyRichPastePreservesRawHtmlAndRecordsItWithoutPlainText() async {
+        let harness = TestHarness()
+        let html = Data("<table><tr><td>value</td></tr></table>".utf8)
+        let hash = HashUtil.sha256HTMLOnly(html)
+        let item = makeClipboardItem(
+            kind: "text",
+            contentHash: hash,
+            isHtml: true,
+            textAvailability: .unavailable
+        )
+        harness.repository.textContent[item.id] = .init(text: nil, richText: nil, html: html)
+
+        let succeeded = await harness.coordinator.pasteStandard(item: item, rich: true, activate: false)
+
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(harness.pasteboard.html, html)
+        XCTAssertNil(harness.pasteboard.string)
+        XCTAssertEqual(harness.pasteboard.recordedItems.first?.html, html)
+        XCTAssertNil(harness.pasteboard.recordedItems.first?.text)
+        XCTAssertEqual(harness.pasteboard.recordedItems.first?.contentHash, hash)
+    }
+
+    func testHtmlOnlyPlainPasteRejectsWithoutChangingPasteboard() async {
+        let harness = TestHarness()
+        let html = Data("<b>value</b>".utf8)
+        let item = makeClipboardItem(
+            kind: "text",
+            isHtml: true,
+            textAvailability: .unavailable
+        )
+        harness.repository.textContent[item.id] = .init(text: nil, richText: nil, html: html)
+
+        let succeeded = await harness.coordinator.pasteStandard(item: item, rich: false)
+
+        XCTAssertFalse(succeeded)
+        XCTAssertEqual(harness.pasteboard.suppressedWriteCount, 0)
+        XCTAssertEqual(harness.activator.callCount, 0)
+        XCTAssertEqual(harness.notifier.notifications.first?.deduplicationKey, "html-plain-text-unavailable")
+    }
+
+    func testCurrentHtmlOnlyRichPasteSucceedsWithoutAddingEmptyPlainText() {
+        let harness = TestHarness()
+        let html = Data("<div>live HTML</div>".utf8)
+        let snapshot = CurrentClipboardSnapshot(
+            changeCount: 7,
+            kind: "text",
+            html: html,
+            contentHash: HashUtil.sha256HTMLOnly(html)
+        )
+
+        let succeeded = harness.coordinator.pasteStandard(snapshot: snapshot, rich: true, activate: false)
+
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(harness.pasteboard.html, html)
+        XCTAssertNil(harness.pasteboard.string)
+        XCTAssertEqual(harness.pasteboard.recordedItems.first?.textAvailability, .unavailable)
+    }
+
+    func testCurrentHtmlOnlyMacroRejectsBeforeRunnerAndPasteboardWrite() async {
+        let harness = TestHarness()
+        let html = Data("<div>live HTML</div>".utf8)
+        let snapshot = CurrentClipboardSnapshot(
+            changeCount: 7,
+            kind: "text",
+            html: html,
+            contentHash: HashUtil.sha256HTMLOnly(html)
+        )
+
+        let succeeded = await harness.coordinator.runMacro(macro: makeMacro(), snapshot: snapshot)
+
+        XCTAssertFalse(succeeded)
+        let calls = await harness.macroRunner.calls
+        XCTAssertTrue(calls.isEmpty)
+        XCTAssertEqual(harness.pasteboard.suppressedWriteCount, 0)
+        XCTAssertEqual(harness.notifier.notifications.first?.deduplicationKey, "html-plain-text-unavailable")
     }
 
     func testCompletedOcrUsesCachedTextWithoutRecognitionOrProgress() async {
@@ -1559,7 +1678,6 @@ private final class RepositoryFake: ClipboardRepositoryPort, ClipboardHistoryWri
     func fetchTextContent(id: UUID, includeRich: Bool) async -> ClipboardTextContent? { textContent[id] }
     func fetchImageData(id: UUID) async -> Data? { imageData[id] }
     func fetchFullText(id: UUID) async -> String? { fullText[id] }
-    func fetchHtmlContent(id: UUID) async -> Data? { textContent[id]?.html }
     func fetchOcrResult(id: UUID) async -> ClipboardOcrResult? { ocrResults[id] }
     func insert(_ item: NewClipboardItem, removingDuplicates: Bool, purpose: String) -> Bool { true }
     func updateOcrResult(id: UUID, text: String?) -> Bool {
@@ -1574,6 +1692,7 @@ private final class PasteboardSpy: PasteboardSuppressing {
     private let pasteboard = NSPasteboard(name: .init("ClipboardManagerTests.\(UUID().uuidString)"))
 
     var string: String? { pasteboard.string(forType: .string) }
+    var html: Data? { pasteboard.data(forType: .init("public.html")) }
     private(set) var suppressedWriteCount = 0
     private(set) var recordedItems: [NewClipboardItem] = []
 
@@ -1736,7 +1855,9 @@ private func makeClipboardItem(
     textPreview: String? = nil,
     sourceBundleID: String? = nil,
     contentHash: String? = nil,
-    ocrTextLowercased: String? = nil
+    ocrTextLowercased: String? = nil,
+    isHtml: Bool = false,
+    textAvailability: ClipboardTextAvailability = .available
 ) -> ClipboardItem {
     ClipboardItem(
         id: UUID(),
@@ -1747,7 +1868,9 @@ private func makeClipboardItem(
         isTextPreviewTruncated: false,
         textCharacterCount: nil,
         thumbnail: nil,
-        isHtml: false,
+        isHtml: isHtml,
+        textAvailability: textAvailability,
+        payloadByteCount: nil,
         sourceBundleID: sourceBundleID,
         contentHash: contentHash,
         ocrTextLowercased: ocrTextLowercased
@@ -1809,7 +1932,7 @@ final class ClipboardMonitorSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot?.contentHash, HashUtil.sha256Hex(of: Data("- First\n- Second".utf8)))
     }
 
-    func testSnapshotExtractsPlainTextFromHtmlWhenSourceDoesNotProvideIt() {
+    func testSnapshotKeepsHtmlWithoutParsingWhenSourceDoesNotProvidePlainText() {
         let harness = TestHarness()
         let pasteboard = NSPasteboard(name: .init("ClipboardMonitorSnapshotTests.\(UUID().uuidString)"))
         defer { pasteboard.releaseGlobally() }
@@ -1824,8 +1947,31 @@ final class ClipboardMonitorSnapshotTests: XCTestCase {
 
         let snapshot = monitor.makeSnapshot(from: pasteboard, changeCount: pasteboard.changeCount)
 
-        XCTAssertEqual(snapshot?.text, "Hello")
+        XCTAssertNil(snapshot?.text)
         XCTAssertEqual(snapshot?.html, Data("<b>Hello</b>".utf8))
+        XCTAssertEqual(snapshot?.textAvailability, .unavailable)
+        XCTAssertEqual(snapshot?.contentHash, HashUtil.sha256HTMLOnly(Data("<b>Hello</b>".utf8)))
+    }
+
+    func testCurrentObservationReusesNormalizedSnapshotForSameChangeCount() async {
+        let harness = TestHarness()
+        let pasteboard = NSPasteboard(name: .init("ClipboardMonitorSnapshotTests.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.setData(Data("<b>Hello</b>".utf8), forType: .init("public.html"))
+        let monitor = ClipboardMonitor(
+            repository: harness.repository,
+            settings: AppSettings.shared,
+            automaticOcr: AutomaticOcrProcessor(repository: harness.repository),
+            pasteboard: pasteboard
+        )
+
+        let first = await monitor.currentClipboardObservation()
+        let second = await monitor.currentClipboardObservation()
+
+        XCTAssertEqual(first?.changeCount, second?.changeCount)
+        XCTAssertEqual(first?.snapshot?.observedAt, second?.snapshot?.observedAt)
+        XCTAssertEqual(first?.snapshot?.contentHash, second?.snapshot?.contentHash)
     }
 
     func testSnapshotRejectsConcealedClipboard() {
@@ -1846,19 +1992,15 @@ final class ClipboardMonitorSnapshotTests: XCTestCase {
     }
 }
 
-@MainActor
-final class PreviewPaneTests: XCTestCase {
-    func testHtmlPreviewIsNotUsedWhenSourcePlainTextContainsMarkdownLayout() {
-        XCTAssertFalse(PreviewPane.shouldDisplayHTMLPreview(
-            sourceTextPreview: "- First\n- Second",
-            htmlText: "First\nSecond"
-        ))
-    }
+final class HtmlOnlyPresentationTests: XCTestCase {
+    func testHtmlOnlyItemUsesPresentationPlaceholderWithoutPlainTextCapability() {
+        let item = makeClipboardItem(
+            kind: "text",
+            isHtml: true,
+            textAvailability: .unavailable
+        )
 
-    func testHtmlPreviewIsUsedWhenItsTextMatchesSourcePlainText() {
-        XCTAssertTrue(PreviewPane.shouldDisplayHTMLPreview(
-            sourceTextPreview: "Hello world",
-            htmlText: "\nHello world\n"
-        ))
+        XCTAssertEqual(item.displayTextPreview, "HTML content (plain-text preview unavailable)")
+        XCTAssertFalse(item.canUsePlainText)
     }
 }

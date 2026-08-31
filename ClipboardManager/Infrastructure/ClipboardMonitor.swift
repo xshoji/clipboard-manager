@@ -1,5 +1,4 @@
 import AppKit
-import CryptoKit
 import os
 import os.lock
 
@@ -28,7 +27,7 @@ import os.lock
 /// `finalizeSuppressionAfterWrite`) and the utility poll
 /// queue. All mutable state is only touched on the serial `pollQueue`
 /// (`lastChangeCount`, `lastSavedContentHash`, `suppressedChangeCounts`, `isRunning`,
-/// `isObservingSettings`, `timer`).
+/// `isObservingSettings`, `timer`, `cachedCurrentObservation`).
 final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, CurrentClipboardReading {
     private static let logger = Logger(subsystem: "com.xshoji.ClipboardManager", category: "ClipboardMonitor")
 
@@ -80,6 +79,10 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
     /// data) and generating thumbnails can take tens of ms; running on a utility queue
     /// keeps the main actor responsive (review #6).
     private let pollQueue = DispatchQueue(label: "com.xshoji.ClipboardManager.clipboardPoll", qos: .utility)
+    /// Stable normalized result for the current pasteboard generation. Explicit
+    /// refreshes and action resolution reuse this value instead of re-reading and
+    /// re-normalizing the same `changeCount`.
+    private var cachedCurrentObservation: CurrentClipboardObservation?
     private typealias CurrentClipboardHandler = @Sendable (CurrentClipboardObservation) -> Void
     private let currentClipboardHandlerLock = OSAllocatedUnfairLock<CurrentClipboardHandler?>(initialState: nil)
 
@@ -310,6 +313,11 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
     private func captureCurrentClipboard(
         notifyWhenOversized: Bool = false
     ) -> CurrentClipboardObservation? {
+        let currentChangeCount = pasteboard.changeCount
+        if let cachedCurrentObservation,
+           cachedCurrentObservation.changeCount == currentChangeCount {
+            return cachedCurrentObservation
+        }
         for _ in 0..<3 {
             let before = pasteboard.changeCount
             let snapshot = makeSnapshot(
@@ -319,7 +327,9 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
             )
             let after = pasteboard.changeCount
             if before == after {
-                return CurrentClipboardObservation(changeCount: after, snapshot: snapshot)
+                let observation = CurrentClipboardObservation(changeCount: after, snapshot: snapshot)
+                cachedCurrentObservation = observation
+                return observation
             }
         }
         return nil
@@ -358,15 +368,26 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
             guard rich == nil, let data = pb.data(forType: htmlType), !data.isEmpty else { return nil }
             return data
         }()
-        let text = pb.string(forType: .string) ?? html.flatMap(Self.plainText(fromHTML:)) ?? ""
-        guard !text.isEmpty, text.utf8.count <= maxBytes,
-              (rich?.count ?? 0) <= maxBytes, (html?.count ?? 0) <= maxBytes else {
+        let sourceText = pb.string(forType: .string)
+        let text = sourceText?.isEmpty == false ? sourceText : nil
+        guard text != nil || html != nil,
+              (text?.utf8.count ?? 0) <= maxBytes,
+              (rich?.count ?? 0) <= maxBytes,
+              (html?.count ?? 0) <= maxBytes else {
             if notifyWhenOversized { notifySizeLimit() }
+            return nil
+        }
+        let contentHash: String
+        if let text {
+            contentHash = HashUtil.sha256Hex(of: Data(text.utf8))
+        } else if let html {
+            contentHash = HashUtil.sha256HTMLOnly(html)
+        } else {
             return nil
         }
         return .init(changeCount: changeCount, kind: "text", text: text, richText: rich,
             html: html, sourceBundleID: source,
-            contentHash: HashUtil.sha256Hex(of: Data(text.utf8)))
+            contentHash: contentHash)
     }
 
     private func notifySizeLimit() {
@@ -424,17 +445,6 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
               let bitmap = NSBitmapImageRep(data: tiff),
               let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
         return png
-    }
-
-    /// Extracts a plain-text fallback from HTML data for search and preview.
-    private static func plainText(fromHTML data: Data) -> String? {
-        guard let attributed = try? NSAttributedString(
-            data: data,
-            options: [.documentType: NSAttributedString.DocumentType.html],
-            documentAttributes: nil
-        ) else { return nil }
-        let text = attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : text
     }
 
     /// Determines whether the pasteboard contains a concealed copy from a password manager.

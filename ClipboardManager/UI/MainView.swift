@@ -186,11 +186,13 @@ struct MainView: View {
             case .current(let snapshot) where snapshot.isImage:
                 onEditCurrentImage(snapshot)
             case .current(let snapshot):
+                guard snapshot.canUsePlainText else { NSSound.beep(); return }
                 editingCurrentText = snapshot.text
                 editingItem = snapshot.clipboardItem()
             case .history(let historyItem) where historyItem.isImage:
                 onEditImage(historyItem)
             case .history(let historyItem):
+                guard historyItem.canUsePlainText else { NSSound.beep(); return }
                 editingCurrentText = nil
                 editingItem = historyItem
             }
@@ -220,6 +222,11 @@ struct MainView: View {
             let target = await viewModel.resolveActionTarget(for: selected, preferCurrent: preferCurrent)
             guard macroPreparationID == preparationID else { return }
             guard let target else {
+                macroPreparationID = nil
+                NSSound.beep()
+                return
+            }
+            guard target.canRunMacro else {
                 macroPreparationID = nil
                 NSSound.beep()
                 return

@@ -12,9 +12,19 @@ struct FooterBar: View {
     var body: some View {
         HStack(spacing: 8) {
             actionButton("Paste", system: "doc.on.clipboard.fill") { paste(rich: true) }
-            actionButton("Plain Text", system: "textformat") { paste(rich: false) }
+            actionButton(
+                "Plain Text",
+                system: "textformat",
+                disabled: selected.wrappedValue.map { !$0.isImage && !$0.canUsePlainText } ?? false,
+                help: unavailablePlainTextHelp
+            ) { paste(rich: false) }
             actionButton("Copy", system: "doc.on.doc") { justCopy() }
-            actionButton("Edit", system: "square.and.pencil") { editSelected() }
+            actionButton(
+                "Edit",
+                system: "square.and.pencil",
+                disabled: selected.wrappedValue.map { !$0.isImage && !$0.canUsePlainText } ?? false,
+                help: unavailablePlainTextHelp
+            ) { editSelected() }
             macroMenuButton
             Spacer()
             moreMenu
@@ -25,7 +35,13 @@ struct FooterBar: View {
         .overlay(alignment: .top) { Divider().opacity(0.2) }
     }
 
-    private func actionButton(_ title: String, system: String, action: @escaping () -> Void) -> some View {
+    private func actionButton(
+        _ title: String,
+        system: String,
+        disabled: Bool = false,
+        help: String? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: system)
@@ -36,7 +52,8 @@ struct FooterBar: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.footerButtonBg))
         }
         .buttonStyle(.plain)
-        .help(title)
+        .disabled(disabled)
+        .help(help ?? title)
     }
 
     private var macroMenuButton: some View {
@@ -59,8 +76,16 @@ struct FooterBar: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.visible)
-        .help("Run paste macro")
+        .disabled(selected.wrappedValue.map { !$0.isImage && !$0.canUsePlainText } ?? false)
+        .help(unavailablePlainTextHelp ?? "Run paste macro")
         .accessibilityIdentifier("runMacroMenu")
+    }
+
+    private var unavailablePlainTextHelp: String? {
+        guard let item = selected.wrappedValue,
+              !item.isImage,
+              !item.canUsePlainText else { return nil }
+        return "Unavailable because this HTML item has no plain-text representation."
     }
 
     private var moreMenu: some View {

@@ -135,7 +135,7 @@ ClipboardManager/
 | Preview.app image editing | `PreviewImageEditor` | Launches Preview.app as an external process, detects edit completion, saves edited image (§4.3) |
 | SwiftData persistence | `PersistenceController` | Builds `ModelContainer`, save + cleanup |
 | SwiftData persistence adapter | `ClipboardPersistenceAdapter` | Concretions of `ClipboardPersistencePort`; owns `PersistenceController` + `ClipboardDataActor`, performs entity<->DTO conversion. Injected into `ClipboardRepository` by `AppContainer` so ApplicationServices never references Infrastructure persistence types directly. |
-| SwiftData off-main reads | `ClipboardDataActor` | `@ModelActor` performing fetches (list, text payload, image bytes, full text, HTML) off the main actor. Referenced only by `ClipboardPersistenceAdapter`. |
+| SwiftData off-main reads | `ClipboardDataActor` | `@ModelActor` performing fetches (list, action text payload including rich HTML, image bytes, and full text) off the main actor. Referenced only by `ClipboardPersistenceAdapter`. |
 | App icon resolution | `AppIconResolver` | Gets `NSImage` via `NSWorkspace.shared.icon(forFile:)` from `sourceBundleID`, supplies to `HistoryRowView` |
 | Image thumbnail | `ThumbnailGenerator` | Generates list-display thumbnails from image Entity |
 | Accessibility permission | `InputPermission` | Prompts for permission when enabling synthetic `Cmd+V` or when Preview editing needs faster detection (see §5.2) |
@@ -154,7 +154,10 @@ final class ClipboardEntity {
     var kind: String            // "text" / "image"
     var text: String?          // Plain text (search target)
     var richText: Data?        // RTFD (for rich restoration on paste)
-    var html: Data?            // HTML source (for rich paste + styled preview)
+    var html: Data?            // Raw HTML source (for rich paste)
+    var hasHTML: Bool?         // Scalar format metadata; avoids loading raw HTML in list reads
+    var textAvailabilityRaw: String? // Plain-text action capability
+    var payloadByteCount: Int? // Scalar size metadata for list/item info
     var imageData: Data?       // PNG (image history)
     var thumbnail: Data?       // For fast list display
     var sourceBundleID: String?
@@ -173,7 +176,10 @@ final class ClipboardEntity {
 | kind | String | "text" / "image" |
 | text | String? | Plain text (search target) |
 | richText | Data? | RTFD (for rich restoration on paste) |
-| html | Data? | HTML source (for rich paste + styled preview). Stored with `@Attribute(.externalStorage)` |
+| html | Data? | Raw HTML source for rich paste. Stored with `@Attribute(.externalStorage)` |
+| hasHTML | Bool? | Scalar HTML-format metadata used by lightweight list reads |
+| textAvailabilityRaw | String? | Whether plain-text-dependent actions are available |
+| payloadByteCount | Int? | Payload size metadata used without loading external storage |
 | imageData | Data? | PNG (image history) |
 | thumbnail | Data? | For fast list display |
 | sourceBundleID | String? | Source app identifier |
@@ -182,8 +188,9 @@ final class ClipboardEntity {
 | ocrStatus | String? | Automatic OCR state (`pending` or `completed`); nil for entries not scheduled for automatic OCR |
 
 > **Edit handling**: Results edited in `TextEditView` are **saved as a new Entity with `kind = "text"` and `richText = nil`** (per `design-app.md §2.1.4`). The original rich text history remains as a separate Entity.
-> **HTML format handling**: When a clipboard entry provides HTML (via `public.html` pasteboard type) without RTF/RTFD, the raw HTML `Data` is stored in the `html` attribute. The source-provided plain-text pasteboard representation is stored in `text`; HTML extraction is used only when that representation is absent. This preserves source-specific plain text such as Markdown instead of regenerating a differently laid-out string from HTML. At paste time, if `html` is present it is written to the pasteboard as `public.html` alongside the plain text, so the target app can pick up the styled content. The preview pane renders styled HTML only when its textual representation matches the source-provided plain text; otherwise it shows the source plain text so Markdown and other source-specific layouts are not replaced by HTML extraction.
-> **Dedup and HTML**: `contentHash` is derived from the **plain-text** representation (`Data(text.utf8)`), not from the HTML markup. This means two copies with identical plain text but different HTML markup (e.g. copied from different apps with different styling) are treated as duplicates — only the first copy is kept. This is an accepted tradeoff: the vast majority of use-cases care about the text content, not the markup. If "same text, different formatting" preservation is needed in the future, the hash would need to incorporate the `html`/`richText` payload (review #2).
+> **HTML format handling**: When a clipboard entry provides HTML (via `public.html` pasteboard type) without RTF/RTFD, the raw HTML `Data` is stored in the `html` attribute. If the source also provides plain text, that exact representation is stored in `text` and used for preview, search, Plain Text, Edit, and Macro actions. Clipboard HTML is never passed to `NSAttributedString`'s HTML importer or to a formatted TextKit preview because those synchronous APIs can monopolize the main run loop on complex input. If no source plain text exists, the item remains visible and persisted with an unavailable-preview placeholder; raw HTML remains available for rich Paste and Copy, and text-dependent actions are disabled. The placeholder is presentation-only and is never persisted, hashed, searched, or passed to a Macro.
+> **Dedup and HTML**: HTML accompanied by source plain text retains the existing plain-text `contentHash`, so identical text with different formatting remains one history item. HTML-only content uses `SHA256(UTF8("html-only-v1") + 0x00 + rawHTML)` so preview availability or placeholder text cannot collapse distinct documents.
+> **Persistence compatibility**: V3 is the oldest supported SwiftData store. V3 stores migrate to V4 through a lightweight migration. V1/V2 stores are intentionally unsupported and follow the existing backup-and-recreate recovery path rather than carrying forward additional legacy mapping rules. V3 rows have nil V4 metadata and are treated as unknown-capability items without loading external HTML during list reads; action services validate the actual payload before writing to the pasteboard.
 > **Search scale**: For 100,000+ items with full-text search, `LIKE` queries on `text` become heavy, so v2 should consider prefiltering using `contentHash` suffix or introducing SQLite FTS5 (see §9).
 
 ### 3.2 AppSettings (UserDefaults)
@@ -295,7 +302,8 @@ final class ClipboardEntity {
 [UI item selection + paste command]
   → Branch:
       Rich (RTFD) → write RTFD + text to NSPasteboard
-      Rich (HTML) → write public.html + text to NSPasteboard
+      Rich (HTML + source text) → write public.html + text to NSPasteboard
+      Rich (HTML-only) → write public.html only
       Plain       → write text only
       Macro       → write temp file → MacroRunner.run(script, inputFile)
              → read output file → write to pasteboard
@@ -305,6 +313,12 @@ final class ClipboardEntity {
   → NSApp.activate(ignoringOtherApps: true) to restore previous app
   → User presses Cmd+V to complete paste
 ```
+
+HTML-only items without source plain text reject Plain, Edit, and Macro actions
+without changing the pasteboard. `ClipboardMonitor` caches the normalized
+observation for each `NSPasteboard.changeCount`, including unavailable and
+unsupported results, so explicit Current Clipboard refreshes do not repeatedly
+normalize the same pasteboard generation.
 
 > **Paste method policy** (per `design-app.md §2.2.1`):
 > - Synthetic `Cmd+V` events are not sent (to avoid requiring accessibility permission).
