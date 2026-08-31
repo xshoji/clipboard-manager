@@ -50,10 +50,6 @@ final class ClipboardRepository: ClipboardRepositoryPort, ClipboardHistoryWritin
         await persistence.fetchFullText(id: id)
     }
 
-    func fetchHtmlContent(id: UUID) async -> Data? {
-        await persistence.fetchHtmlContent(id: id)
-    }
-
     func fetchOcrResult(id: UUID) async -> ClipboardOcrResult? {
         await persistence.fetchOcrResult(id: id)
     }

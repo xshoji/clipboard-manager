@@ -18,7 +18,6 @@ protocol ClipboardRepositoryPort: AnyObject {
     func fetchTextContent(id: UUID, includeRich: Bool) async -> ClipboardTextContent?
     func fetchImageData(id: UUID) async -> Data?
     func fetchFullText(id: UUID) async -> String?
-    func fetchHtmlContent(id: UUID) async -> Data?
     func fetchOcrResult(id: UUID) async -> ClipboardOcrResult?
     @discardableResult
     func insert(_ item: NewClipboardItem, removingDuplicates: Bool, purpose: String) -> Bool

@@ -7,6 +7,13 @@ enum HashUtil {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    static func sha256HTMLOnly(_ data: Data) -> String {
+        var hasher = SHA256()
+        hasher.update(data: Data("html-only-v1\0".utf8))
+        hasher.update(data: data)
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     static func sha256File(at path: String) -> String? {
         guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
         defer { try? handle.close() }

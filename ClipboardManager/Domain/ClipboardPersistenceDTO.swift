@@ -1,5 +1,13 @@
 import Foundation
 
+enum ClipboardTextAvailability: String, Sendable, Hashable {
+    case available
+    case unavailable
+    case unknown
+
+    var canUsePlainText: Bool { self != .unavailable }
+}
+
 /// Text payload returned by the persistence boundary when an action needs full
 /// (non-preview) clipboard text. The fields are nullable so the same DTO covers
 /// both the plain-text-only path and the rich-text+HTML path.
@@ -11,6 +19,11 @@ struct ClipboardTextContent: Sendable {
     let text: String?
     let richText: Data?
     let html: Data?
+
+    var canUsePlainText: Bool { text?.isEmpty == false }
+    var canRichPaste: Bool {
+        canUsePlainText || richText?.isEmpty == false || html?.isEmpty == false
+    }
 }
 
 /// Persisted OCR state fetched independently from the lightweight history DTO.
@@ -40,11 +53,12 @@ struct NewClipboardItem: Sendable {
     var sourceBundleID: String? = nil
     var contentHash: String? = nil
     var ocrStatus: String? = nil
+    var textAvailability: ClipboardTextAvailability? = nil
 }
 
 /// Complete, non-persisted representation of the pasteboard at one change count.
 /// The fixed ID represents the virtual "Current Clipboard" row across updates.
-struct CurrentClipboardSnapshot: Identifiable, Hashable, Sendable {
+struct CurrentClipboardSnapshot: Identifiable, Sendable {
     static let currentID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
     let id: UUID
@@ -76,6 +90,11 @@ struct CurrentClipboardSnapshot: Identifiable, Hashable, Sendable {
     }
 
     var isImage: Bool { kind == "image" }
+    var textAvailability: ClipboardTextAvailability {
+        if isImage { return .unknown }
+        return text?.isEmpty == false ? .available : .unavailable
+    }
+    var canUsePlainText: Bool { isImage || textAvailability.canUsePlainText }
     var byteCount: Int { imageData?.count ?? html?.count ?? richText?.count ?? text?.utf8.count ?? 0 }
 
     func clipboardItem(matchingHistory: ClipboardItem? = nil) -> ClipboardItem {
@@ -85,6 +104,8 @@ struct CurrentClipboardSnapshot: Identifiable, Hashable, Sendable {
             textPreview: preview, textPreviewLowercased: preview?.lowercased(),
             isTextPreviewTruncated: builtPreview?.isTruncated ?? false,
             textCharacterCount: text?.count, thumbnail: thumbnail, isHtml: html != nil,
+            textAvailability: textAvailability,
+            payloadByteCount: byteCount,
             sourceBundleID: sourceBundleID, contentHash: contentHash,
             ocrTextLowercased: matchingHistory?.ocrTextLowercased)
     }
@@ -92,7 +113,7 @@ struct CurrentClipboardSnapshot: Identifiable, Hashable, Sendable {
     func newClipboardItem() -> NewClipboardItem {
         NewClipboardItem(kind: kind, text: text, richText: richText, html: html,
             imageData: imageData, thumbnail: thumbnail, sourceBundleID: sourceBundleID,
-            contentHash: contentHash)
+            contentHash: contentHash, textAvailability: textAvailability)
     }
 }
 
@@ -108,4 +129,11 @@ struct CurrentClipboardObservation: Sendable {
 enum ClipboardActionTarget: Sendable {
     case current(CurrentClipboardSnapshot)
     case history(ClipboardItem)
+
+    var canRunMacro: Bool {
+        switch self {
+        case .current(let snapshot): snapshot.isImage || snapshot.canUsePlainText
+        case .history(let item): item.isImage || item.canUsePlainText
+        }
+    }
 }

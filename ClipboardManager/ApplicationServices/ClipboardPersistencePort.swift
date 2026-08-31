@@ -34,9 +34,6 @@ protocol ClipboardPersistencePort: AnyObject {
     /// Full plain text for macro input.
     func fetchFullText(id: UUID) async -> String?
 
-    /// Raw HTML bytes for paste when only HTML is requested.
-    func fetchHtmlContent(id: UUID) async -> Data?
-
     /// Persisted OCR text and processing status for cache-aware image text paste.
     func fetchOcrResult(id: UUID) async -> ClipboardOcrResult?
 

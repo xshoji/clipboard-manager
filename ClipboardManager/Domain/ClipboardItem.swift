@@ -33,14 +33,22 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
     let textCharacterCount: Int?
     let thumbnail: Data?
     let isHtml: Bool
+    let textAvailability: ClipboardTextAvailability
+    let payloadByteCount: Int?
     let sourceBundleID: String?
     let contentHash: String?
     let ocrTextLowercased: String?
 
     var isImage: Bool { kind == "image" }
     var isCurrent: Bool { id == CurrentClipboardSnapshot.currentID }
+    var canUsePlainText: Bool { isImage || textAvailability.canUsePlainText }
     var displayTextPreview: String {
-        textPreview ?? (isImage ? "" : "Preview is unavailable for this existing item. Choose Edit to load the full text.")
+        if let textPreview { return textPreview }
+        if isImage { return "" }
+        if isHtml, textAvailability == .unavailable {
+            return "HTML content (plain-text preview unavailable)"
+        }
+        return "Preview is unavailable for this existing item. Choose Edit to load the full text."
     }
 }
 

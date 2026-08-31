@@ -41,25 +41,34 @@ final class PasteCoordinator {
             wrote = true
         } else {
             guard let content = await repository.fetchTextContent(id: item.id, includeRich: rich) else { return false }
-            writeText(content, rich: rich, source: item)
-            wrote = true
+            guard rich ? content.canRichPaste : content.canUsePlainText else {
+                notifyPlainTextUnavailable()
+                return false
+            }
+            wrote = writeText(content, rich: rich, source: item)
         }
-        if activate { activatePreviousApp() }
+        if wrote, activate { activatePreviousApp() }
         return wrote
     }
 
     @discardableResult
     func pasteStandard(snapshot: CurrentClipboardSnapshot, rich: Bool, activate: Bool = true) -> Bool {
+        let wrote: Bool
         if snapshot.isImage, let data = snapshot.imageData {
             historyWrite(recording: snapshot.newClipboardItem()) {
                 $0.clearContents()
                 $0.setData(data, forType: .png)
             }
+            wrote = true
         } else {
-            writeSnapshotText(snapshot, rich: rich, recordOutput: true)
+            guard rich || snapshot.canUsePlainText else {
+                notifyPlainTextUnavailable()
+                return false
+            }
+            wrote = writeSnapshotText(snapshot, rich: rich, recordOutput: true)
         }
-        if activate { activatePreviousApp() }
-        return snapshot.imageData != nil || snapshot.text != nil
+        if wrote, activate { activatePreviousApp() }
+        return wrote
     }
 
     func runOcr(item: ClipboardItem) async {
@@ -148,6 +157,10 @@ final class PasteCoordinator {
 
     @discardableResult
     func runMacro(macro: MacroScript, item: ClipboardItem) async -> Bool {
+        guard item.isImage || item.canUsePlainText else {
+            notifyPlainTextUnavailable()
+            return false
+        }
         guard let input = await macroInput(for: item) else { return false }
         do {
             let output = try await macroRunner.runAsync(script: macro, input: input,
@@ -176,6 +189,10 @@ final class PasteCoordinator {
 
     @discardableResult
     func runMacro(macro: MacroScript, snapshot: CurrentClipboardSnapshot) async -> Bool {
+        guard snapshot.isImage || snapshot.canUsePlainText else {
+            notifyPlainTextUnavailable()
+            return false
+        }
         let input = MacroInput(isImage: snapshot.isImage, imageData: snapshot.imageData,
             text: snapshot.text, sourceBundleID: snapshot.sourceBundleID)
         do {
@@ -205,25 +222,35 @@ final class PasteCoordinator {
         _ snapshot: CurrentClipboardSnapshot,
         rich: Bool,
         recordOutput: Bool
-    ) {
+    ) -> Bool {
+        guard rich ? (snapshot.html?.isEmpty == false || snapshot.richText?.isEmpty == false || snapshot.text?.isEmpty == false)
+                : snapshot.text?.isEmpty == false else { return false }
         let write: (NSPasteboard) -> Void = { pb in
             pb.clearContents()
-            if rich, let html = snapshot.html { pb.setData(html, forType: .init("public.html")); pb.setString(snapshot.text ?? "", forType: .string) }
-            else if rich, let data = snapshot.richText, let type = Self.richTextType(data) { pb.setData(data, forType: type); pb.setString(snapshot.text ?? "", forType: .string) }
-            else { pb.setString(snapshot.text ?? "", forType: .string) }
+            if rich, let html = snapshot.html {
+                pb.setData(html, forType: .init("public.html"))
+                if let text = snapshot.text, !text.isEmpty { pb.setString(text, forType: .string) }
+            } else if rich, let data = snapshot.richText, let type = Self.richTextType(data) {
+                pb.setData(data, forType: type)
+                if let text = snapshot.text, !text.isEmpty { pb.setString(text, forType: .string) }
+            } else if let text = snapshot.text {
+                pb.setString(text, forType: .string)
+            }
         }
-        guard recordOutput, let text = snapshot.text, !text.isEmpty else {
+        guard recordOutput else {
             suppressedWrite(write)
-            return
+            return true
         }
         historyWrite(recording: NewClipboardItem(
             kind: "text",
-            text: text,
+            text: snapshot.text,
             richText: rich ? snapshot.richText : nil,
             html: rich ? snapshot.html : nil,
             sourceBundleID: snapshot.sourceBundleID,
-            contentHash: snapshot.contentHash
+            contentHash: snapshot.contentHash,
+            textAvailability: snapshot.textAvailability
         ), write)
+        return true
     }
 
     private func pasteOriginal(_ snapshot: CurrentClipboardSnapshot) {
@@ -233,7 +260,7 @@ final class PasteCoordinator {
                 $0.setData(data, forType: .png)
             }
         } else {
-            writeSnapshotText(snapshot, rich: true, recordOutput: false)
+            _ = writeSnapshotText(snapshot, rich: true, recordOutput: false)
         }
     }
 
@@ -272,7 +299,8 @@ final class PasteCoordinator {
         rich: Bool,
         source: ClipboardItem,
         recordOutput: Bool = true
-    ) {
+    ) -> Bool {
+        guard rich ? content.canRichPaste : content.canUsePlainText else { return false }
         let write: (NSPasteboard) -> Void = { pb in
             pb.clearContents()
             if rich, let html = content.html, !html.isEmpty {
@@ -282,25 +310,30 @@ final class PasteCoordinator {
                 }
             } else if rich, let data = content.richText, let type = Self.richTextType(data) {
                 pb.setData(data, forType: type); pb.setString(content.text ?? "", forType: .string)
-            } else { pb.setString(content.text ?? "", forType: .string) }
+            } else if let text = content.text { pb.setString(text, forType: .string) }
         }
         guard recordOutput else {
             suppressedWrite(write)
-            return
+            return true
         }
-        guard let text = content.text, !text.isEmpty else {
-            suppressedWrite(write)
-            return
+        let contentHash: String? = if rich {
+            source.contentHash
+                ?? content.text.map { HashUtil.sha256Hex(of: Data($0.utf8)) }
+                ?? content.html.map(HashUtil.sha256HTMLOnly)
+        } else {
+            content.text.map { HashUtil.sha256Hex(of: Data($0.utf8)) }
         }
         let historyItem = NewClipboardItem(
             kind: "text",
-            text: text,
+            text: content.text,
             richText: rich ? content.richText : nil,
             html: rich ? content.html : nil,
             sourceBundleID: source.sourceBundleID,
-            contentHash: HashUtil.sha256Hex(of: Data(text.utf8))
+            contentHash: contentHash,
+            textAvailability: content.canUsePlainText ? .available : .unavailable
         )
         historyWrite(recording: historyItem, write)
+        return true
     }
 
     private func pasteOriginal(_ item: ClipboardItem) async -> Bool {
@@ -312,7 +345,7 @@ final class PasteCoordinator {
             }
         } else {
             guard let content = await repository.fetchTextContent(id: item.id, includeRich: true) else { return false }
-            writeText(content, rich: true, source: item, recordOutput: false)
+            guard writeText(content, rich: true, source: item, recordOutput: false) else { return false }
         }
         return true
     }
@@ -337,7 +370,10 @@ final class PasteCoordinator {
     }
 
     private func historyWrite(recording item: NewClipboardItem, _ body: (NSPasteboard) -> Void) {
-        if item.kind == "text", item.text?.isEmpty != false {
+        if item.kind == "text",
+           item.text?.isEmpty != false,
+           item.richText?.isEmpty != false,
+           item.html?.isEmpty != false {
             suppressedWrite(body)
             return
         }
@@ -354,6 +390,14 @@ final class PasteCoordinator {
 
     private func activatePreviousApp() {
         activator.activatePreviousAppAndPasteSynthetically(needsSynthetic: settings.needsAccessibilityForSyntheticPaste)
+    }
+
+    private func notifyPlainTextUnavailable() {
+        notifier.notify(
+            title: "Plain text unavailable",
+            body: "This HTML item can be copied or pasted with formatting, but its source did not provide plain text.",
+            deduplicationKey: "html-plain-text-unavailable"
+        )
     }
 
     private static func richTextType(_ data: Data) -> NSPasteboard.PasteboardType? {

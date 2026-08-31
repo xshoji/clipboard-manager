@@ -11,7 +11,8 @@ actor ClipboardDataActor {
         descriptor.fetchLimit = limit
         do {
             return try modelContext.fetch(descriptor).map { entity in
-                ClipboardItem(
+                let hasHTML = entity.hasHTML ?? false
+                return ClipboardItem(
                     id: entity.id,
                     createdAt: entity.createdAt,
                     kind: entity.kind,
@@ -20,7 +21,9 @@ actor ClipboardDataActor {
                     isTextPreviewTruncated: entity.isTextPreviewTruncated ?? false,
                     textCharacterCount: entity.textCharacterCount,
                     thumbnail: entity.thumbnail,
-                    isHtml: entity.html != nil,
+                    isHtml: hasHTML,
+                    textAvailability: Self.textAvailability(for: entity),
+                    payloadByteCount: entity.payloadByteCount,
                     sourceBundleID: entity.sourceBundleID,
                     contentHash: entity.contentHash,
                     ocrTextLowercased: entity.ocrText?.lowercased()
@@ -35,7 +38,8 @@ actor ClipboardDataActor {
     /// so the ApplicationServices layer never touches `ClipboardEntity`.
     func fetch(id: UUID) -> ClipboardItem? {
         entity(id: id).map { entity in
-            ClipboardItem(
+            let hasHTML = entity.hasHTML ?? false
+            return ClipboardItem(
                 id: entity.id,
                 createdAt: entity.createdAt,
                 kind: entity.kind,
@@ -44,7 +48,9 @@ actor ClipboardDataActor {
                 isTextPreviewTruncated: entity.isTextPreviewTruncated ?? false,
                 textCharacterCount: entity.textCharacterCount,
                 thumbnail: entity.thumbnail,
-                isHtml: entity.html != nil,
+                isHtml: hasHTML,
+                textAvailability: Self.textAvailability(for: entity),
+                payloadByteCount: entity.payloadByteCount,
                 sourceBundleID: entity.sourceBundleID,
                 contentHash: entity.contentHash,
                 ocrTextLowercased: entity.ocrText?.lowercased()
@@ -68,11 +74,17 @@ actor ClipboardDataActor {
         )
     }
 
-    func fetchHtmlContent(id: UUID) -> Data? { entity(id: id)?.html }
-
     func fetchOcrResult(id: UUID) -> ClipboardOcrResult? {
         guard let entity = entity(id: id) else { return nil }
         return ClipboardOcrResult(status: entity.ocrStatus, text: entity.ocrText)
+    }
+
+    private static func textAvailability(for entity: ClipboardEntity) -> ClipboardTextAvailability {
+        if let raw = entity.textAvailabilityRaw,
+           let availability = ClipboardTextAvailability(rawValue: raw) {
+            return availability
+        }
+        return .unknown
     }
 
     private func entity(id: UUID) -> ClipboardEntity? {

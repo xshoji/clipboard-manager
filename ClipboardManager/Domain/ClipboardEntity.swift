@@ -3,7 +3,7 @@ import SwiftData
 
 /// Current model namespace. Keeping the nested model's short name as
 /// `ClipboardEntity` preserves the persisted entity identity across schema versions.
-enum ClipboardEntitySchemaV3 {
+enum ClipboardEntitySchemaV4 {
 @Model
 final class ClipboardEntity {
     @Attribute(.unique) var id: UUID
@@ -20,6 +20,9 @@ final class ClipboardEntity {
     var textPreviewLowercased: String?
     @Attribute(.externalStorage) var richText: Data?
     @Attribute(.externalStorage) var html: Data?
+    var hasHTML: Bool?
+    var textAvailabilityRaw: String?
+    var payloadByteCount: Int?
     @Attribute(.externalStorage) var imageData: Data?
     @Attribute(.externalStorage) var thumbnail: Data?
     var sourceBundleID: String?
@@ -39,7 +42,8 @@ final class ClipboardEntity {
         sourceBundleID: String? = nil,
         contentHash: String? = nil,
         ocrText: String? = nil,
-        ocrStatus: String? = nil
+        ocrStatus: String? = nil,
+        textAvailability: ClipboardTextAvailability? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -59,6 +63,10 @@ final class ClipboardEntity {
         }
         self.richText = richText
         self.html = html
+        self.hasHTML = html != nil
+        self.textAvailabilityRaw = (textAvailability
+            ?? (text?.isEmpty == false ? .available : (html != nil ? .unavailable : .unknown))).rawValue
+        self.payloadByteCount = imageData?.count ?? html?.count ?? richText?.count ?? text?.utf8.count ?? 0
         self.imageData = imageData
         self.thumbnail = thumbnail
         self.sourceBundleID = sourceBundleID
@@ -79,4 +87,4 @@ final class ClipboardEntity {
 }
 }
 
-typealias ClipboardEntity = ClipboardEntitySchemaV3.ClipboardEntity
+typealias ClipboardEntity = ClipboardEntitySchemaV4.ClipboardEntity
