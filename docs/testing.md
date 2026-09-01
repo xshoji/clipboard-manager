@@ -29,8 +29,9 @@ Infrastructure integration coverage remains planned; see
 `docs/remaining-features.md`.
 
 `Scripts/build-app.sh` uses the same Swift package track for local app bundles
-and GitHub Releases. Do not add Xcode-only production behavior to the E2E
-project configuration.
+and GitHub Releases. It embeds `ClipboardHTMLRenderer` under `Contents/Helpers`;
+the Xcode/E2E track builds and embeds the same helper from `project.yml`. Do not
+add Xcode-only production behavior to the E2E project configuration.
 
 ### E2E UI smoke tests
 

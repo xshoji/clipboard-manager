@@ -234,8 +234,12 @@ open .build/debug/ClipboardManager.app
 ```
 
 You can also open `.build/debug/ClipboardManager.app` directly from
-Finder. `swift run` is still available if you want to run via the
-SwiftPM executable.
+Finder. To run the SwiftPM executable directly, build all products first so the
+HTML preview helper exists beside the app executable:
+
+```bash
+swift build && swift run --skip-build ClipboardManager
+```
 
 #### Build and Run in one step
 

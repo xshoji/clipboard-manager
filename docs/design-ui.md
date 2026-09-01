@@ -61,6 +61,15 @@ The window is resizable; the list pane grows/shrinks while the search bar and fo
 - Keyboard navigation: ↑/↓ to move focus, Enter to execute the default action (Paste).
 - Hover behavior is optional; selection follows focus.
 
+### 4.1 Preview Pane
+
+- HTML formatting is shown only when the isolated renderer helper returns a
+  validated result within one second. The result is limited to 2,000 UTF-16
+  code units and 256 style runs. While rendering, after timeout, or on failure,
+  the pane continues showing the safe plain-text preview.
+- Formatted preview output is presentation-only. Search, Plain Text, Edit, Macro,
+  deduplication, and rich paste continue using the Phase 1/2 representations.
+
 ## 5. Footer Action Bar
 
 The footer is a single horizontal bar with the following actions. Actions operate on the currently focused list row.
@@ -75,9 +84,9 @@ The footer is a single horizontal bar with the following actions. Actions operat
 
 - Pastes the selected entry as plain text (rich text formatting is stripped).
 - After paste, brings the previous app to front so the user can press `Cmd+V`.
-- Disabled for an HTML-only entry whose source did not provide a plain-text
-  representation. The preview explains that the original HTML remains
-  available through rich Paste and Copy.
+- Available for an HTML-only entry when the bounded HTML scanner extracted a
+  usable plain-text representation. Otherwise disabled; the preview explains
+  that the original HTML remains available through rich Paste and Copy.
 
 ### 5.3 Edit
 
@@ -86,8 +95,8 @@ The footer is a single horizontal bar with the following actions. Actions operat
   - **Text**: Opens an inline text editor sheet. On save, a new plain text history entry is created (original preserved).
   - **Image**: Launches macOS standard Preview.app as an external process with a pre-prepared working file. When the user saves (Cmd+S) and closes the Preview window, a new image history entry is created with the edited result and it becomes the Current Clipboard (original preserved). If there are no changes, no new entry is created.
 - Accessibility permission is recommended for instant detection on Preview window close. Without it, completion detection falls back to Preview app termination. A 5-minute idle timeout stops monitoring but preserves the working file for recovery.
-- Edit and Macro actions are disabled for HTML-only entries without a
-  source-provided plain-text representation.
+- Edit and Macro actions are enabled for HTML-only entries with successfully
+  extracted text and disabled when no usable text could be extracted.
 
 ### 5.4 More (⋯) Menu
 

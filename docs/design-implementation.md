@@ -132,6 +132,7 @@ ClipboardManager/
 | Clipboard monitoring | `ClipboardMonitor` | Polls `NSPasteboard.changeCount` at 0.25s, publishes a non-persisted Current Clipboard snapshot immediately, and saves eligible external changes |
 | Global hotkey | `HotkeyManager` | Registers hotkeys via Carbon `RegisterEventHotKey` |
 | Macro script execution | `MacroRunner` | Launches scripts via `Process`, passes IO file paths via env vars (§4.2) |
+| Formatted HTML preview | `HTMLPreviewRenderer` + `ClipboardHTMLRenderer` helper | Runs the system HTML importer only in a timeout-bounded disposable process and returns sanitized, size-limited RTF |
 | Preview.app image editing | `PreviewImageEditor` | Launches Preview.app as an external process, detects edit completion, saves edited image (§4.3) |
 | SwiftData persistence | `PersistenceController` | Builds `ModelContainer`, save + cleanup |
 | SwiftData persistence adapter | `ClipboardPersistenceAdapter` | Concretions of `ClipboardPersistencePort`; owns `PersistenceController` + `ClipboardDataActor`, performs entity<->DTO conversion. Injected into `ClipboardRepository` by `AppContainer` so ApplicationServices never references Infrastructure persistence types directly. |
@@ -188,7 +189,9 @@ final class ClipboardEntity {
 | ocrStatus | String? | Automatic OCR state (`pending` or `completed`); nil for entries not scheduled for automatic OCR |
 
 > **Edit handling**: Results edited in `TextEditView` are **saved as a new Entity with `kind = "text"` and `richText = nil`** (per `design-app.md §2.1.4`). The original rich text history remains as a separate Entity.
-> **HTML format handling**: When a clipboard entry provides HTML (via `public.html` pasteboard type) without RTF/RTFD, the raw HTML `Data` is stored in the `html` attribute. If the source also provides plain text, that exact representation is stored in `text` and used for preview, search, Plain Text, Edit, and Macro actions. Clipboard HTML is never passed to `NSAttributedString`'s HTML importer or to a formatted TextKit preview because those synchronous APIs can monopolize the main run loop on complex input. If no source plain text exists, the item remains visible and persisted with an unavailable-preview placeholder; raw HTML remains available for rich Paste and Copy, and text-dependent actions are disabled. The placeholder is presentation-only and is never persisted, hashed, searched, or passed to a Macro.
+> **HTML format handling**: When a clipboard entry provides HTML (via `public.html` pasteboard type) without RTF/RTFD, the raw HTML `Data` is stored in the `html` attribute. If the source also provides plain text, that exact representation is stored in `text` and used for preview, search, Plain Text, Edit, and Macro actions. Otherwise, `ClipboardMonitor` runs `HTMLPlainTextExtractor` on its utility queue. The extractor is a bounded single-pass UTF-8 byte scanner: it strips tags and comments, suppresses `script` and `style`, decodes a small fixed entity set and valid numeric entities once, and adds structural whitespace. It does not build a DOM, evaluate CSS, use regex or recursion, or invoke `NSAttributedString`'s HTML importer. Its byte output cannot exceed the already size-limited HTML input. Successfully extracted text is persisted with `textAvailabilityRaw = "extracted"` and enables preview, search, Plain Text, Edit, and Macro actions. If extraction produces no text, the item remains visible with an unavailable-preview placeholder; raw HTML remains available for rich Paste and Copy, and text-dependent actions are disabled. The placeholder is presentation-only and is never persisted, hashed, searched, or passed to a Macro.
+>
+> **Formatted HTML preview isolation**: `ClipboardHTMLRenderer` is a separate command-line helper embedded under `Contents/Helpers`. Only this disposable process invokes the system HTML importer. `HTMLPreviewRenderer` writes the raw HTML into a mode-0700 temporary directory and allows only one request at a time: replacing a request cancels it and waits for its process to exit before launching the replacement. The parent terminates a request after one second or when its physical footprint exceeds 512 MB; a helper ignoring `SIGTERM` receives `SIGKILL`. The helper also has an independent two-second/512-MB watchdog, so it cannot remain indefinitely if the app exits. It converts at most 100 MB of input into sanitized RTF containing at most 2,000 UTF-16 code units and 256 style runs, with font sizes clamped to 8–48 points and attachments omitted. The app rejects output over 512 KB or any decoded result exceeding the text/run limits before giving it to TextKit. Timeout, cancellation, missing helper, invalid output, or importer failure leaves the Phase 2 plain preview in place. Rendered and failed results are cached by raw HTML hash, up to 20 entries; canceled results are not cached. Raw HTML identity, persistence, search, and paste behavior do not depend on the formatted result.
 > **Dedup and HTML**: HTML accompanied by source plain text retains the existing plain-text `contentHash`, so identical text with different formatting remains one history item. HTML-only content uses `SHA256(UTF8("html-only-v1") + 0x00 + rawHTML)` so preview availability or placeholder text cannot collapse distinct documents.
 > **Persistence compatibility**: V3 is the oldest supported SwiftData store. V3 stores migrate to V4 through a lightweight migration. V1/V2 stores are intentionally unsupported and follow the existing backup-and-recreate recovery path rather than carrying forward additional legacy mapping rules. V3 rows have nil V4 metadata and are treated as unknown-capability items without loading external HTML during list reads; action services validate the actual payload before writing to the pasteboard.
 > **Search scale**: For 100,000+ items with full-text search, `LIKE` queries on `text` become heavy, so v2 should consider prefiltering using `contentHash` suffix or introducing SQLite FTS5 (see §9).
@@ -302,8 +305,8 @@ final class ClipboardEntity {
 [UI item selection + paste command]
   → Branch:
       Rich (RTFD) → write RTFD + text to NSPasteboard
-      Rich (HTML + source text) → write public.html + text to NSPasteboard
-      Rich (HTML-only) → write public.html only
+      Rich (HTML + source/extracted text) → write public.html + text to NSPasteboard
+      Rich (HTML without usable text) → write public.html only
       Plain       → write text only
       Macro       → write temp file → MacroRunner.run(script, inputFile)
              → read output file → write to pasteboard
@@ -314,11 +317,12 @@ final class ClipboardEntity {
   → User presses Cmd+V to complete paste
 ```
 
-HTML-only items without source plain text reject Plain, Edit, and Macro actions
+HTML-only items with successfully extracted text allow Plain, Edit, and Macro
+actions. Items without usable source or extracted text reject those actions
 without changing the pasteboard. `ClipboardMonitor` caches the normalized
-observation for each `NSPasteboard.changeCount`, including unavailable and
-unsupported results, so explicit Current Clipboard refreshes do not repeatedly
-normalize the same pasteboard generation.
+observation for each `NSPasteboard.changeCount`, including extracted,
+unavailable, and unsupported results, so explicit Current Clipboard refreshes
+do not repeatedly normalize the same pasteboard generation.
 
 > **Paste method policy** (per `design-app.md §2.2.1`):
 > - Synthetic `Cmd+V` events are not sent (to avoid requiring accessibility permission).
@@ -522,6 +526,7 @@ Carbon `RegisterEventHotKey` does not require Input Monitoring permission. There
 - Xcode 15+
 - **macOS 14 (Sonoma) or later** (for `@Observable` / SwiftData APIs)
 - Target: `ClipboardManager.app`
+- Embedded helper: `Contents/Helpers/ClipboardHTMLRenderer`
 - Distribution: local build (unsigned or Developer ID, decided later)
 - Note: If the app is sandboxed in the future, writing to `~/Downloads/ClipboardManagerEdit/` for Preview editing requires the `com.apple.security.files.downloads.read-write` entitlement. Currently non-sandboxed, so no entitlement needed.
 
