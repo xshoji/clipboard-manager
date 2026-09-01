@@ -37,7 +37,8 @@ targets:
       base:
         PRODUCT_NAME: ClipboardHTMLRenderer
         CODE_SIGNING_REQUIRED: NO
-        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: "-"
 
   ClipboardManager:
     type: application
@@ -53,6 +54,7 @@ targets:
         type: folder.src
     dependencies:
       - target: ClipboardHTMLRenderer
+        embed: false
     postBuildScripts:
       - name: Embed HTML preview renderer
         script: |
@@ -93,6 +95,7 @@ targets:
         type: folder.src
     dependencies:
       - target: ClipboardHTMLRenderer
+        embed: false
     postBuildScripts:
       - name: Embed HTML preview renderer
         script: |
