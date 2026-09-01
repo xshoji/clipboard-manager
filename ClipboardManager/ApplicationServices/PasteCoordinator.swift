@@ -157,6 +157,9 @@ final class PasteCoordinator {
 
     @discardableResult
     func runMacro(macro: MacroScript, item: ClipboardItem) async -> Bool {
+        guard !item.isImage || macro.supportsImageInput else {
+            return macroFailureForUnsupportedImage(item: item)
+        }
         guard item.isImage || item.canUsePlainText else {
             notifyPlainTextUnavailable()
             return false
@@ -189,6 +192,9 @@ final class PasteCoordinator {
 
     @discardableResult
     func runMacro(macro: MacroScript, snapshot: CurrentClipboardSnapshot) async -> Bool {
+        guard !snapshot.isImage || macro.supportsImageInput else {
+            return macroFailureForUnsupportedImage(snapshot: snapshot)
+        }
         guard snapshot.isImage || snapshot.canUsePlainText else {
             notifyPlainTextUnavailable()
             return false
@@ -216,6 +222,20 @@ final class PasteCoordinator {
             }
             return false
         }
+    }
+
+    private func macroFailureForUnsupportedImage(item: ClipboardItem) -> Bool {
+        let message = "JavaScript (JXA) Macros are unavailable for image input."
+        if settings.macroFailureBehavior == "restoreOriginalAndNotify" { Task { if await pasteOriginal(item) { activatePreviousApp() } } }
+        if settings.macroFailureBehavior != "silentlySkip" { notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil) }
+        return false
+    }
+
+    private func macroFailureForUnsupportedImage(snapshot: CurrentClipboardSnapshot) -> Bool {
+        let message = "JavaScript (JXA) Macros are unavailable for image input."
+        if settings.macroFailureBehavior == "restoreOriginalAndNotify" { pasteOriginal(snapshot); activatePreviousApp() }
+        if settings.macroFailureBehavior != "silentlySkip" { notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil) }
+        return false
     }
 
     private func writeSnapshotText(
