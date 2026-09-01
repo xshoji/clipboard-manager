@@ -48,6 +48,10 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
         await dataActor.fetchTextContent(id: id, includeRich: includeRich)
     }
 
+    func fetchHTMLData(id: UUID) async -> Data? {
+        await dataActor.fetchHTMLData(id: id)
+    }
+
     func fetchImageData(id: UUID) async -> Data? {
         await dataActor.fetchImageData(id: id)
     }

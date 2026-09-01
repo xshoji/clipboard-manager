@@ -28,6 +28,9 @@ protocol ClipboardPersistencePort: AnyObject {
     /// Full text payload for paste. `includeRich` gates rich-text and HTML.
     func fetchTextContent(id: UUID, includeRich: Bool) async -> ClipboardTextContent?
 
+    /// Raw HTML bytes for isolated formatted-preview rendering.
+    func fetchHTMLData(id: UUID) async -> Data?
+
     /// Raw image bytes for paste / OCR / macro / edit.
     func fetchImageData(id: UUID) async -> Data?
 

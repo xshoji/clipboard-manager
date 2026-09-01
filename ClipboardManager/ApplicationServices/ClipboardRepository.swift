@@ -42,6 +42,10 @@ final class ClipboardRepository: ClipboardRepositoryPort, ClipboardHistoryWritin
         await persistence.fetchTextContent(id: id, includeRich: includeRich)
     }
 
+    func fetchHTMLData(id: UUID) async -> Data? {
+        await persistence.fetchHTMLData(id: id)
+    }
+
     func fetchImageData(id: UUID) async -> Data? {
         await persistence.fetchImageData(id: id)
     }

@@ -59,6 +59,7 @@ actor ClipboardDataActor {
     }
 
     func fetchImageData(id: UUID) -> Data? { entity(id: id)?.imageData }
+    func fetchHTMLData(id: UUID) -> Data? { entity(id: id)?.html }
     func fetchFullText(id: UUID) -> String? { entity(id: id)?.text }
 
     /// Fetches the text payload for paste. When `includeRich` is true, both `richText`
@@ -70,7 +71,8 @@ actor ClipboardDataActor {
         return ClipboardTextContent(
             text: entity.text,
             richText: includeRich ? entity.richText : nil,
-            html: includeRich ? entity.html : nil
+            html: includeRich ? entity.html : nil,
+            textAvailability: Self.textAvailability(for: entity)
         )
     }
 
