@@ -369,16 +369,25 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
             return data
         }()
         let sourceText = pb.string(forType: .string)
-        let text = sourceText?.isEmpty == false ? sourceText : nil
-        guard text != nil || html != nil,
-              (text?.utf8.count ?? 0) <= maxBytes,
+        let providedText = sourceText?.isEmpty == false ? sourceText : nil
+        guard providedText != nil || html != nil,
+              (providedText?.utf8.count ?? 0) <= maxBytes,
               (rich?.count ?? 0) <= maxBytes,
               (html?.count ?? 0) <= maxBytes else {
             if notifyWhenOversized { notifySizeLimit() }
             return nil
         }
+        let extractedText = providedText == nil ? html.flatMap(HTMLPlainTextExtractor.extract(from:)) : nil
+        let text = providedText ?? extractedText
+        let textAvailability: ClipboardTextAvailability = if providedText != nil {
+            .available
+        } else if extractedText != nil {
+            .extracted
+        } else {
+            .unavailable
+        }
         let contentHash: String
-        if let text {
+        if providedText != nil, let text {
             contentHash = HashUtil.sha256Hex(of: Data(text.utf8))
         } else if let html {
             contentHash = HashUtil.sha256HTMLOnly(html)
@@ -387,7 +396,7 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
         }
         return .init(changeCount: changeCount, kind: "text", text: text, richText: rich,
             html: html, sourceBundleID: source,
-            contentHash: contentHash)
+            contentHash: contentHash, textAvailability: textAvailability)
     }
 
     private func notifySizeLimit() {

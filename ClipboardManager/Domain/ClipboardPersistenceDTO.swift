@@ -2,6 +2,7 @@ import Foundation
 
 enum ClipboardTextAvailability: String, Sendable, Hashable {
     case available
+    case extracted
     case unavailable
     case unknown
 
@@ -19,8 +20,24 @@ struct ClipboardTextContent: Sendable {
     let text: String?
     let richText: Data?
     let html: Data?
+    let textAvailability: ClipboardTextAvailability
 
-    var canUsePlainText: Bool { text?.isEmpty == false }
+    init(
+        text: String?,
+        richText: Data?,
+        html: Data?,
+        textAvailability: ClipboardTextAvailability? = nil
+    ) {
+        self.text = text
+        self.richText = richText
+        self.html = html
+        self.textAvailability = textAvailability
+            ?? (text?.isEmpty == false ? .available : .unavailable)
+    }
+
+    var canUsePlainText: Bool {
+        text?.isEmpty == false && textAvailability.canUsePlainText
+    }
     var canRichPaste: Bool {
         canUsePlainText || richText?.isEmpty == false || html?.isEmpty == false
     }
@@ -72,10 +89,12 @@ struct CurrentClipboardSnapshot: Identifiable, Sendable {
     let thumbnail: Data?
     let sourceBundleID: String?
     let contentHash: String
+    let textAvailability: ClipboardTextAvailability
 
     init(changeCount: Int, observedAt: Date = Date(), kind: String, text: String? = nil,
          richText: Data? = nil, html: Data? = nil, imageData: Data? = nil,
-         thumbnail: Data? = nil, sourceBundleID: String? = nil, contentHash: String) {
+         thumbnail: Data? = nil, sourceBundleID: String? = nil, contentHash: String,
+         textAvailability: ClipboardTextAvailability? = nil) {
         id = Self.currentID
         self.changeCount = changeCount
         self.observedAt = observedAt
@@ -87,13 +106,11 @@ struct CurrentClipboardSnapshot: Identifiable, Sendable {
         self.thumbnail = thumbnail
         self.sourceBundleID = sourceBundleID
         self.contentHash = contentHash
+        self.textAvailability = textAvailability
+            ?? (kind == "image" ? .unknown : (text?.isEmpty == false ? .available : .unavailable))
     }
 
     var isImage: Bool { kind == "image" }
-    var textAvailability: ClipboardTextAvailability {
-        if isImage { return .unknown }
-        return text?.isEmpty == false ? .available : .unavailable
-    }
     var canUsePlainText: Bool { isImage || textAvailability.canUsePlainText }
     var byteCount: Int { imageData?.count ?? html?.count ?? richText?.count ?? text?.utf8.count ?? 0 }
 
