@@ -27,6 +27,18 @@ settings:
     ENABLE_HARDENED_RUNTIME: NO
 
 targets:
+  ClipboardHTMLRenderer:
+    type: tool
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: ClipboardHTMLRenderer
+    settings:
+      base:
+        PRODUCT_NAME: ClipboardHTMLRenderer
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+
   ClipboardManager:
     type: application
     platform: macOS
@@ -39,6 +51,16 @@ targets:
     resources:
       - path: ClipboardManager/Resources/Assets.xcassets
         type: folder.src
+    dependencies:
+      - target: ClipboardHTMLRenderer
+    postBuildScripts:
+      - name: Embed HTML preview renderer
+        script: |
+          set -euo pipefail
+          destination="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
+          mkdir -p "$destination"
+          cp "${BUILT_PRODUCTS_DIR}/ClipboardHTMLRenderer" "$destination/ClipboardHTMLRenderer"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         INFOPLIST_FILE: ClipboardManager/App/Info.plist
@@ -69,6 +91,16 @@ targets:
     resources:
       - path: ClipboardManager/Resources/Assets.xcassets
         type: folder.src
+    dependencies:
+      - target: ClipboardHTMLRenderer
+    postBuildScripts:
+      - name: Embed HTML preview renderer
+        script: |
+          set -euo pipefail
+          destination="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
+          mkdir -p "$destination"
+          cp "${BUILT_PRODUCTS_DIR}/ClipboardHTMLRenderer" "$destination/ClipboardHTMLRenderer"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         INFOPLIST_FILE: ClipboardManager/App/Info.E2E.plist

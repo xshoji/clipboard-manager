@@ -26,11 +26,13 @@ BIN_DIR="$(swift build "${BUILD_ARGS[@]}" --show-bin-path 2>/dev/null)"
 APP_BUNDLE="$BIN_DIR/ClipboardManager.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+HELPERS_DIR="$CONTENTS_DIR/Helpers"
 
 rm -rf "$APP_BUNDLE"
-mkdir -p "$CONTENTS_DIR/MacOS" "$RESOURCES_DIR"
+mkdir -p "$CONTENTS_DIR/MacOS" "$RESOURCES_DIR" "$HELPERS_DIR"
 
 cp "$BIN_DIR/ClipboardManager" "$CONTENTS_DIR/MacOS/ClipboardManager"
+cp "$BIN_DIR/ClipboardHTMLRenderer" "$HELPERS_DIR/ClipboardHTMLRenderer"
 cp "$ROOT_DIR/ClipboardManager/App/Info.plist" "$CONTENTS_DIR/Info.plist"
 
 # Color("...") などが通常の .app の main bundle から参照できるよう Assets.car を生成する。

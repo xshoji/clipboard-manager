@@ -5,7 +5,8 @@ let package = Package(
     name: "ClipboardManager",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "ClipboardManager", targets: ["ClipboardManager"])
+        .executable(name: "ClipboardManager", targets: ["ClipboardManager"]),
+        .executable(name: "ClipboardHTMLRenderer", targets: ["ClipboardHTMLRenderer"])
     ],
     targets: [
         .executableTarget(
@@ -24,6 +25,13 @@ let package = Package(
                 .linkedFramework("UserNotifications"),
                 .linkedFramework("ServiceManagement"),
                 .linkedFramework("Vision"),
+            ]
+        ),
+        .executableTarget(
+            name: "ClipboardHTMLRenderer",
+            path: "ClipboardHTMLRenderer",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
             ]
         ),
         .testTarget(
