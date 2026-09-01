@@ -247,8 +247,10 @@ final class PasteCoordinator {
             richText: rich ? snapshot.richText : nil,
             html: rich ? snapshot.html : nil,
             sourceBundleID: snapshot.sourceBundleID,
-            contentHash: snapshot.contentHash,
-            textAvailability: snapshot.textAvailability
+            contentHash: rich
+                ? snapshot.contentHash
+                : snapshot.text.map { HashUtil.sha256Hex(of: Data($0.utf8)) },
+            textAvailability: rich ? snapshot.textAvailability : .available
         ), write)
         return true
     }
@@ -330,7 +332,9 @@ final class PasteCoordinator {
             html: rich ? content.html : nil,
             sourceBundleID: source.sourceBundleID,
             contentHash: contentHash,
-            textAvailability: content.canUsePlainText ? .available : .unavailable
+            textAvailability: rich
+                ? content.textAvailability
+                : (content.canUsePlainText ? .available : .unavailable)
         )
         historyWrite(recording: historyItem, write)
         return true
@@ -395,7 +399,7 @@ final class PasteCoordinator {
     private func notifyPlainTextUnavailable() {
         notifier.notify(
             title: "Plain text unavailable",
-            body: "This HTML item can be copied or pasted with formatting, but its source did not provide plain text.",
+            body: "This HTML item can be copied or pasted with formatting, but no usable text could be extracted.",
             deduplicationKey: "html-plain-text-unavailable"
         )
     }
