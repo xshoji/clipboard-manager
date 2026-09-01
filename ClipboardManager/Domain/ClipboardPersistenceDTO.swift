@@ -153,4 +153,8 @@ enum ClipboardActionTarget: Sendable {
         case .history(let item): item.isImage || item.canUsePlainText
         }
     }
+
+    var isImage: Bool {
+        switch self { case .current(let snapshot): return snapshot.isImage; case .history(let item): return item.isImage }
+    }
 }
