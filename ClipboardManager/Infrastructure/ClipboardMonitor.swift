@@ -419,13 +419,15 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
         if item.kind == "image", item.thumbnail == nil, let imageData = item.imageData {
             item.thumbnail = ThumbnailGenerator.thumbnailData(from: imageData, maxEdge: 64)
         }
-        let shouldRunAutomaticOcr = item.kind == "image" && settings.automaticImageOcrEnabled
-        if shouldRunAutomaticOcr {
-            item.ocrStatus = "pending"
-        }
-        let ocrLanguages = settings.ocrLanguages
+        let preparedItem = item
         Task { @MainActor [weak self] in
             guard let self else { return }
+            var item = preparedItem
+            let shouldRunAutomaticOcr = item.kind == "image" && settings.automaticImageOcrEnabled
+            if shouldRunAutomaticOcr {
+                item.ocrStatus = "pending"
+            }
+            let ocrLanguages = settings.ocrLanguages
             let saved = self.repository.insert(
                 item,
                 removingDuplicates: true,
