@@ -122,6 +122,7 @@ enum MacroRunningError: Error, CustomStringConvertible {
     case missingScript
     case emptyInlineScript
     case invalidOutputEncoding
+    case executionFailed(String)
 
     var description: String {
         switch self {
@@ -133,6 +134,7 @@ enum MacroRunningError: Error, CustomStringConvertible {
         case .missingScript: return "Macro script file not found."
         case .emptyInlineScript: return "Inline Macro script is empty."
         case .invalidOutputEncoding: return "Macro output is not valid UTF-8 text."
+        case .executionFailed(let message): return message
         }
     }
 }

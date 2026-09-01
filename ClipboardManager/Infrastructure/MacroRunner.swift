@@ -17,6 +17,7 @@ import Darwin
 /// `PasteCoordinator` (ApplicationServices), so byte-level encoding validation
 /// stays in the layer that owns the bytes.
 enum MacroRunner {
+    static let javaScriptJXAExecutable = "/usr/bin/osascript"
     private static let capturedStreamLimit = 256 * 1024
 
     /// Process and temporary file paths, boxed as `@unchecked Sendable` so it can
@@ -136,6 +137,10 @@ enum MacroRunner {
         if execution.timedOut { throw MacroRunningError.timeout }
         guard let status = execution.terminationStatus else { throw MacroRunningError.timeout }
         if status != 0 {
+            if case .javaScriptJXA = script.source {
+                let detail = execution.standardError.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !detail.isEmpty { throw MacroRunningError.executionFailed(detail) }
+            }
             throw MacroRunningError.exitStatus(status)
         }
         return try resolveOutput(execution.launched).output
@@ -147,7 +152,7 @@ enum MacroRunner {
         verifyFingerprint: Bool,
         timeoutSeconds: Int = AppSettings.defaultMacroTimeoutSeconds
     ) async throws -> MacroDebugReport {
-        let fallbackCommand = "\(script.interpreter) \(script.inlineScript == nil ? script.scriptPath : "<inline-script>")"
+        let fallbackCommand = script.source.kindLabel
         do {
             let execution = try await execute(
                 script: script,
@@ -165,7 +170,9 @@ enum MacroRunner {
                 errorMessage = MacroRunningError.timeout.description
                 output = try? readOutputPreview(execution.launched, useInputFallback: false)
             } else if let status, status != 0 {
-                errorMessage = MacroRunningError.exitStatus(status).description
+                if case .javaScriptJXA = script.source, !execution.standardError.text.isEmpty {
+                    errorMessage = execution.standardError.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                } else { errorMessage = MacroRunningError.exitStatus(status).description }
                 output = try? readOutputPreview(execution.launched, useInputFallback: false)
             } else {
                 do {
@@ -260,12 +267,24 @@ enum MacroRunner {
         let tmp = NSTemporaryDirectory()
         let inputURL = URL.fileTemporary("cb_input", ext: ext, base: tmp)
         let outputURL = URL.fileTemporary("cb_output", ext: ext, base: tmp)
-        let inlineScriptURL = script.inlineScript.map { _ in
-            URL.fileTemporary("cb_macro", ext: "sh", base: tmp)
+        let inlineScriptURL: URL? = script.source.userCode.map { _ in
+            URL.fileTemporary("cb_macro", ext: script.source.interpreter == nil ? "js" : "sh", base: tmp)
+        }
+        var launchedSuccessfully = false
+        defer {
+            if !launchedSuccessfully {
+                try? fm.removeItem(at: inputURL)
+                try? fm.removeItem(at: outputURL)
+                if let inlineScriptURL { try? fm.removeItem(at: inlineScriptURL) }
+            }
         }
 
         let executableScriptPath: String
-        if let body = script.inlineScript, let inlineScriptURL {
+        let executable: String
+        let arguments: [String]
+        switch script.source {
+        case let .inlineShell(body, interpreter):
+            guard let inlineScriptURL else { throw CocoaError(.fileWriteUnknown) }
             guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw MacroRunningError.emptyInlineScript
             }
@@ -287,9 +306,23 @@ enum MacroRunner {
             try scriptFile.write(contentsOf: Data(body.utf8))
             try scriptFile.close()
             executableScriptPath = inlineScriptURL.path
-        } else {
+            executable = interpreter
+            arguments = [executableScriptPath]
+        case let .javaScriptJXA(body):
+            guard let inlineScriptURL else { throw CocoaError(.fileWriteUnknown) }
+            guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw MacroRunningError.emptyInlineScript }
+            if verifyFingerprint {
+                guard let stored = script.lastFingerprint else { throw MacroRunningError.fingerprintUnavailable }
+                guard HashUtil.sha256Hex(of: Data(body.utf8)) == stored else { throw MacroRunningError.fingerprintMismatch }
+            }
+            guard fm.createFile(atPath: inlineScriptURL.path, contents: nil, attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
+            try Data(javaScriptWrapper(userCode: body).utf8).write(to: inlineScriptURL, options: .atomic)
+            executableScriptPath = inlineScriptURL.path
+            executable = javaScriptJXAExecutable
+            arguments = ["-l", "JavaScript", executableScriptPath, inputURL.path, outputURL.path]
+        case let .file(path, interpreter):
             // remaining-features #5, #14: validate using the normalized real path.
-            let validation = MacroScriptPathValidator.validate(path: script.scriptPath)
+            let validation = MacroScriptPathValidator.validate(path: path)
             guard validation.fileExists else { throw MacroRunningError.missingScript }
             guard validation.isInsideHome else { throw MacroRunningError.scriptPathOutsideHome }
             if verifyFingerprint {
@@ -303,6 +336,8 @@ enum MacroRunner {
                 if actual != stored { throw MacroRunningError.fingerprintMismatch }
             }
             executableScriptPath = validation.resolvedPath
+            executable = interpreter
+            arguments = [executableScriptPath]
         }
 
         try writeInput(to: inputURL, input: input)
@@ -311,8 +346,8 @@ enum MacroRunner {
         }
 
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: script.interpreter)
-        proc.arguments = [executableScriptPath]
+        proc.executableURL = URL(fileURLWithPath: executable)
+        proc.arguments = arguments
         var env = ProcessInfo.processInfo.environment
         env["CB_INPUT_FILE"] = inputURL.path
         env["CB_OUTPUT_FILE"] = outputURL.path
@@ -321,21 +356,22 @@ enum MacroRunner {
         proc.environment = env
 
         let standardOutput = captureStreams ? Pipe() : nil
-        let standardError = captureStreams ? Pipe() : nil
+        // JXA errors are useful in the normal paste failure notification too.
+        let standardError = (captureStreams || script.source.interpreter == nil) ? Pipe() : nil
         proc.standardOutput = standardOutput ?? FileHandle.nullDevice
         proc.standardError = standardError ?? FileHandle.nullDevice
 
         try proc.run()
         try? standardOutput?.fileHandleForWriting.close()
         try? standardError?.fileHandleForWriting.close()
-        return LaunchedProcess(
+        let launched = LaunchedProcess(
             proc: proc,
             inputURL: inputURL,
             outputURL: outputURL,
             inlineScriptURL: inlineScriptURL,
             standardOutput: standardOutput,
             standardError: standardError,
-            command: "\(shellQuoted(script.interpreter)) \(shellQuoted(executableScriptPath))",
+            command: ([shellQuoted(executable)] + arguments.map(shellQuoted)).joined(separator: " "),
             debugEnvironment: [
                 "CB_INPUT_FILE": inputURL.path,
                 "CB_OUTPUT_FILE": outputURL.path,
@@ -343,6 +379,18 @@ enum MacroRunner {
                 "CB_ITEM_SOURCE": input.sourceBundleID ?? "",
             ]
         )
+        launchedSuccessfully = true
+        return launched
+    }
+
+    private static func javaScriptWrapper(userCode: String) -> String {
+        """
+        ObjC.import("Foundation");
+        function readFile(path) { const data = $.NSData.dataWithContentsOfFile(path); if (!data) throw new Error("Failed to read Macro input: " + path); return $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding).js; }
+        function writeFile(path, text) { if (typeof text !== "string") throw new Error("Macro main must return a string."); const ok = $(text).writeToFileAtomicallyEncodingError(path, true, $.NSUTF8StringEncoding, null); if (!ok) throw new Error("Failed to write Macro output: " + path); }
+        var userMain = (function () { \(userCode)\nif (typeof main !== "function") throw new Error("Macro must define function main(clipboardContentString)."); return main; }());
+        function run(argv) { if (argv.length !== 2) throw new Error("ClipboardManager received invalid Macro arguments."); writeFile(argv[1], userMain(readFile(argv[0]))); }
+        """
     }
 
     // MARK: - Process waiting
