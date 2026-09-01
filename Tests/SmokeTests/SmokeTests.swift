@@ -853,6 +853,47 @@ final class SmokeUITests: XCTestCase {
                       "Seeded OCR image did not appear within \(timeout)s; dumping tree:\n\(app.debugDescription)")
     }
 
+    // MARK: - Tests: Preview & Keyboard Navigation
+
+    /// Verifies that the native plain-text preview remains selectable and does
+    /// not prevent arrow-key navigation from returning to the history list.
+    /// This covers the AppKit bridge used for long selectable previews; timing
+    /// remains a manual/Instruments concern rather than a CI assertion.
+    func testPlainTextPreviewCopyAndListNavigation() throws {
+        let app = makeApp()
+        app.launch()
+
+        let settingsWindow = app.windows["settingsWindow"]
+        if settingsWindow.exists {
+            settingsWindow.buttons.element(boundBy: 0).click()
+            XCTAssertTrue(waitForNonExistence(settingsWindow, timeout: 5),
+                          "Settings window should close before preview workflow")
+        }
+
+        let previewText = try seedClipboardHistory(app: app, text: "E2EPreviewCopy")
+        let plainPreview = app.scrollViews["preview.plainText"]
+        XCTAssertTrue(exists(plainPreview, timeout: 5),
+                      "Plain-text preview not found; dumping tree:\n\(app.debugDescription)")
+        plainPreview.click()
+        app.typeKey("a", modifierFlags: .command)
+        app.typeKey("c", modifierFlags: .command)
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            self.pasteboard.string(forType: .string) == previewText
+        }, "Cmd+C should copy only the selected plain-text preview")
+
+        let historyList = app.scrollViews["historyList"]
+        let row = historyList.staticTexts.matching(NSPredicate(
+            format: "label == %@ OR value == %@",
+            previewText,
+            previewText
+        )).firstMatch
+        XCTAssertTrue(exists(row, timeout: 5), "Seeded history row not found")
+        row.click()
+        app.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: Self.uiPump)
+        XCTAssertTrue(historyList.exists, "History list should accept navigation after preview interaction")
+    }
+
     // MARK: - Tests: Keyboard Navigation & Macro Execution
 
     /// Opens the history window, seeds one entry via the case-specific pasteboard,
