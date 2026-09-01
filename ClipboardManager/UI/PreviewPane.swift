@@ -28,13 +28,6 @@ struct PreviewPane: View {
         item.map { PreviewRevision(id: $0.id, createdAt: $0.createdAt, contentHash: $0.contentHash) }
     }
 
-    /// Scroll axes for the text preview. In `nowrap` mode the text overflows
-    /// horizontally, so enable horizontal scrolling to reveal the full content.
-    /// In `wrap` mode the text wraps to the pane width, so vertical-only is enough.
-    private var scrollAxes: Axis.Set {
-        wrapMode == "nowrap" ? [.vertical, .horizontal] : .vertical
-    }
-
     var body: some View {
         Group {
             if let entity = item {
@@ -94,11 +87,24 @@ struct PreviewPane: View {
                     attributedString: displaysFormattedHTML
                         ? formattedHTML?.attributedString ?? NSAttributedString()
                         : NSAttributedString(),
-                    wrapsLines: wrapMode != "nowrap"
+                    wrapsLines: wrapMode != "nowrap",
+                    isActive: displaysFormattedHTML
                 )
                 .opacity(displaysFormattedHTML ? 1 : 0)
                 .allowsHitTesting(displaysFormattedHTML)
                 .accessibilityHidden(!displaysFormattedHTML)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                PlainTextPreviewTextView(
+                    documentID: entity.id,
+                    text: displayedText(entity),
+                    wrapsLines: wrapMode != "nowrap",
+                    isActive: !entity.isImage && !displaysFormattedHTML
+                )
+                .opacity(!entity.isImage && !displaysFormattedHTML ? 1 : 0)
+                .allowsHitTesting(!entity.isImage && !displaysFormattedHTML)
+                .accessibilityHidden(entity.isImage || displaysFormattedHTML)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 if entity.isImage {
                     if let previewImage {
@@ -111,43 +117,10 @@ struct PreviewPane: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                } else if !displaysFormattedHTML {
-                    ScrollView(scrollAxes) {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            Text(displayedText(entity))
-                                .font(.system(.body, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                                .lineLimit(isExpanded ? nil : 200)
-                                .fixedSize(horizontal: wrapMode == "nowrap", vertical: false)
-                            if entity.isHtml, !entity.canUsePlainText {
-                                unavailableTextNotice
-                                    .padding(.top, 8)
-                            } else if entity.isTextPreviewTruncated == true, !isExpanded {
-                                Button {
-                                    expandFullText(entity)
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Text("Show all\(entity.textCharacterCount.map { " (\($0) chars)" } ?? "")")
-                                            .font(.system(size: 12, weight: .medium))
-                                    }
-                                    .padding(.top, 8)
-                                }
-                                .buttonStyle(.borderless)
-                            } else if isExpanded {
-                                Button {
-                                    collapse()
-                                } label: {
-                                    Text("Show less")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .padding(.top, 8)
-                                }
-                                .buttonStyle(.borderless)
-                            }
-                        }
-                    }
-                    .defaultScrollAnchor(.topLeading)
                 }
+            }
+            if !entity.isImage && !displaysFormattedHTML {
+                textPreviewControls(entity)
             }
             if displaysFormattedHTML, !entity.canUsePlainText {
                 unavailableTextNotice
@@ -159,6 +132,32 @@ struct PreviewPane: View {
         Text("The original HTML is preserved for rich paste. Plain Text, Edit, and Macro actions are unavailable because no usable text could be extracted.")
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private func textPreviewControls(_ entity: ClipboardItem) -> some View {
+        if entity.isHtml, !entity.canUsePlainText {
+            unavailableTextNotice
+                .padding(.top, 8)
+        } else if entity.isTextPreviewTruncated == true, !isExpanded {
+            Button {
+                expandFullText(entity)
+            } label: {
+                Text("Show all\(entity.textCharacterCount.map { " (\($0) chars)" } ?? "")")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.top, 8)
+            }
+            .buttonStyle(.borderless)
+        } else if isExpanded {
+            Button {
+                collapse()
+            } label: {
+                Text("Show less")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.top, 8)
+            }
+            .buttonStyle(.borderless)
+        }
     }
 
     static func decodeBoundedRTF(_ data: Data) -> NSAttributedString? {
@@ -233,8 +232,112 @@ struct PreviewPane: View {
 
 }
 
-private final class NonKeyHTMLPreviewTextView: NSTextView {
+private final class NonKeyPreviewTextView: NSTextView {
     override var canBecomeKeyView: Bool { false }
+}
+
+/// Displays the plain-text preview using a persistent TextKit view. Keeping the
+/// view mounted avoids rebuilding SwiftUI's selectable `Text` for every row
+/// visited during keyboard navigation.
+private struct PlainTextPreviewTextView: NSViewRepresentable {
+    let documentID: UUID
+    let text: String
+    let wrapsLines: Bool
+    let isActive: Bool
+
+    final class Coordinator {
+        var lastDocumentID: UUID?
+        var lastText: String?
+        var wrapsLines: Bool?
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let textView = NonKeyPreviewTextView()
+        let scrollView = NSScrollView()
+        scrollView.setAccessibilityIdentifier("preview.plainText")
+        scrollView.documentView = textView
+        scrollView.hasVerticalScroller = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.minSize = .zero
+        textView.isVerticallyResizable = true
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.drawsBackground = false
+        textView.backgroundColor = .clear
+        textView.textContainerInset = .zero
+        textView.textContainer?.lineFragmentPadding = 0
+        configureWrapping(scrollView, textView: textView)
+        context.coordinator.wrapsLines = wrapsLines
+        applyText(to: textView, scrollView: scrollView, coordinator: context.coordinator)
+        resignFirstResponderIfInactive(textView)
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        if context.coordinator.wrapsLines != wrapsLines {
+            configureWrapping(scrollView, textView: textView)
+            context.coordinator.wrapsLines = wrapsLines
+        }
+        applyText(to: textView, scrollView: scrollView, coordinator: context.coordinator)
+        resignFirstResponderIfInactive(textView)
+    }
+
+    private func applyText(
+        to textView: NSTextView,
+        scrollView: NSScrollView,
+        coordinator: Coordinator
+    ) {
+        let documentChanged = coordinator.lastDocumentID != documentID
+        let contentChanged = coordinator.lastText != text
+        guard documentChanged || contentChanged else { return }
+
+        coordinator.lastDocumentID = documentID
+        coordinator.lastText = text
+        textView.textStorage?.setAttributedString(NSAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+                .foregroundColor: NSColor.labelColor
+            ]
+        ))
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        scrollView.contentView.scroll(to: .zero)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    private func configureWrapping(_ scrollView: NSScrollView, textView: NSTextView) {
+        textView.isHorizontallyResizable = !wrapsLines
+        textView.autoresizingMask = wrapsLines ? [.width] : []
+        scrollView.hasHorizontalScroller = !wrapsLines
+        guard let container = textView.textContainer else { return }
+        container.heightTracksTextView = false
+        container.widthTracksTextView = wrapsLines
+        container.containerSize = NSSize(
+            width: wrapsLines
+                ? max(scrollView.contentSize.width, 1)
+                : CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+    }
+
+    private func resignFirstResponderIfInactive(_ textView: NSTextView) {
+        guard !isActive, textView.window?.firstResponder === textView else { return }
+        textView.window?.makeFirstResponder(nil)
+    }
 }
 
 /// Displays only the helper's bounded RTF output. HTML is never passed into this
@@ -242,6 +345,7 @@ private final class NonKeyHTMLPreviewTextView: NSTextView {
 private struct BoundedAttributedTextView: NSViewRepresentable {
     let attributedString: NSAttributedString
     let wrapsLines: Bool
+    let isActive: Bool
 
     final class Coordinator {
         var lastInput: NSAttributedString?
@@ -252,8 +356,9 @@ private struct BoundedAttributedTextView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let textView = NonKeyHTMLPreviewTextView()
+        let textView = NonKeyPreviewTextView()
         let scrollView = NSScrollView()
+        scrollView.setAccessibilityIdentifier("preview.formattedHTML")
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
         scrollView.scrollerStyle = .overlay
@@ -273,6 +378,7 @@ private struct BoundedAttributedTextView: NSViewRepresentable {
         textView.backgroundColor = .clear
         configureWrapping(scrollView, textView: textView)
         applyText(to: textView, coordinator: context.coordinator)
+        resignFirstResponderIfInactive(textView)
         return scrollView
     }
 
@@ -280,6 +386,7 @@ private struct BoundedAttributedTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         configureWrapping(scrollView, textView: textView)
         applyText(to: textView, coordinator: context.coordinator)
+        resignFirstResponderIfInactive(textView)
     }
 
     private func applyText(to textView: NSTextView, coordinator: Coordinator) {
@@ -307,5 +414,10 @@ private struct BoundedAttributedTextView: NSViewRepresentable {
                 : CGFloat.greatestFiniteMagnitude,
             height: CGFloat.greatestFiniteMagnitude
         )
+    }
+
+    private func resignFirstResponderIfInactive(_ textView: NSTextView) {
+        guard !isActive, textView.window?.firstResponder === textView else { return }
+        textView.window?.makeFirstResponder(nil)
     }
 }
