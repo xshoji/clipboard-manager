@@ -886,13 +886,16 @@ final class SmokeUITests: XCTestCase {
         // invokes the destructive default action rather than falling through
         // to the history list's paste shortcut.
         let deleteMarker = try seedClipboardHistory(app: app, text: "E2EDeleteSeed")
-        let deletePredicate = NSPredicate(
-            format: "label == %@ OR value == %@",
-            deleteMarker,
-            deleteMarker
-        )
+        // A freshly copied item is represented by the non-deletable Current
+        // Clipboard row. Advance the pasteboard so deleteMarker becomes a
+        // persisted history row before exercising history deletion.
+        try seedClipboardHistory(app: app, text: "E2EDeleteCurrentReplacement")
         let rowToDelete = app.scrollViews["historyList"].staticTexts
-            .matching(deletePredicate).firstMatch
+            .matching(NSPredicate(
+                format: "label == %@ OR value == %@",
+                deleteMarker,
+                deleteMarker
+            )).firstMatch
         rowToDelete.click()
         app.typeKey(.delete, modifierFlags: [])
 
@@ -903,7 +906,11 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(waitForNonExistence(confirmDeleteButton, timeout: 5),
                       "Return should invoke the alert's Delete action")
         XCTAssertTrue(waitForNonExistence(
-            app.scrollViews["historyList"].staticTexts.matching(deletePredicate).firstMatch,
+            app.scrollViews["historyList"].staticTexts.matching(NSPredicate(
+                format: "label == %@ OR value == %@",
+                deleteMarker,
+                deleteMarker
+            )).firstMatch,
             timeout: 5
         ), "Deleted history row should disappear after confirming with Return")
 
