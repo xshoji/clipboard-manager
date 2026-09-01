@@ -60,6 +60,7 @@ struct FooterBar: View {
         Menu {
             ForEach(settings.macroScripts) { macro in
                 Button(macro.name) { runMacro(macro) }
+                    .disabled(selected.wrappedValue?.isImage == true && !macro.supportsImageInput)
             }
             if settings.macroScripts.isEmpty {
                 Text("No macros registered").foregroundStyle(.secondary)

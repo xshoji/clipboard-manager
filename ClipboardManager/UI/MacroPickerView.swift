@@ -12,6 +12,7 @@ import AppKit
 /// cursor-select a Macro -> Enter runs the Macro with the selected history as input.
 struct MacroPickerView: View {
     let macros: [MacroScript]
+    let isImageInput: Bool
     let onSelect: (MacroScript) -> Void
     let onCancel: () -> Void
 
@@ -62,7 +63,8 @@ struct MacroPickerView: View {
                 }
                 .onKeyPress(.return) {
                     guard !filteredMacros.isEmpty,
-                          filteredMacros.indices.contains(selectedIndex) else { return .ignored }
+                          filteredMacros.indices.contains(selectedIndex),
+                          !isImageInput || filteredMacros[selectedIndex].supportsImageInput else { return .ignored }
                     onSelect(filteredMacros[selectedIndex])
                     return .handled
                 }
@@ -142,7 +144,7 @@ struct MacroPickerView: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(macro.name).lineLimit(1)
-                Text(macro.inlineScript != nil ? "inline" : macro.scriptPath)
+                Text(isImageInput && !macro.supportsImageInput ? "JavaScript (JXA) · Unavailable for image input" : macro.source.kindLabel)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -158,6 +160,7 @@ struct MacroPickerView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
+            guard !isImageInput || macro.supportsImageInput else { return }
             selectedIndex = idx
             onSelect(macro)
         }
@@ -170,6 +173,7 @@ struct MacroPickerView: View {
 /// `Cmd+M` action hotkey fires.
 struct MacroPickerOverlay: View {
     let macros: [MacroScript]
+    let isImageInput: Bool
     let onSelect: (MacroScript) -> Void
     let onCancel: () -> Void
 
@@ -181,6 +185,7 @@ struct MacroPickerOverlay: View {
                 .onTapGesture { onCancel() }
             MacroPickerView(
                 macros: macros,
+                isImageInput: isImageInput,
                 onSelect: onSelect,
                 onCancel: onCancel
             )

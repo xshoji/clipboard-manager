@@ -55,6 +55,12 @@ struct MacroScriptRowView: View {
         "/usr/local/bin/zsh",
     ]
 
+    private static let javaScriptJXATemplate = """
+    function main(clipboardContentString) {
+        return clipboardContentString;
+    }
+    """
+
     init(macro: MacroScript,
          accessibilityIDPrefix: String = "macro",
          onUpdate: @escaping (MacroScript) -> Void,
@@ -64,7 +70,7 @@ struct MacroScriptRowView: View {
         self.onUpdate = onUpdate
         self.onDirtyChange = onDirtyChange
         _name = State(initialValue: macro.name)
-        _sourceType = State(initialValue: macro.inlineScript == nil ? "file" : "inline")
+        _sourceType = State(initialValue: Self.sourceType(for: macro.source))
         _path = State(initialValue: macro.scriptPath)
         _inlineScript = State(initialValue: macro.inlineScript ?? "")
         _testInput = State(initialValue: macro.testInput ?? "")
@@ -83,7 +89,7 @@ struct MacroScriptRowView: View {
                     .multilineTextAlignment(.leading)
                     .accessibilityIdentifier("\(accessibilityIDPrefix).name")
             }
-            settingsRow("Interpreter") {
+            if sourceType != "jxa" { settingsRow("Interpreter") {
                 if sourceType == "inline" {
                     HStack {
                         if interpreterPreset == "custom" {
@@ -106,7 +112,7 @@ struct MacroScriptRowView: View {
                         .multilineTextAlignment(.leading)
                         .accessibilityIdentifier("\(accessibilityIDPrefix).interpreter")
                 }
-            }
+            } }
             settingsRow("Shortcut") {
                 MacroHotkeyRecorderView(
                     keyCode: $hotkeyCode,
@@ -123,6 +129,7 @@ struct MacroScriptRowView: View {
             settingsRow("Source") {
                 Picker("", selection: $sourceType) {
                     Text("Inline shell").tag("inline")
+                    Text("JavaScript (JXA)").tag("jxa")
                     Text("Script file").tag("file")
                 }
                 .labelsHidden()
@@ -160,9 +167,9 @@ struct MacroScriptRowView: View {
                 }
                 settingsRow("") {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Read $CB_INPUT_FILE and write the result to $CB_OUTPUT_FILE.")
+                        Text(sourceType == "jxa" ? "Implement main(clipboardContentString) and return a string." : "Read $CB_INPUT_FILE and write the result to $CB_OUTPUT_FILE.")
                             .font(.caption)
-                        Text("$CB_ITEM_KIND is \"text\" or \"image\". $CB_ITEM_SOURCE is the source app bundle id ( may be empty ).")
+                        Text(sourceType == "jxa" ? "Runs with macOS JavaScript for Automation (JXA) via /usr/bin/osascript. Node.js APIs are not available. Macros run as you and accept text input only." : "$CB_ITEM_KIND is \"text\" or \"image\". $CB_ITEM_SOURCE is the source app bundle id ( may be empty ).")
                             .font(.caption2)
                     }
                     .foregroundStyle(.secondary)
@@ -288,7 +295,10 @@ struct MacroScriptRowView: View {
             showFingerprintCaptured = false
             checkDirty()
         }
-        .onChange(of: sourceType) { _, _ in
+        .onChange(of: sourceType) { previous, updated in
+            if updated == "jxa", previous != "jxa" {
+                inlineScript = Self.javaScriptJXATemplate
+            }
             showFingerprintCaptured = false
             checkDirty()
         }
@@ -328,26 +338,26 @@ struct MacroScriptRowView: View {
     private var canApply: Bool {
         hasContentChanges
         && !name.trimmingCharacters(in: .whitespaces).isEmpty
-        && !interpreter.trimmingCharacters(in: .whitespaces).isEmpty
-        && (sourceType == "inline"
+        && (sourceType == "jxa" || !interpreter.trimmingCharacters(in: .whitespaces).isEmpty)
+        && (sourceType != "file"
             ? !inlineScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             : !path.trimmingCharacters(in: .whitespaces).isEmpty)
     }
 
     private var hasContentChanges: Bool {
         name != macro.name
-        || sourceType != (macro.inlineScript == nil ? "file" : "inline")
+        || sourceType != Self.sourceType(for: macro.source)
         || path != macro.scriptPath
         || inlineScript != (macro.inlineScript ?? "")
-        || interpreter != macro.interpreter
+        || (sourceType != "jxa" && interpreter != macro.interpreter)
         || hotkeyCode != macro.hotkeyCode
         || hotkeyModifiers != macro.hotkeyModifiers
     }
 
     private var canTestRun: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty
-        && !interpreter.trimmingCharacters(in: .whitespaces).isEmpty
-        && (sourceType == "inline"
+        && (sourceType == "jxa" || !interpreter.trimmingCharacters(in: .whitespaces).isEmpty)
+        && (sourceType != "file"
             ? !inlineScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             : !path.trimmingCharacters(in: .whitespaces).isEmpty)
         && !isTestRunning
@@ -373,11 +383,10 @@ struct MacroScriptRowView: View {
     private func apply() {
         var edited = macro
         edited.name = name
-        edited.interpreter = interpreter
         edited.hotkeyCode = hotkeyCode
         edited.hotkeyModifiers = hotkeyModifiers
 
-        if sourceType == "inline" {
+        if sourceType != "file" {
             let body = inlineScript
             guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 validationError = "Shell script is empty."
@@ -385,8 +394,7 @@ struct MacroScriptRowView: View {
                 reportSaveSettlementIfNeeded()
                 return
             }
-            edited.scriptPath = ""
-            edited.inlineScript = body
+            edited.source = sourceType == "jxa" ? .javaScriptJXA(code: body) : .inlineShell(code: body, interpreter: interpreter)
             // Per design-implementation.md §5.1-1 the fingerprint is captured *after*
             // the user confirms the registration/change dialog. Storing it here
             // would make any body pasted in "always clean" at the registration
@@ -413,8 +421,7 @@ struct MacroScriptRowView: View {
                 reportSaveSettlementIfNeeded()
                 return
             }
-            edited.scriptPath = v.resolvedPath
-            edited.inlineScript = nil
+            edited.source = .file(path: v.resolvedPath, interpreter: interpreter)
             // Fingerprint captured after confirmation (see inline branch comment).
             edited.lastFingerprint = nil
             edited.lastModified = nil
@@ -438,7 +445,7 @@ struct MacroScriptRowView: View {
         // Capture the fingerprint *after* the user has confirmed, so the
         // confirmation is the trust anchor for tamper detection. This applies
         // to both file-path and inline macros (review #2 / §5.1-1).
-        if let body = edited.inlineScript {
+        if let body = edited.source.userCode {
             edited.lastFingerprint = HashUtil.sha256Hex(of: Data(body.utf8))
             edited.lastModified = nil
             showFingerprintCaptured = true
@@ -540,8 +547,8 @@ struct MacroScriptRowView: View {
 
     private func syncState(from previous: MacroScript, to updated: MacroScript) {
         if name == previous.name { name = updated.name }
-        if sourceType == (previous.inlineScript == nil ? "file" : "inline") {
-            sourceType = updated.inlineScript == nil ? "file" : "inline"
+        if sourceType == Self.sourceType(for: previous.source) {
+            sourceType = Self.sourceType(for: updated.source)
         }
         if path == previous.scriptPath { path = updated.scriptPath }
         if inlineScript == (previous.inlineScript ?? "") { inlineScript = updated.inlineScript ?? "" }
@@ -568,6 +575,10 @@ struct MacroScriptRowView: View {
         }
         validationError = nil
         checkDirty()
+    }
+
+    private static func sourceType(for source: MacroSource) -> String {
+        switch source { case .inlineShell: return "inline"; case .javaScriptJXA: return "jxa"; case .file: return "file" }
     }
 
     private func checkDirty() {

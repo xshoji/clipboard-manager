@@ -79,7 +79,9 @@ struct MainView: View {
            if macroPickerPresented {
                 MacroPickerOverlay(
                     macros: settings.macroScripts,
+                    isImageInput: fixedMacroTarget?.isImage == true,
                     onSelect: { macro in
+                        guard fixedMacroTarget?.isImage != true || macro.supportsImageInput else { return }
                         macroPickerPresented = false
                         runMacro(macro)
                     },
