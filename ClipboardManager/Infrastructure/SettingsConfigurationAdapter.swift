@@ -373,12 +373,16 @@ final class SettingsConfigurationAdapter: SettingsConfigurationManaging {
         return incoming.map { macro in
             guard let existing = currentByID[macro.id] else { return macro }
             let sameSource: Bool
-            if let code = macro.inlineScript {
-                sameSource = existing.inlineScript == code
-            } else {
-                sameSource = existing.inlineScript == nil
-                    && MacroScriptPathValidator.resolve(path: existing.scriptPath)
-                        == MacroScriptPathValidator.resolve(path: macro.scriptPath)
+            switch (existing.source, macro.source) {
+            case let (.inlineShell(existingCode, existingInterpreter), .inlineShell(code, interpreter)):
+                sameSource = existingCode == code && existingInterpreter == interpreter
+            case let (.javaScriptJXA(existingCode), .javaScriptJXA(code)):
+                sameSource = existingCode == code
+            case let (.file(existingPath, existingInterpreter), .file(path, interpreter)):
+                sameSource = existingInterpreter == interpreter
+                    && MacroScriptPathValidator.resolve(path: existingPath) == MacroScriptPathValidator.resolve(path: path)
+            default:
+                sameSource = false
             }
             guard sameSource else { return macro }
             var trusted = macro

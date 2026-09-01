@@ -1,7 +1,7 @@
 import Foundation
 
 struct SettingsConfigurationDocument: Codable, Sendable {
-    static let currentFormatVersion = 1
+    static let currentFormatVersion = 2
 
     let formatVersion: Int
     let settings: AppSettingsSnapshot
@@ -28,8 +28,12 @@ struct SettingsConfigurationDocument: Codable, Sendable {
     }
 
     func validatedPlan() throws -> SettingsConfigurationPlan {
-        guard formatVersion == Self.currentFormatVersion else {
+        guard formatVersion == 1 || formatVersion == Self.currentFormatVersion else {
             throw SettingsConfigurationError.unsupportedVersion(formatVersion)
+        }
+        if formatVersion == Self.currentFormatVersion,
+           macros.contains(where: { $0.source.type == .inline }) {
+            throw SettingsConfigurationError.invalidData("Version 2 configuration cannot use the legacy inline Macro source.")
         }
         try settings.validate()
         guard macros.count <= 1_000 else {
@@ -199,18 +203,35 @@ struct MacroSnapshot: Codable, Sendable {
     struct Source: Codable, Sendable {
         enum Kind: String, Codable, Sendable {
             case inline
+            case inlineShell
+            case javaScriptJXA
             case file
         }
 
         let type: Kind
         let code: String?
         let path: String?
+        let interpreter: String?
+
+        private enum Keys: String, CodingKey { case type, code, path, interpreter }
+        init(type: Kind, code: String?, path: String?, interpreter: String?) { self.type = type; self.code = code; self.path = path; self.interpreter = interpreter }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            type = try c.decode(Kind.self, forKey: .type)
+            code = try c.decodeIfPresent(String.self, forKey: .code)
+            path = try c.decodeIfPresent(String.self, forKey: .path)
+            interpreter = try c.decodeIfPresent(String.self, forKey: .interpreter)
+            let expected: Set<Keys>
+            switch type { case .inline: expected = [.type, .code, .path]; case .inlineShell: expected = [.type, .code, .interpreter]; case .javaScriptJXA: expected = [.type, .code]; case .file: expected = [.type, .path, .interpreter] }
+            guard Set(c.allKeys).isSubset(of: expected) else { throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Macro source has fields not valid for its type.") }
+        }
     }
 
     let id: UUID
     let order: Int
     let name: String
-    let interpreter: String
+    /// Present only when reading legacy v1 configuration.
+    let interpreter: String?
     let hotkeyCode: Int
     let hotkeyModifiers: Int
     let source: Source
@@ -220,30 +241,30 @@ struct MacroSnapshot: Codable, Sendable {
         id = macro.id
         self.order = order ?? macro.order ?? 10
         name = macro.name
-        interpreter = macro.interpreter
+        interpreter = nil
         hotkeyCode = macro.hotkeyCode
         hotkeyModifiers = macro.hotkeyModifiers
         testInput = macro.testInput
-        if let code = macro.inlineScript {
-            source = Source(type: .inline, code: code, path: nil)
-        } else {
-            source = Source(type: .file, code: nil, path: Self.portablePath(macro.scriptPath))
+        switch macro.source {
+        case let .inlineShell(code, interpreter): source = Source(type: .inlineShell, code: code, path: nil, interpreter: interpreter)
+        case let .javaScriptJXA(code): source = Source(type: .javaScriptJXA, code: code, path: nil, interpreter: nil)
+        case let .file(path, interpreter): source = Source(type: .file, code: nil, path: Self.portablePath(path), interpreter: interpreter)
         }
     }
 
     func restoredMacro() throws -> MacroScript {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !interpreter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               (0...255).contains(hotkeyCode),
               hotkeyModifiers >= 0 else {
             throw SettingsConfigurationError.invalidData("The configuration contains an invalid Macro.")
         }
 
         switch source.type {
-        case .inline:
+        case .inline, .inlineShell:
             guard let code = source.code,
                   !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  source.path == nil else {
+                  source.path == nil,
+                  let interpreter = source.interpreter ?? interpreter else {
                 throw SettingsConfigurationError.invalidData("An inline Macro has invalid source data.")
             }
             return MacroScript(
@@ -257,10 +278,15 @@ struct MacroSnapshot: Codable, Sendable {
                 hotkeyCode: hotkeyCode,
                 hotkeyModifiers: hotkeyModifiers
             )
+        case .javaScriptJXA:
+            guard let code = source.code, !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  source.path == nil, source.interpreter == nil else { throw SettingsConfigurationError.invalidData("A JavaScript (JXA) Macro has invalid source data.") }
+            return MacroScript(id: id, order: order, name: name, source: .javaScriptJXA(code: code), testInput: testInput, hotkeyCode: hotkeyCode, hotkeyModifiers: hotkeyModifiers)
         case .file:
             guard let path = source.path,
                   !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  source.code == nil else {
+                  source.code == nil,
+                  let interpreter = source.interpreter ?? interpreter else {
                 throw SettingsConfigurationError.invalidData("A file-backed Macro has invalid source data.")
             }
             return MacroScript(
