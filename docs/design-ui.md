@@ -155,6 +155,11 @@ row separators are used; sections do not add manual dividers.
 - A dedicated view supports Macro registration, reordering, editing, test runs, and confirmed removal.
 - Each Macro can be moved up or down. The displayed order is used consistently by Macro pickers and is persisted as the stable order in the canonical configuration.
 - New Macros start as editable inline-shell examples; file-backed scripts can be selected in the editor.
+- The source picker also offers `JavaScript (JXA)`. Its editor exposes only
+  `main(clipboardContentString)`, has no interpreter control, and explains that it runs
+  with `/usr/bin/osascript`, has no Node.js APIs, uses user permissions, and accepts text only.
+- When the selected input is an image, JavaScript (JXA) remains in Macro menus and pickers
+  with an unavailable-for-image-input reason and cannot be selected.
 - Registration and script changes require the existing trust confirmation and fingerprint capture flow.
 - Each Macro stores a reusable text test case used only by Test Run, allowing scripts to be tested without changing or selecting clipboard history. The test input is saved automatically with the Macro. Test Run uses that fixed text with the same execution environment used by the main window and opens a debug console with exit status, stdout, stderr, environment variables, and a size-bounded transformed-output preview; it does not update the pasteboard or switch applications. Copy Report uses the app's monitored pasteboard boundary so the report is not re-added to history.
 - Macro timeout, failure behavior, and fingerprint verification are configured in this view because they apply to script execution rather than general app behavior.

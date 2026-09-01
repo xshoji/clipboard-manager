@@ -1205,6 +1205,27 @@ final class PasteCoordinatorTests: XCTestCase {
 }
 
 final class MacroRunnerDebugTests: XCTestCase {
+    func testJavaScriptJXAReturnsText() async throws {
+        let code = "function main(clipboardContentString) { return clipboardContentString + ' ✓'; }"
+        let macro = MacroScript(name: "JXA", source: .javaScriptJXA(code: code), lastFingerprint: HashUtil.sha256Hex(of: Data(code.utf8)))
+        let output = try await MacroRunner.runAsync(
+            script: macro,
+            input: MacroInput(isImage: false, imageData: nil, text: "hello", sourceBundleID: nil),
+            verifyFingerprint: true
+        )
+        XCTAssertEqual(String(data: output.data, encoding: .utf8), "hello ✓")
+    }
+
+    func testJavaScriptJXARejectsNonStringReturn() async throws {
+        let code = "function main(clipboardContentString) { return 1; }"
+        let macro = MacroScript(name: "JXA", source: .javaScriptJXA(code: code), lastFingerprint: HashUtil.sha256Hex(of: Data(code.utf8)))
+        do {
+            _ = try await MacroRunner.runAsync(script: macro, input: MacroInput(isImage: false, imageData: nil, text: "hello", sourceBundleID: nil), verifyFingerprint: true)
+            XCTFail("Expected JXA failure")
+        } catch let error as MacroRunningError {
+            XCTAssertTrue(error.description.contains("must return a string"))
+        }
+    }
     func testDebugRunCapturesTerminalStreamsAndMacroOutput() async throws {
         let script = MacroScript(
             name: "Debug",

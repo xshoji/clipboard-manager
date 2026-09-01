@@ -88,6 +88,12 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 
 #### 2.2.2 Paste Macro (Clipboard Transform Script)
 
+Macros have three source types: Inline shell, JavaScript (JXA), and Script file.
+JavaScript (JXA) runs only text input through `/usr/bin/osascript`; users implement
+`main(clipboardContentString)` and it must return a string. JXA entries remain visible
+but are unavailable for image input. An empty output file, including an empty JXA return,
+keeps the existing fallback of pasting the original input.
+
 - At paste time, **a script in any language** can transform the clipboard content.
 - Multiple transformations can be **registered**.
 - Each transformation can be **invoked via a shortcut** (select and run a transform script at paste time).

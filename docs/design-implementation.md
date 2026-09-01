@@ -221,6 +221,10 @@ final class ClipboardEntity {
 
 ### 3.3 MacroScript
 
+`MacroScript.source` is the single source of truth: `.inlineShell(code, interpreter)`,
+`.javaScriptJXA(code)`, or `.file(path, interpreter)`. Legacy UserDefaults records with
+`inlineScript` decode into shell/file sources and are re-encoded in the new form.
+
 | Attribute | Type | Purpose |
 |---|---|---|
 | id | UUID | Primary key |
@@ -437,6 +441,17 @@ Key behaviors:
 - `pollingIntervalMs` change: immediate (ClipboardMonitor rebuilds timer on next poll).
 
 ### 4.5 Canonical Settings and Macro Configuration
+
+The canonical configuration uses format version 2. Its Macro `source` is a tagged object:
+`inlineShell` has `code` and `interpreter`, `javaScriptJXA` has `code`, and `file` has
+`path` and `interpreter`. Version 1 inline/file documents are accepted on read and are
+written as v2 on the next normal write; unknown versions or source types fail closed.
+JXA wrappers are written to a 0600 temporary `.js` file and launched as
+`/usr/bin/osascript -l JavaScript wrapper input output`. The wrapper is not fingerprinted;
+JXA trust is based on id, source type, and user code. Shell trust additionally includes
+its interpreter; file trust includes normalized path and interpreter. Temporary input,
+output, and wrapper files are removed on success, failure, timeout, cancellation, and
+pre-launch failure. JXA stderr is bounded and reported on normal execution failure.
 
 - The canonical configuration path is resolved once at launch. E2E isolation takes precedence, followed by the exact absolute file path in `CLIPBOARD_MANAGER_CONFIG_PATH`, the GUI-selected path persisted as local UserDefaults bootstrap metadata, `${XDG_CONFIG_HOME}/clipboard-manager/config.json` when XDG specifies an absolute root, and finally `~/.config/clipboard-manager/config.json`.
 - An explicit `CLIPBOARD_MANAGER_CONFIG_PATH` must end in `config.json`, have an existing parent directory, and point directly to a regular file rather than a symbolic link. Invalid explicit paths fail closed: configuration reads, writes, and monitoring are disabled without falling back to another file. XDG and default directories continue to be created automatically.

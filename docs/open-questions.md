@@ -121,4 +121,6 @@
 
 - **Question**: `design-implementation.md §5.1-1` mandates "after confirmation, save fingerprint" for file-path macros. For inline macros the fingerprint is the SHA256 of the script body itself, so capturing the fingerprint before the confirmation dialog would make any subsequent body change a fingerprint mismatch — defeating tamper detection (a body pasted in is always "clean" at the registration moment). Should the confirmation step be treated as the trust anchor (fingerprint captured only after the user confirms), or should inline scripts follow a separate model (e.g., no fingerprint, gated only by confirmation)?
 - **Default (current)**: Inline macros capture the fingerprint after the user confirms the registration/change dialog, matching the file-path flow.
-- **Status**: Open. Needs an explicit design-doc update recording whether inline fingerprints follow the file-path semantics or are handled differently. The current implementation (#2 review fix) treats the confirmation as the trust anchor; revisit before v1 if a stricter model is desired.
+- **Status**: Decided. Inline shell and JavaScript (JXA) fingerprints are captured only
+  after the registration/change confirmation; that confirmation is their trust anchor.
+  JXA fingerprints cover only user-authored `main` code, never the app-owned wrapper.
