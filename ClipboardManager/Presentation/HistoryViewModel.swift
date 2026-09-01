@@ -27,6 +27,7 @@ final class HistoryViewModel {
     private let repository: ClipboardRepositoryPort
     private let pasteCoordinator: PasteCoordinator
     private let currentReader: CurrentClipboardReading
+    private let htmlPreviewRenderer: (any HTMLPreviewRendering)?
     private var changeObserver: NSObjectProtocol?
     private var reloadTask: Task<Void, Never>?
     private var isActive = false
@@ -36,8 +37,16 @@ final class HistoryViewModel {
     private(set) var currentSnapshot: CurrentClipboardSnapshot?
     var selectedItem: ClipboardItem?
 
-    init(repository: ClipboardRepositoryPort, pasteCoordinator: PasteCoordinator, currentReader: CurrentClipboardReading) {
-        self.repository = repository; self.pasteCoordinator = pasteCoordinator; self.currentReader = currentReader
+    init(
+        repository: ClipboardRepositoryPort,
+        pasteCoordinator: PasteCoordinator,
+        currentReader: CurrentClipboardReading,
+        htmlPreviewRenderer: (any HTMLPreviewRendering)? = nil
+    ) {
+        self.repository = repository
+        self.pasteCoordinator = pasteCoordinator
+        self.currentReader = currentReader
+        self.htmlPreviewRenderer = htmlPreviewRenderer
         currentReader.setCurrentClipboardHandler { [weak self] observation in
             Task { @MainActor in self?.applyCurrent(observation) }
         }
@@ -144,6 +153,16 @@ final class HistoryViewModel {
     func select(_ item: ClipboardItem?) { selectedItem = item }
     func delete(id: UUID) { if id != CurrentClipboardSnapshot.currentID { repository.delete(id: id) } }
     func fullText(id: UUID) async -> String? { id == CurrentClipboardSnapshot.currentID ? currentSnapshot?.text : await repository.fetchFullText(id: id) }
+    func formattedHTMLPreview(id: UUID) async -> Data? {
+        guard let htmlPreviewRenderer else { return nil }
+        let html = if id == CurrentClipboardSnapshot.currentID {
+            currentSnapshot?.html
+        } else {
+            await repository.fetchHTMLData(id: id)
+        }
+        guard let html, !Task.isCancelled else { return nil }
+        return await htmlPreviewRenderer.render(html: html)
+    }
     func imageData(id: UUID) async -> Data? { id == CurrentClipboardSnapshot.currentID ? currentSnapshot?.imageData : await repository.fetchImageData(id: id) }
     func imageByteCount(id: UUID) async -> Int? { id == CurrentClipboardSnapshot.currentID ? currentSnapshot?.imageData?.count : await repository.fetchImageData(id: id)?.count }
     func itemByteCount(id: UUID) async -> Int? {
