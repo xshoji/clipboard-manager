@@ -44,7 +44,7 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 
 - Select an existing history entry and edit its text.
 - Editing targets **plain text only** (rich text formatting is not preserved).
-- The edit result is **saved as a new history entry**; the original is preserved.
+- The edit result is **saved as a new history entry** and becomes the Current Clipboard; the original is preserved.
 - **When editing a rich text history, formatting is lost and it is saved as a new `kind = "text"` plain text entry** (spec). The `richText` attribute is set to nil.
 - Editing is invoked via the **Edit button in the footer** (see `docs/design-ui.md`).
 

@@ -289,7 +289,7 @@ In short: without Accessibility, every paste requires a manual
 The Edit button in the footer dispatches by the selected item's kind:
 
 - **Text**: opens an inline edit sheet; saving creates a new plain text
-  history entry (original preserved).
+  history entry and makes it the current clipboard (original preserved).
 - **Image**: launches macOS standard Preview.app as an external process
   with a pre-prepared working file.
 
