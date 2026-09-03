@@ -799,6 +799,30 @@ final class SettingsConfigurationTests: XCTestCase {
 
 @MainActor
 final class PasteCoordinatorTests: XCTestCase {
+    func testSavingEditedTextAddsHistoryAndUpdatesCurrentClipboard() {
+        let harness = TestHarness()
+
+        let succeeded = harness.coordinator.saveEditedText("edited text")
+
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(harness.repository.insertedItems.map(\.item.text), ["edited text"])
+        XCTAssertEqual(harness.repository.insertedItems.first?.removingDuplicates, false)
+        XCTAssertEqual(harness.repository.insertedItems.first?.purpose, "TextEditView.saveAsNew")
+        XCTAssertEqual(harness.pasteboard.string, "edited text")
+        XCTAssertEqual(harness.pasteboard.suppressedWriteCount, 1)
+    }
+
+    func testSavingEditedTextDoesNotChangeClipboardWhenHistoryInsertFails() {
+        let harness = TestHarness()
+        harness.repository.insertResult = false
+
+        let succeeded = harness.coordinator.saveEditedText("edited text")
+
+        XCTAssertFalse(succeeded)
+        XCTAssertNil(harness.pasteboard.string)
+        XCTAssertEqual(harness.pasteboard.suppressedWriteCount, 0)
+    }
+
     func testStandardRichPasteRecordsActualRichOutput() async {
         let harness = TestHarness()
         let item = makeClipboardItem(kind: "text", contentHash: "history-hash")
@@ -1839,6 +1863,8 @@ private final class RepositoryFake: ClipboardRepositoryPort, ClipboardHistoryWri
     var fullText: [UUID: String] = [:]
     var ocrResults: [UUID: ClipboardOcrResult] = [:]
     var ocrUpdates: [(id: UUID, text: String?)] = []
+    var insertedItems: [(item: NewClipboardItem, removingDuplicates: Bool, purpose: String)] = []
+    var insertResult = true
 
     func fetchAll() async -> [ClipboardItem] { items }
     func fetch(id: UUID) async -> ClipboardItem? { items.first { $0.id == id } }
@@ -1847,7 +1873,10 @@ private final class RepositoryFake: ClipboardRepositoryPort, ClipboardHistoryWri
     func fetchImageData(id: UUID) async -> Data? { imageData[id] }
     func fetchFullText(id: UUID) async -> String? { fullText[id] }
     func fetchOcrResult(id: UUID) async -> ClipboardOcrResult? { ocrResults[id] }
-    func insert(_ item: NewClipboardItem, removingDuplicates: Bool, purpose: String) -> Bool { true }
+    func insert(_ item: NewClipboardItem, removingDuplicates: Bool, purpose: String) -> Bool {
+        insertedItems.append((item, removingDuplicates, purpose))
+        return insertResult
+    }
     func updateOcrResult(id: UUID, text: String?) -> Bool {
         ocrUpdates.append((id, text))
         return true
