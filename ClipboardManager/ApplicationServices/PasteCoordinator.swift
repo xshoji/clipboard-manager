@@ -71,6 +71,25 @@ final class PasteCoordinator {
         return wrote
     }
 
+    @discardableResult
+    func saveEditedText(_ text: String) -> Bool {
+        let item = NewClipboardItem(
+            kind: "text",
+            text: text,
+            contentHash: HashUtil.sha256Hex(of: Data(text.utf8))
+        )
+        guard repository.insert(
+            item,
+            removingDuplicates: false,
+            purpose: "TextEditView.saveAsNew"
+        ) else { return false }
+        suppressedWrite { pasteboard in
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+        }
+        return true
+    }
+
     func runOcr(item: ClipboardItem) async {
         if let cached = await repository.fetchOcrResult(id: item.id) {
             if cached.status == "completed" {

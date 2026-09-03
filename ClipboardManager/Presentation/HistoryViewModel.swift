@@ -173,7 +173,7 @@ final class HistoryViewModel {
         if let image = await repository.fetchImageData(id: id) { return image.count }
         return await repository.fetchFullText(id: id)?.utf8.count
     }
-    @discardableResult func saveText(_ text: String) -> Bool { repository.insert(.init(kind: "text", text: text, contentHash: HashUtil.sha256Hex(of: Data(text.utf8))), removingDuplicates: false, purpose: "TextEditView.saveAsNew") }
+    @discardableResult func saveText(_ text: String) -> Bool { pasteCoordinator.saveEditedText(text) }
     @discardableResult func pasteStandard(item: ClipboardItem, rich: Bool, activate: Bool = true) async -> Bool {
         guard let target = await resolveActionTarget(for: item) else { return false }
         switch target {
