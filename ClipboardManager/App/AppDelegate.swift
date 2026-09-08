@@ -73,14 +73,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(globalHotkeyRecordingStarted),
-            name: .globalHotkeyRecordingStarted,
+            selector: #selector(hotkeyRecordingStarted),
+            name: .hotkeyRecordingStarted,
             object: nil
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(globalHotkeyRecordingCancelled),
-            name: .globalHotkeyRecordingCancelled,
+            selector: #selector(hotkeyRecordingEnded),
+            name: .hotkeyRecordingEnded,
             object: nil
         )
         hotkeyManager.register { [weak self] in
@@ -89,6 +89,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
         // Optional second global hotkey: open the history window and immediately show the Macro Picker.
         let macroModalRegistered = hotkeyManager.registerMacroModalHotkey { [weak self] in
             guard let self else { return }
+            // When the global shortcut matches the window-scoped Macro Picker
+            // shortcut, Carbon can only hold one registration. Reuse this
+            // callback for the in-window toggle behavior as well.
+            if self.globalMacroPickerSharesActionShortcut,
+               self.mainWindowController?.window?.isKeyWindow == true {
+                self.runMacroPickerAction()
+                return
+            }
             // Do not request history-search focus on this path. That focus update
             // can land after the picker appears and steal the first responder from
             // its search field.
@@ -198,11 +206,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
         var environment = ProcessInfo.processInfo.environment
         environment["CM_RELAUNCH_WAIT_FOR_PID"] = String(ProcessInfo.processInfo.processIdentifier)
         configuration.environment = environment
+        let logger = Self.logger
         NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { _, error in
             if let error {
-                Self.logger.error("Automatic relaunch failed: \(error.localizedDescription, privacy: .public)")
+                logger.error("Automatic relaunch failed: \(error.localizedDescription, privacy: .public)")
             } else {
-                Self.logger.notice("Launch Services accepted the automatic relaunch request")
+                logger.notice("Launch Services accepted the automatic relaunch request")
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -248,6 +257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
         if !succeeded {
             _ = hotkeyManager.reinstall()
         }
+        _ = installActionHotkeysIfWindowIsKey()
         postHotkeyRegistrationResult(succeeded)
     }
 
@@ -257,17 +267,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
         if !succeeded {
             _ = hotkeyManager.reinstallMacroModalHotkey()
         }
+        _ = installActionHotkeysIfWindowIsKey()
         postHotkeyRegistrationResult(succeeded)
     }
 
-    @objc private func globalHotkeyRecordingStarted() {
-        hotkeyManager.suspendGlobalHotkeysForRecording()
+    @objc private func hotkeyRecordingStarted() {
+        hotkeyManager.suspendHotkeysForRecording()
     }
 
-    @objc private func globalHotkeyRecordingCancelled() {
-        let mainSucceeded = hotkeyManager.reinstall()
-        let macroModalSucceeded = hotkeyManager.reinstallMacroModalHotkey()
-        postHotkeyRegistrationResult(mainSucceeded && macroModalSucceeded)
+    @objc private func hotkeyRecordingEnded() {
+        hotkeyManager.resumeHotkeysAfterRecording()
+        postHotkeyRegistrationResult(reinstallConfigurationHotkeys())
     }
 
     private func postHotkeyRegistrationResult(_ succeeded: Bool) {
@@ -382,19 +392,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
                 anyFailed = true
             }
         }
-       if settings.macroPickerHotkeyModifiers != 0 {
-           let ok = hotkeyManager.registerActionHotkey(
-               actionID: ActionHotkeyID.macroPicker,
-               keyCode: settings.macroPickerHotkeyCode,
-               modifiers: settings.macroPickerHotkeyModifiers
-           ) { [weak self] in
-               self?.runMacroPickerAction()
-           }
-           if !ok {
-               Self.logger.error("Macro Picker action hotkey registration failed")
-               anyFailed = true
-           }
-       }
+        if settings.macroPickerHotkeyModifiers != 0 && !globalMacroPickerSharesActionShortcut {
+            let ok = hotkeyManager.registerActionHotkey(
+                actionID: ActionHotkeyID.macroPicker,
+                keyCode: settings.macroPickerHotkeyCode,
+                modifiers: settings.macroPickerHotkeyModifiers
+            ) { [weak self] in
+                self?.runMacroPickerAction()
+            }
+            if !ok {
+                Self.logger.error("Macro Picker action hotkey registration failed")
+                anyFailed = true
+            }
+        }
 
         // Surface Carbon registration failures (e.g., Edit and Paste Plain sharing the
         // same shortcut) to the user via the existing hotkey-unavailable alert so the
@@ -407,6 +417,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
             )
         }
         return !anyFailed
+    }
+
+    @discardableResult
+    private func installActionHotkeysIfWindowIsKey() -> Bool {
+        guard mainWindowController?.window?.isKeyWindow == true else { return true }
+        return installActionHotkeys()
+    }
+
+    private var globalMacroPickerSharesActionShortcut: Bool {
+        settings.globalMacroPickerHotkeyModifiers != 0
+            && settings.globalMacroPickerHotkeyKeyCode == settings.macroPickerHotkeyCode
+            && settings.globalMacroPickerHotkeyModifiers == settings.macroPickerHotkeyModifiers
     }
 
     /// If no history item is selected, only beeps and does nothing.
@@ -767,8 +789,8 @@ extension Notification.Name {
     static let pollingIntervalChanged = Notification.Name("pollingIntervalChanged")
     static let mainHotkeyChanged = Notification.Name("mainHotkeyChanged")
     static let mainHotkeyRegistrationResult = Notification.Name("mainHotkeyRegistrationResult")
-    static let globalHotkeyRecordingStarted = Notification.Name("globalHotkeyRecordingStarted")
-    static let globalHotkeyRecordingCancelled = Notification.Name("globalHotkeyRecordingCancelled")
+    static let hotkeyRecordingStarted = Notification.Name("hotkeyRecordingStarted")
+    static let hotkeyRecordingEnded = Notification.Name("hotkeyRecordingEnded")
     static let globalMacroPickerHotkeyChanged = Notification.Name("globalMacroPickerHotkeyChanged")
     static let macroScriptsChanged = Notification.Name("macroScriptsChanged")
     static let actionHotkeysChanged = Notification.Name("actionHotkeysChanged")

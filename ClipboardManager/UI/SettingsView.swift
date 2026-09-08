@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var maxCount: Int
     @State private var maxItem: Int
     @State private var hotkeyAlert: HotkeyAlert?
+    @State private var activeHotkeyRecorder: String?
     @State private var selectedSection: SettingsSection = .application
     @State private var isAccessibilityGranted = false
     @State private var configurationAlert: ConfigurationAlert?
@@ -168,7 +169,30 @@ struct SettingsView: View {
             }
 
             Section {
-                HotkeyRecorderView()
+                HotkeyRecorderView(
+                    keyCode: Binding(
+                        get: { settings.hotkeyKeyCode },
+                        set: { settings.hotkeyKeyCode = $0 }
+                    ),
+                    modifiers: Binding(
+                        get: { settings.hotkeyModifiers },
+                        set: { settings.hotkeyModifiers = $0 }
+                    ),
+                    canStartRecording: canStartHotkeyRecording("globalHotkey"),
+                    onRecordingStart: { beginHotkeyRecording("globalHotkey") },
+                    onRecordingEnd: { endHotkeyRecording("globalHotkey") },
+                    validateCandidate: { keyCode, modifiers in
+                        validateGlobalHotkey(.main, keyCode: keyCode, modifiers: modifiers)
+                    },
+                    onChange: { NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil) },
+                    title: "Show ClipboardManager",
+                    systemImage: "command",
+                    accessibilityIDPrefix: "globalHotkey",
+                    defaultKeyCode: AppSettings.defaultHotkeyKeyCode,
+                    defaultModifiers: AppSettings.defaultHotkeyModifiers,
+                    showReset: true,
+                    showClear: false
+                )
                 HotkeyRecorderView(
                     keyCode: Binding(
                         get: { settings.globalMacroPickerHotkeyKeyCode },
@@ -178,11 +202,11 @@ struct SettingsView: View {
                         get: { settings.globalMacroPickerHotkeyModifiers },
                         set: { settings.globalMacroPickerHotkeyModifiers = $0 }
                     ),
-                    onRecordingStart: {
-                        NotificationCenter.default.post(name: .globalHotkeyRecordingStarted, object: nil)
-                    },
-                    onRecordingCancel: {
-                        NotificationCenter.default.post(name: .globalHotkeyRecordingCancelled, object: nil)
+                    canStartRecording: canStartHotkeyRecording("globalMacroPickerHotkey"),
+                    onRecordingStart: { beginHotkeyRecording("globalMacroPickerHotkey") },
+                    onRecordingEnd: { endHotkeyRecording("globalMacroPickerHotkey") },
+                    validateCandidate: { keyCode, modifiers in
+                        validateGlobalHotkey(.macroPicker, keyCode: keyCode, modifiers: modifiers)
                     },
                     onChange: { NotificationCenter.default.post(name: .globalMacroPickerHotkeyChanged, object: nil) },
                     title: "Open Macro Picker",
@@ -214,6 +238,9 @@ struct SettingsView: View {
                                 get: { settings[keyPath: kind.modifiersPath] },
                                 set: { _ in }
                             ),
+                            canStartRecording: canStartHotkeyRecording("action.\(kind.idPrefix)"),
+                            onRecordingStart: { beginHotkeyRecording("action.\(kind.idPrefix)") },
+                            onRecordingEnd: { endHotkeyRecording("action.\(kind.idPrefix)") },
                             onShortcutChange: { keyCode, mods in
                                 applyActionHotkey(kind, keyCode: keyCode, modifiers: mods)
                             },
@@ -657,6 +684,11 @@ struct SettingsView: View {
         }
     }
 
+    private enum GlobalHotkeyKind {
+        case main
+        case macroPicker
+    }
+
     /// Applies an action hotkey change (Record / Reset / Clear) through a single
     /// path so the duplicate guard is always exercised (review #2). The view's
     /// Binding `set` is a no-op for action hotkeys; this method is the single
@@ -668,6 +700,7 @@ struct SettingsView: View {
     /// *after* the Binding had already written the new value, so its revert
     /// restored the post-change value instead of the pre-change value).
     private func applyActionHotkey(_ kind: ActionHotkeyKind, keyCode: Int, modifiers: Int) {
+        guard validateActionHotkey(kind, keyCode: keyCode, modifiers: modifiers) else { return }
         // Snapshot the *current* bindings so the candidate table reflects the
         // pre-change state for every kind other than `kind`.
         let prev = snapshotActionHotkeys()
@@ -687,6 +720,100 @@ struct SettingsView: View {
         }
         kind.set((keyCode, modifiers), in: settings)
         NotificationCenter.default.post(name: .actionHotkeysChanged, object: nil)
+    }
+
+    private func canStartHotkeyRecording(_ id: String) -> Bool {
+        activeHotkeyRecorder == nil || activeHotkeyRecorder == id
+    }
+
+    private func beginHotkeyRecording(_ id: String) -> Bool {
+        guard activeHotkeyRecorder == nil else { return false }
+        activeHotkeyRecorder = id
+        NotificationCenter.default.post(name: .hotkeyRecordingStarted, object: nil)
+        return true
+    }
+
+    private func endHotkeyRecording(_ id: String) {
+        guard activeHotkeyRecorder == id else { return }
+        activeHotkeyRecorder = nil
+        NotificationCenter.default.post(name: .hotkeyRecordingEnded, object: nil)
+    }
+
+    private func validateGlobalHotkey(
+        _ kind: GlobalHotkeyKind,
+        keyCode: Int,
+        modifiers: Int
+    ) -> Bool {
+        guard modifiers != 0 else { return true }
+
+        let conflictsWithOtherGlobal: Bool
+        switch kind {
+        case .main:
+            conflictsWithOtherGlobal = shortcutsMatch(
+                keyCode, modifiers,
+                settings.globalMacroPickerHotkeyKeyCode,
+                settings.globalMacroPickerHotkeyModifiers
+            )
+        case .macroPicker:
+            conflictsWithOtherGlobal = shortcutsMatch(
+                keyCode, modifiers,
+                settings.hotkeyKeyCode,
+                settings.hotkeyModifiers
+            )
+        }
+
+        let conflictsWithAction = ActionHotkeyKind.allCases.contains { action in
+            if kind == .macroPicker, action == .macroPicker { return false }
+            let shortcut = action.get(in: settings)
+            return shortcutsMatch(keyCode, modifiers, shortcut.0, shortcut.1)
+        }
+        let conflictsWithMacro = settings.macroScripts.contains {
+            shortcutsMatch(keyCode, modifiers, $0.hotkeyCode, $0.hotkeyModifiers)
+        }
+
+        guard !conflictsWithOtherGlobal, !conflictsWithAction, !conflictsWithMacro else {
+            hotkeyAlert = .unavailable
+            return false
+        }
+        return true
+    }
+
+    private func validateActionHotkey(
+        _ kind: ActionHotkeyKind,
+        keyCode: Int,
+        modifiers: Int
+    ) -> Bool {
+        guard modifiers != 0 else { return true }
+        let conflictsWithMain = shortcutsMatch(
+            keyCode, modifiers,
+            settings.hotkeyKeyCode,
+            settings.hotkeyModifiers
+        )
+        let conflictsWithGlobalPicker = kind != .macroPicker && shortcutsMatch(
+            keyCode, modifiers,
+            settings.globalMacroPickerHotkeyKeyCode,
+            settings.globalMacroPickerHotkeyModifiers
+        )
+        let conflictsWithMacro = settings.macroScripts.contains {
+            shortcutsMatch(keyCode, modifiers, $0.hotkeyCode, $0.hotkeyModifiers)
+        }
+        guard !conflictsWithMain, !conflictsWithGlobalPicker, !conflictsWithMacro else {
+            hotkeyAlert = .unavailable
+            return false
+        }
+        return true
+    }
+
+    private func shortcutsMatch(
+        _ lhsKeyCode: Int,
+        _ lhsModifiers: Int,
+        _ rhsKeyCode: Int,
+        _ rhsModifiers: Int
+    ) -> Bool {
+        lhsModifiers != 0
+            && rhsModifiers != 0
+            && lhsKeyCode == rhsKeyCode
+            && lhsModifiers == rhsModifiers
     }
 
     private struct ActionHotkeySnapshot {

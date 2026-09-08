@@ -20,6 +20,7 @@ final class HotkeyManager {
     private var macroModalCallback: (@MainActor () -> Void)?
     private var registeredMacroModalKeyCode: Int?
     private var registeredMacroModalModifiers: Int?
+    private var hotkeysSuspendedForRecording = false
 
     /// Registration table for per-Macro shortcuts.
     /// The key is EventHotKeyID.id (a unique internal sequence number).
@@ -55,6 +56,7 @@ final class HotkeyManager {
 
     @discardableResult
     func reinstall() -> Bool {
+        guard !hotkeysSuspendedForRecording else { return true }
         ensureEventHandlerInstalled()
         let cocoaModifiers = settings.hotkeyModifiers
         let cocoaKeyCode = settings.hotkeyKeyCode
@@ -123,6 +125,7 @@ final class HotkeyManager {
 
     @discardableResult
     func reinstallMacroModalHotkey() -> Bool {
+        guard !hotkeysSuspendedForRecording else { return true }
         ensureEventHandlerInstalled()
         let cocoaModifiers = settings.globalMacroPickerHotkeyModifiers
         let cocoaKeyCode = settings.globalMacroPickerHotkeyKeyCode
@@ -179,10 +182,11 @@ final class HotkeyManager {
         registeredMacroModalModifiers = nil
     }
 
-    /// Temporarily releases both global Carbon registrations while the settings
-    /// recorder captures a replacement shortcut. The registered values remain
-    /// available for collision checks and rollback when recording completes.
-    func suspendGlobalHotkeysForRecording() {
+    /// Temporarily releases every application-owned Carbon registration while
+    /// a settings recorder captures a replacement shortcut. Registration
+    /// attempts remain suspended until the recording session ends.
+    func suspendHotkeysForRecording() {
+        hotkeysSuspendedForRecording = true
         if let hotkeyRef {
             UnregisterEventHotKey(hotkeyRef)
             self.hotkeyRef = nil
@@ -191,6 +195,12 @@ final class HotkeyManager {
             UnregisterEventHotKey(macroModalHotkeyRef)
             self.macroModalHotkeyRef = nil
         }
+        unregisterAllMacroHotkeys()
+        unregisterAllActionHotkeys()
+    }
+
+    func resumeHotkeysAfterRecording() {
+        hotkeysSuspendedForRecording = false
     }
 
     func unregister() {
@@ -215,6 +225,7 @@ final class HotkeyManager {
     /// - Returns: Whether registration succeeded. Returns `false` if modifiers are 0 or Carbon registration fails.
     @discardableResult
     func registerMacroHotkey(macroID: UInt32, keyCode: Int, modifiers: Int, callback: @escaping @MainActor () -> Void) -> Bool {
+        guard !hotkeysSuspendedForRecording else { return true }
         unregisterMacroHotkey(macroID: macroID)
         // macOS physical key code 0 corresponds to the A key, so it cannot be used to mean "unset".
         guard modifiers != 0 else { return false }
@@ -262,6 +273,7 @@ final class HotkeyManager {
     /// - Returns: Whether registration succeeded.
     @discardableResult
     func registerActionHotkey(actionID: UInt32, keyCode: Int, modifiers: Int, callback: @escaping @MainActor () -> Void) -> Bool {
+        guard !hotkeysSuspendedForRecording else { return true }
         unregisterActionHotkey(actionID: actionID)
         guard modifiers != 0 else { return false }
         ensureEventHandlerInstalled()

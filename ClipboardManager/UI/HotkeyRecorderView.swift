@@ -5,8 +5,10 @@ import Carbon.HIToolbox
 struct HotkeyRecorderView: View {
     @Binding var keyCode: Int
     @Binding var modifiers: Int
-    let onRecordingStart: () -> Void
-    let onRecordingCancel: () -> Void
+    let canStartRecording: Bool
+    let onRecordingStart: () -> Bool
+    let onRecordingEnd: () -> Void
+    let validateCandidate: (Int, Int) -> Bool
     let onChange: () -> Void
     let title: String
     let systemImage: String
@@ -21,8 +23,10 @@ struct HotkeyRecorderView: View {
     init(
         keyCode: Binding<Int>,
         modifiers: Binding<Int>,
-        onRecordingStart: @escaping () -> Void = {},
-        onRecordingCancel: @escaping () -> Void = {},
+        canStartRecording: Bool = true,
+        onRecordingStart: @escaping () -> Bool = { true },
+        onRecordingEnd: @escaping () -> Void = {},
+        validateCandidate: @escaping (Int, Int) -> Bool = { _, _ in true },
         onChange: @escaping () -> Void,
         title: String,
         systemImage: String,
@@ -34,8 +38,10 @@ struct HotkeyRecorderView: View {
     ) {
         self._keyCode = keyCode
         self._modifiers = modifiers
+        self.canStartRecording = canStartRecording
         self.onRecordingStart = onRecordingStart
-        self.onRecordingCancel = onRecordingCancel
+        self.onRecordingEnd = onRecordingEnd
+        self.validateCandidate = validateCandidate
         self.onChange = onChange
         self.title = title
         self.systemImage = systemImage
@@ -44,34 +50,6 @@ struct HotkeyRecorderView: View {
         self.defaultModifiers = defaultModifiers
         self.showReset = showReset
         self.showClear = showClear
-    }
-
-    /// Convenience initializer for the main global hotkey.
-    init() {
-        self.init(
-            keyCode: Binding(
-                get: { AppSettings.shared.hotkeyKeyCode },
-                set: { AppSettings.shared.hotkeyKeyCode = $0 }
-            ),
-            modifiers: Binding(
-                get: { AppSettings.shared.hotkeyModifiers },
-                set: { AppSettings.shared.hotkeyModifiers = $0 }
-            ),
-            onRecordingStart: {
-                NotificationCenter.default.post(name: .globalHotkeyRecordingStarted, object: nil)
-            },
-            onRecordingCancel: {
-                NotificationCenter.default.post(name: .globalHotkeyRecordingCancelled, object: nil)
-            },
-            onChange: { NotificationCenter.default.post(name: .mainHotkeyChanged, object: nil) },
-            title: "Show ClipboardManager",
-            systemImage: "command",
-            accessibilityIDPrefix: "globalHotkey",
-            defaultKeyCode: AppSettings.defaultHotkeyKeyCode,
-            defaultModifiers: AppSettings.defaultHotkeyModifiers,
-            showReset: true,
-            showClear: false
-        )
     }
 
     var body: some View {
@@ -88,10 +66,12 @@ struct HotkeyRecorderView: View {
                 if recording {
                     cancelRecording()
                 } else {
-                    onRecordingStart()
+                    guard canStartRecording else { return }
+                    guard onRecordingStart() else { return }
                     recording = true
                 }
             }
+            .disabled(!recording && !canStartRecording)
             .accessibilityIdentifier("\(accessibilityIDPrefix).record")
             .accessibilityValue(recording ? "Recording" : "Idle")
             if showClear, keyCode != 0 || modifiers != 0 {
@@ -101,19 +81,25 @@ struct HotkeyRecorderView: View {
                     refresh()
                     onChange()
                 }
+                .disabled(recording || !canStartRecording)
                 .accessibilityIdentifier("\(accessibilityIDPrefix).clear")
             }
             if showReset {
                 Button("Reset") {
+                    guard validateCandidate(defaultKeyCode, defaultModifiers) else { return }
                     keyCode = defaultKeyCode
                     modifiers = defaultModifiers
                     refresh()
                     onChange()
                 }
+                .disabled(recording || !canStartRecording)
                 .accessibilityIdentifier("\(accessibilityIDPrefix).reset")
             }
         }
         .onAppear { refresh() }
+        .onDisappear {
+            if recording { finishRecording() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .mainHotkeyRegistrationResult)) { _ in
             refresh()
         }
@@ -122,13 +108,18 @@ struct HotkeyRecorderView: View {
             if recording {
                 ListenerView { capturedKeyCode, capturedModifiers in
                     if capturedKeyCode == Int(kVK_Escape) {
-                        cancelRecording()
+                        finishRecording()
+                        return
+                    }
+                    guard validateCandidate(capturedKeyCode, capturedModifiers) else {
+                        finishRecording()
+                        refresh()
                         return
                     }
                     keyCode = capturedKeyCode
                     modifiers = capturedModifiers
                     refresh()
-                    recording = false
+                    finishRecording()
                     onChange()
                 }
             }
@@ -136,8 +127,13 @@ struct HotkeyRecorderView: View {
     }
 
     private func cancelRecording() {
+        finishRecording()
+    }
+
+    private func finishRecording() {
+        guard recording else { return }
         recording = false
-        onRecordingCancel()
+        onRecordingEnd()
     }
 
     private func refresh() {
@@ -156,6 +152,10 @@ struct HotkeyRecorderView: View {
 struct MacroHotkeyRecorderView: View {
     let keyCode: Binding<Int>
     let modifiers: Binding<Int>
+    let canStartRecording: Bool
+    let onRecordingStart: () -> Bool
+    let onRecordingEnd: () -> Void
+    let validateCandidate: (Int, Int) -> Bool
     let onShortcutChange: (Int, Int) -> Void
     /// Optional reset handler. When non-nil, a "Reset" button is shown.
     /// Clicking it invokes this closure; the view then refreshes its display.
@@ -169,12 +169,20 @@ struct MacroHotkeyRecorderView: View {
     init(
         keyCode: Binding<Int>,
         modifiers: Binding<Int>,
+        canStartRecording: Bool = true,
+        onRecordingStart: @escaping () -> Bool = { true },
+        onRecordingEnd: @escaping () -> Void = {},
+        validateCandidate: @escaping (Int, Int) -> Bool = { _, _ in true },
         onShortcutChange: @escaping (Int, Int) -> Void = { _, _ in },
         resetAction: (() -> Void)? = nil,
         accessibilityIDPrefix: String = "macro"
     ) {
         self.keyCode = keyCode
         self.modifiers = modifiers
+        self.canStartRecording = canStartRecording
+        self.onRecordingStart = onRecordingStart
+        self.onRecordingEnd = onRecordingEnd
+        self.validateCandidate = validateCandidate
         self.onShortcutChange = onShortcutChange
         self.resetAction = resetAction
         self.accessibilityIDPrefix = accessibilityIDPrefix
@@ -187,8 +195,12 @@ struct MacroHotkeyRecorderView: View {
                 .padding(4)
                 .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.separatorLine))
                 .accessibilityIdentifier("\(accessibilityIDPrefix).display")
-            Button(recording ? "Press…" : "Record") { recording = true }
-                .disabled(recording)
+            Button(recording ? "Press…" : "Record") {
+                guard canStartRecording else { return }
+                guard onRecordingStart() else { return }
+                recording = true
+            }
+                .disabled(recording || !canStartRecording)
                 .accessibilityIdentifier("\(accessibilityIDPrefix).record")
                 .accessibilityValue(recording ? "Recording" : "Idle")
             if keyCode.wrappedValue != 0 || modifiers.wrappedValue != 0 {
@@ -207,6 +219,7 @@ struct MacroHotkeyRecorderView: View {
                     onShortcutChange(0, 0)
                     refresh()
                 }
+                .disabled(recording || !canStartRecording)
                 .accessibilityIdentifier("\(accessibilityIDPrefix).clear")
             }
             if let resetAction = resetAction {
@@ -214,17 +227,30 @@ struct MacroHotkeyRecorderView: View {
                     resetAction()
                     refresh()
                 }
+                .disabled(recording || !canStartRecording)
                 .accessibilityIdentifier("\(accessibilityIDPrefix).reset")
             }
         }
         .onAppear { refresh() }
+        .onDisappear {
+            if recording { finishRecording() }
+        }
         .background(recording ? Color.red.opacity(0.05) : Color.clear)
         .onChange(of: keyCode.wrappedValue) { _, _ in refresh() }
         .onChange(of: modifiers.wrappedValue) { _, _ in refresh() }
         .overlay {
             if recording {
                 ListenerView { kc, mods in
+                    if kc == Int(kVK_Escape) {
+                        finishRecording()
+                        return
+                    }
                     guard mods != 0 else { return }
+                    guard validateCandidate(kc, mods) else {
+                        finishRecording()
+                        refresh()
+                        return
+                    }
                     // Write the Binding for macro-row @State parity (dirty /
                     // onChange tracking fires from this write). For action
                     // hotkeys the Binding `set` is a no-op because
@@ -234,12 +260,18 @@ struct MacroHotkeyRecorderView: View {
                     // when the candidate was rejected by the duplicate guard).
                     keyCode.wrappedValue = kc
                     modifiers.wrappedValue = mods
-                    recording = false
+                    finishRecording()
                     onShortcutChange(kc, mods)
                     refresh()
                 }
             }
         }
+    }
+
+    private func finishRecording() {
+        guard recording else { return }
+        recording = false
+        onRecordingEnd()
     }
 
     private func refresh() {
