@@ -18,6 +18,7 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 - Any hotkey can invoke the UI from any application.
 - The hotkey is user-configurable.
 - An optional second global hotkey can open the UI and immediately show the Macro Picker overlay (equivalent to pressing the main hotkey followed by the Macro Picker action hotkey).
+- The global Macro Picker hotkey may match the window-scoped Macro Picker shortcut. In that case, the shared shortcut opens the UI and picker from another app and retains the normal in-window toggle behavior while ClipboardManager is focused.
 
 #### 2.1.2 History Search
 

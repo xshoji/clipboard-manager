@@ -169,6 +169,33 @@ final class SmokeUITests: XCTestCase {
         try exerciseGlobalMacroPickerHotkeyCollision(app: app)
     }
 
+    /// Closing Settings while a recorder is active must end the recording
+    /// session and restore the application-owned Carbon registrations.
+    func testClosingSettingsEndsHotkeyRecording() throws {
+        let app = makeApp()
+        app.launch()
+
+        let settingsWindow = app.windows["settingsWindow"]
+        XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
+        let recordButton = app.buttons["globalMacroPickerHotkey.record"]
+        recordButton.click()
+        XCTAssertTrue(waitForValue(recordButton, equals: "Recording", timeout: 5),
+                      "Global Macro Picker recorder did not enter recording state")
+
+        settingsWindow.buttons.element(boundBy: 0).click()
+        XCTAssertTrue(waitForNonExistence(settingsWindow, timeout: 5),
+                      "Settings window should close during recording")
+
+        let mainWindow = app.windows.firstMatch
+        XCTAssertTrue(exists(mainWindow, timeout: 5), "Main window did not remain after Settings closed")
+        mainWindow.buttons.element(boundBy: 0).click()
+        XCTAssertTrue(waitForNonExistence(mainWindow, timeout: 5), "Main window should close")
+
+        app.typeKey("x", modifierFlags: [.command, .control, .option, .shift])
+        XCTAssertTrue(exists(app.windows.firstMatch, timeout: 5),
+                      "Main global hotkey was not restored after recording ended on close")
+    }
+
     /// Exercises the action hotkey recorder end-to-end in a single session
     /// (Clear → Reset → Record). Folding the three former micro-tests into
     /// one avoids two extra app launches and two extra setUp/tearDown cycles.
@@ -227,16 +254,41 @@ final class SmokeUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["globalMacroPickerHotkey.display"].value as? String ?? "", "(none)",
                        "Cancelling should preserve the current hotkey")
 
-        // Record ⇧⌘C. The preceding action-hotkey workflow keeps ⇧⌘A
-        // registered for Edit, so this combined workflow must use a distinct
-        // shortcut rather than relying on per-test process isolation.
+        // Record ⌘M, which is also the default window-scoped Macro Picker
+        // shortcut. The recorder must receive it instead of the existing
+        // Carbon registration opening the picker and consuming the event.
         let rerecordedButton = app.buttons["globalMacroPickerHotkey.record"]
         rerecordedButton.click()
         XCTAssertTrue(waitForValue(rerecordedButton, equals: "Recording", timeout: 5),
                       "Global macro picker recorder did not enter recording state")
-        app.typeKey("c", modifierFlags: [.command, .shift])
-        XCTAssertTrue(waitForValue(display, equals: "⇧⌘C", timeout: 5),
-                       "Display should be '⇧⌘C' after Record, got '\(display.value as? String ?? "")'")
+        app.typeKey("m", modifierFlags: .command)
+        XCTAssertTrue(waitForValue(display, equals: "⌘M", timeout: 5),
+                       "Display should be '⌘M' after Record, got '\(display.value as? String ?? "")'")
+        XCTAssertFalse(app.textFields["macroPicker.searchField"].exists,
+                       "Recording Cmd+M should not open the Macro Picker")
+
+        // Recording the window-scoped side must also work while the global
+        // Macro Picker registration already owns the same shortcut.
+        let actionRecordButton = app.buttons["action.macroPicker.record"]
+        actionRecordButton.click()
+        XCTAssertTrue(waitForValue(actionRecordButton, equals: "Recording", timeout: 5),
+                      "Window-scoped Macro Picker recorder did not enter recording state")
+        XCTAssertFalse(app.buttons["globalHotkey.record"].isEnabled,
+                       "Other Record buttons must be disabled during recording")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitForValue(actionRecordButton, equals: "Idle", timeout: 5),
+                      "Escape should end window-scoped Macro Picker recording")
+
+        actionRecordButton.click()
+        XCTAssertTrue(waitForValue(actionRecordButton, equals: "Recording", timeout: 5),
+                      "Window-scoped Macro Picker recorder did not enter recording state")
+        app.typeKey("m", modifierFlags: .command)
+        XCTAssertTrue(waitForValue(actionRecordButton, equals: "Idle", timeout: 5),
+                      "Window-scoped Macro Picker recorder did not capture Cmd+M")
+        XCTAssertTrue(waitForValue(app.staticTexts["action.macroPicker.display"], equals: "⌘M", timeout: 5),
+                      "Window-scoped Macro Picker display should remain '⌘M'")
+        XCTAssertFalse(app.textFields["macroPicker.searchField"].exists,
+                       "Recording the shared Cmd+M should not open the Macro Picker")
 
         // Clear → back to "(none)".
         let clearButton = app.buttons["globalMacroPickerHotkey.clear"]
@@ -267,8 +319,25 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(waitForValue(mainDisplay, equals: "⌘B", timeout: 5),
                        "Main hotkey should be '⌘B', got '\(mainDisplay.value as? String ?? "")'")
 
-        // Step 2: Record the same ⌘B on the second global hotkey.
-        // Carbon should reject it because the main hotkey already owns it.
+        // Step 2: Reject the same ⌘B for the window-scoped Macro Picker before
+        // persisting it. Temporarily suspending Carbon must not bypass the
+        // application's explicit collision validation.
+        let actionRecord = app.buttons["action.macroPicker.record"]
+        actionRecord.click()
+        XCTAssertTrue(waitForValue(actionRecord, equals: "Recording", timeout: 5),
+                      "Window-scoped Macro Picker recorder did not enter recording state")
+        app.typeKey("b", modifierFlags: .command)
+        let actionAlertTitle = app.staticTexts.matching(
+            NSPredicate(format: "value == %@", "Hotkey unavailable")
+        ).firstMatch
+        XCTAssertTrue(exists(actionAlertTitle, timeout: 5),
+                      "Main-global collision should show a hotkey-unavailable alert")
+        app.sheets.firstMatch.buttons["OK"].click()
+        XCTAssertTrue(waitForValue(app.staticTexts["action.macroPicker.display"], equals: "⌘M", timeout: 5),
+                      "Rejected action shortcut must preserve Cmd+M")
+
+        // Step 3: Record the same ⌘B on the second global hotkey.
+        // Explicit validation should reject it because the main hotkey owns it.
         let display = app.staticTexts["globalMacroPickerHotkey.display"]
         XCTAssertTrue(exists(display, timeout: 5), "Global macro picker hotkey display not found")
         XCTAssertEqual(display.value as? String ?? "", "(none)",
@@ -308,17 +377,17 @@ final class SmokeUITests: XCTestCase {
         let settingsWindow = app.windows["settingsWindow"]
         XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
 
-        // Register a shortcut distinct from the window-scoped Cmd+M action so
-        // this key event can only exercise the global open-only callback.
+        // Register the same Cmd+M used by the window-scoped Macro Picker. The
+        // shared Carbon registration must retain the in-window picker behavior.
         let recordButton = app.buttons["globalMacroPickerHotkey.record"]
         XCTAssertTrue(exists(recordButton, timeout: 5), "Global Macro Picker Record button not found")
         recordButton.click()
         XCTAssertTrue(waitForValue(recordButton, equals: "Recording", timeout: 5),
                       "Global Macro Picker recorder did not enter recording state")
-        app.typeKey("c", modifierFlags: [.command, .shift])
+        app.typeKey("m", modifierFlags: .command)
         let display = app.staticTexts["globalMacroPickerHotkey.display"]
-        XCTAssertTrue(waitForValue(display, equals: "⇧⌘C", timeout: 5),
-                      "Global Macro Picker shortcut should be registered as ⇧⌘C")
+        XCTAssertTrue(waitForValue(display, equals: "⌘M", timeout: 5),
+                      "Global Macro Picker shortcut should be registered as ⌘M")
 
         settingsWindow.buttons.element(boundBy: 0).click()
         XCTAssertTrue(waitForNonExistence(settingsWindow, timeout: 5),
@@ -330,7 +399,7 @@ final class SmokeUITests: XCTestCase {
         XCTAssertEqual(historySearch.value as? String ?? "", "",
                        "History search should start empty")
 
-        app.typeKey("c", modifierFlags: [.command, .shift])
+        app.typeKey("m", modifierFlags: .command)
         let macroSearch = app.textFields["macroPicker.searchField"]
         XCTAssertTrue(exists(macroSearch, timeout: 5),
                       "Global shortcut did not open the Macro Picker")
