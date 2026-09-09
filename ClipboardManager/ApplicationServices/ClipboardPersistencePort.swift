@@ -18,7 +18,8 @@ import Foundation
 ///   dependency.
 @MainActor
 protocol ClipboardPersistencePort: AnyObject {
-    /// Light-weight history DTOs newest-first, bounded by `limit`.
+    /// Light-weight history DTOs with every pinned row first, followed by
+    /// newest-first unpinned rows bounded by `limit`.
     func fetchAll(limit: Int) async -> [ClipboardItem]
 
     /// Single-row DTO lookup by id. `async` for consistency with the other
@@ -55,11 +56,20 @@ protocol ClipboardPersistencePort: AnyObject {
     @discardableResult
     func updateOcrResult(id: UUID, text: String?) -> Bool
 
+    /// Changes the pinned state of one persisted history row.
+    @discardableResult
+    func setPinned(id: UUID, isPinned: Bool) -> Bool
+
+    /// Pins the matching persisted row, or inserts the current clipboard when
+    /// it has not reached history yet.
+    @discardableResult
+    func pinCurrent(_ item: NewClipboardItem) -> Bool
+
     /// Deletes the entity with the given id. Returns `true` on success.
     @discardableResult
     func delete(id: UUID) -> Bool
 
-    /// Deletes every entity. Returns `true` on success.
+    /// Deletes every unpinned entity. Returns `true` on success.
     @discardableResult
     func clearAll() -> Bool
 

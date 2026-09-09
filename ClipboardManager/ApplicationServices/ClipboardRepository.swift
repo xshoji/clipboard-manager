@@ -79,6 +79,20 @@ final class ClipboardRepository: ClipboardRepositoryPort, ClipboardHistoryWritin
     }
 
     @discardableResult
+    func setPinned(id: UUID, isPinned: Bool) -> Bool {
+        guard persistence.setPinned(id: id, isPinned: isPinned) else { return false }
+        notifyChange()
+        return true
+    }
+
+    @discardableResult
+    func pinCurrent(_ item: NewClipboardItem) -> Bool {
+        guard persistence.pinCurrent(item) else { return false }
+        notifyChange()
+        return true
+    }
+
+    @discardableResult
     func delete(id: UUID) -> Bool {
         guard persistence.delete(id: id) else { return false }
         notifyChange()

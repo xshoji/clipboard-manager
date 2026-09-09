@@ -26,6 +26,10 @@ protocol ClipboardRepositoryPort: AnyObject {
     @discardableResult
     func updateOcrResult(id: UUID, text: String?) -> Bool
     @discardableResult
+    func setPinned(id: UUID, isPinned: Bool) -> Bool
+    @discardableResult
+    func pinCurrent(_ item: NewClipboardItem) -> Bool
+    @discardableResult
     func delete(id: UUID) -> Bool
     @discardableResult
     func clearAll() -> Bool
