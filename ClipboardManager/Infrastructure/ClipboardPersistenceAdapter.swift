@@ -73,6 +73,7 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
     @discardableResult
     func insert(_ item: NewClipboardItem, removingDuplicates: Bool, purpose: String) -> Bool {
         let context = persistence.container.mainContext
+        var isPinned = item.isPinned
         if removingDuplicates, let hash = item.contentHash {
             let descriptor = FetchDescriptor<ClipboardEntity>(
                 predicate: #Predicate { $0.contentHash == hash }
@@ -80,6 +81,7 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
             for duplicate in persistence.fetchEntities(
                 descriptor, context: context, purpose: "repository.deduplicate"
             ) ?? [] {
+                isPinned = isPinned || duplicate.isPinned
                 context.delete(duplicate)
             }
         }
@@ -94,7 +96,8 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
             sourceBundleID: item.sourceBundleID,
             contentHash: item.contentHash,
             ocrStatus: item.ocrStatus,
-            textAvailability: item.textAvailability
+            textAvailability: item.textAvailability,
+            isPinned: isPinned
         ))
         guard persistence.saveContext(context, purpose: purpose) else {
             context.rollback()
@@ -120,6 +123,44 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
             return false
         }
         return true
+    }
+
+    @discardableResult
+    func setPinned(id: UUID, isPinned: Bool) -> Bool {
+        let context = persistence.container.mainContext
+        let descriptor = FetchDescriptor<ClipboardEntity>(predicate: #Predicate { $0.id == id })
+        guard let entity = persistence.fetchEntities(
+            descriptor, context: context, purpose: "repository.fetchForPinUpdate"
+        )?.first else { return false }
+        entity.isPinned = isPinned
+        guard persistence.saveContext(context, purpose: "repository.setPinned") else {
+            context.rollback()
+            return false
+        }
+        return true
+    }
+
+    @discardableResult
+    func pinCurrent(_ item: NewClipboardItem) -> Bool {
+        let context = persistence.container.mainContext
+        if let hash = item.contentHash {
+            let descriptor = FetchDescriptor<ClipboardEntity>(
+                predicate: #Predicate { $0.contentHash == hash }
+            )
+            if let matching = persistence.fetchEntities(
+                descriptor, context: context, purpose: "repository.fetchForCurrentPin"
+            )?.first {
+                matching.isPinned = true
+                guard persistence.saveContext(context, purpose: "repository.pinCurrent") else {
+                    context.rollback()
+                    return false
+                }
+                return true
+            }
+        }
+        var pinnedItem = item
+        pinnedItem.isPinned = true
+        return insert(pinnedItem, removingDuplicates: true, purpose: "repository.pinCurrent")
     }
 
     @discardableResult

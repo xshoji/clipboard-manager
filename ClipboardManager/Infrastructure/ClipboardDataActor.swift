@@ -3,32 +3,21 @@ import SwiftData
 
 @ModelActor
 actor ClipboardDataActor {
-    /// Fetches lightweight history DTOs newest first, bounded to avoid loading the entire store.
+    /// Fetches every pinned DTO followed by newest-first unpinned DTOs bounded by `limit`.
     func fetchAll(limit: Int) -> [ClipboardItem] {
-        var descriptor = FetchDescriptor<ClipboardEntity>(
+        let pinnedDescriptor = FetchDescriptor<ClipboardEntity>(
+            predicate: #Predicate<ClipboardEntity> { $0.isPinned },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
-        descriptor.fetchLimit = limit
+        var unpinnedDescriptor = FetchDescriptor<ClipboardEntity>(
+            predicate: #Predicate<ClipboardEntity> { !$0.isPinned },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        unpinnedDescriptor.fetchLimit = limit
         do {
-            return try modelContext.fetch(descriptor).map { entity in
-                let hasHTML = entity.hasHTML ?? false
-                return ClipboardItem(
-                    id: entity.id,
-                    createdAt: entity.createdAt,
-                    kind: entity.kind,
-                    textPreview: entity.textPreview,
-                    textPreviewLowercased: entity.textPreviewLowercased,
-                    isTextPreviewTruncated: entity.isTextPreviewTruncated ?? false,
-                    textCharacterCount: entity.textCharacterCount,
-                    thumbnail: entity.thumbnail,
-                    isHtml: hasHTML,
-                    textAvailability: Self.textAvailability(for: entity),
-                    payloadByteCount: entity.payloadByteCount,
-                    sourceBundleID: entity.sourceBundleID,
-                    contentHash: entity.contentHash,
-                    ocrTextLowercased: entity.ocrText?.lowercased()
-                )
-            }
+            let pinned = try modelContext.fetch(pinnedDescriptor).map(Self.item(from:))
+            let unpinned = try modelContext.fetch(unpinnedDescriptor).map(Self.item(from:))
+            return pinned + unpinned
         } catch {
             return []
         }
@@ -37,25 +26,7 @@ actor ClipboardDataActor {
     /// Single-row DTO lookup by id, mirroring `fetchAll`'s entity -> DTO mapping
     /// so the ApplicationServices layer never touches `ClipboardEntity`.
     func fetch(id: UUID) -> ClipboardItem? {
-        entity(id: id).map { entity in
-            let hasHTML = entity.hasHTML ?? false
-            return ClipboardItem(
-                id: entity.id,
-                createdAt: entity.createdAt,
-                kind: entity.kind,
-                textPreview: entity.textPreview,
-                textPreviewLowercased: entity.textPreviewLowercased,
-                isTextPreviewTruncated: entity.isTextPreviewTruncated ?? false,
-                textCharacterCount: entity.textCharacterCount,
-                thumbnail: entity.thumbnail,
-                isHtml: hasHTML,
-                textAvailability: Self.textAvailability(for: entity),
-                payloadByteCount: entity.payloadByteCount,
-                sourceBundleID: entity.sourceBundleID,
-                contentHash: entity.contentHash,
-                ocrTextLowercased: entity.ocrText?.lowercased()
-            )
-        }
+        entity(id: id).map(Self.item(from:))
     }
 
     func fetchImageData(id: UUID) -> Data? { entity(id: id)?.imageData }
@@ -143,6 +114,26 @@ actor ClipboardDataActor {
             return availability
         }
         return .unknown
+    }
+
+    private static func item(from entity: ClipboardEntity) -> ClipboardItem {
+        ClipboardItem(
+            id: entity.id,
+            createdAt: entity.createdAt,
+            kind: entity.kind,
+            textPreview: entity.textPreview,
+            textPreviewLowercased: entity.textPreviewLowercased,
+            isTextPreviewTruncated: entity.isTextPreviewTruncated ?? false,
+            textCharacterCount: entity.textCharacterCount,
+            thumbnail: entity.thumbnail,
+            isHtml: entity.hasHTML ?? false,
+            textAvailability: textAvailability(for: entity),
+            payloadByteCount: entity.payloadByteCount,
+            sourceBundleID: entity.sourceBundleID,
+            contentHash: entity.contentHash,
+            ocrTextLowercased: entity.ocrText?.lowercased(),
+            isPinned: entity.isPinned
+        )
     }
 
     private func entity(id: UUID) -> ClipboardEntity? {

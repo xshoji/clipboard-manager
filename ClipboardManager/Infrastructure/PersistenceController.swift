@@ -203,7 +203,9 @@ final class PersistenceController {
         if retentionDays > 0 {
             let cutoff = Calendar.current.date(byAdding: .day, value: -retentionDays, to: now) ?? now
             let fd = FetchDescriptor<ClipboardEntity>(
-                predicate: #Predicate<ClipboardEntity> { $0.createdAt < cutoff }
+                predicate: #Predicate<ClipboardEntity> {
+                    $0.createdAt < cutoff && !$0.isPinned
+                }
             )
             if let stale = fetchEntities(fd, context: ctx, purpose: "enforceLimits.retention") {
                 for e in stale {
@@ -213,6 +215,7 @@ final class PersistenceController {
             }
         }
         let allFd = FetchDescriptor<ClipboardEntity>(
+            predicate: #Predicate<ClipboardEntity> { !$0.isPinned },
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]
         )
         if let all = fetchEntities(allFd, context: ctx, purpose: "enforceLimits.maxCount"), all.count > maxCount {
@@ -233,7 +236,9 @@ final class PersistenceController {
     @discardableResult
     func clearAll() -> Bool {
         let ctx = container.mainContext
-        let fd = FetchDescriptor<ClipboardEntity>()
+        let fd = FetchDescriptor<ClipboardEntity>(
+            predicate: #Predicate<ClipboardEntity> { !$0.isPinned }
+        )
         if let all = fetchEntities(fd, context: ctx, purpose: "clearAll") {
             guard !all.isEmpty else { return true }
             for e in all {
