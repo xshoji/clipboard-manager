@@ -545,7 +545,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ConfigurationRuntimeAp
     func confirmClearHistory() {
         let alert = NSAlert()
         alert.messageText = "Clear all clipboard history?"
-        alert.informativeText = "This action cannot be undone."
+        alert.informativeText = "Pinned items will be kept. This action cannot be undone."
         alert.addButton(withTitle: "Clear")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning

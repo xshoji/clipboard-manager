@@ -94,6 +94,12 @@ struct FooterBar: View {
 
     private var moreMenu: some View {
         Menu {
+            Button(selected.wrappedValue?.isPinned == true ? "Unpin" : "Pin") {
+                guard let item = selected.wrappedValue else { return }
+                Task { await viewModel.togglePin(item) }
+            }
+                .disabled(selected.wrappedValue == nil)
+            Divider()
             Button("Delete") { deleteSelected() }
                 .disabled(selected.wrappedValue?.isCurrent != false)
             Divider()

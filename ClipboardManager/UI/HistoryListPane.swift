@@ -174,6 +174,9 @@ struct HistoryListPane: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(filteredItems) { entity in
+                        if showsPinnedHeader(before: entity) {
+                            pinnedHeader
+                        }
                         row(for: entity)
                         Divider().opacity(0.2)
                     }
@@ -202,7 +205,14 @@ struct HistoryListPane: View {
 
     @ViewBuilder
     private func row(for entity: ClipboardItem) -> some View {
-        HistoryRowView(entity: entity, selected: selectedItem?.id == entity.id)
+        HistoryRowView(
+            entity: entity,
+            selected: selectedItem?.id == entity.id,
+            onTogglePin: {
+                selectedItem = entity
+                Task { await viewModel.togglePin(entity) }
+            }
+        )
             .id(entity.id)
             .onTapGesture {
                 selectedItem = entity
@@ -214,6 +224,26 @@ struct HistoryListPane: View {
                         paste(entity: entity)
                     }
             )
+    }
+
+    private func showsPinnedHeader(before item: ClipboardItem) -> Bool {
+        guard item.isPinned, !item.isCurrent,
+              let index = indexByID[item.id] else { return false }
+        return !filteredItems[..<index].contains { $0.isPinned && !$0.isCurrent }
+    }
+
+    private var pinnedHeader: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "pin.fill")
+            Text("Pinned")
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .accessibilityIdentifier("pinnedSectionHeader")
     }
 
     private func recomputeIndex() {

@@ -104,10 +104,11 @@ final class HistoryViewModel {
         else { selectedItem = items.first }
     }
     private func rebuildItems() {
-        guard let currentSnapshot else { items = historyItems; return }
+        let orderedHistory = historyItems.filter(\.isPinned) + historyItems.filter { !$0.isPinned }
+        guard let currentSnapshot else { items = orderedHistory; return }
         var removedMatchingCurrent = false
         var matchingHistory: ClipboardItem?
-        let previousItems = historyItems.filter { item in
+        let previousItems = orderedHistory.filter { item in
             guard !removedMatchingCurrent, item.contentHash == currentSnapshot.contentHash else { return true }
             removedMatchingCurrent = true
             matchingHistory = item
@@ -152,6 +153,23 @@ final class HistoryViewModel {
     }
     func select(_ item: ClipboardItem?) { selectedItem = item }
     func delete(id: UUID) { if id != CurrentClipboardSnapshot.currentID { repository.delete(id: id) } }
+    func togglePin(_ item: ClipboardItem) async {
+        if item.isCurrent {
+            guard let snapshot = currentSnapshot,
+                  snapshot.contentHash == item.contentHash,
+                  snapshot.observedAt == item.createdAt else { return }
+            if item.isPinned {
+                guard let matching = historyItems.first(where: { $0.contentHash == snapshot.contentHash }) else {
+                    return
+                }
+                _ = repository.setPinned(id: matching.id, isPinned: false)
+            } else {
+                _ = repository.pinCurrent(snapshot.newClipboardItem())
+            }
+        } else {
+            _ = repository.setPinned(id: item.id, isPinned: !item.isPinned)
+        }
+    }
     func fullText(id: UUID) async -> String? { id == CurrentClipboardSnapshot.currentID ? currentSnapshot?.text : await repository.fetchFullText(id: id) }
     func formattedHTMLPreview(id: UUID) async -> Data? {
         guard let htmlPreviewRenderer else { return nil }

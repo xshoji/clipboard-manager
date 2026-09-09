@@ -3,13 +3,15 @@ import SwiftUI
 struct HistoryRowView: View {
     let entity: ClipboardItem
     let selected: Bool
+    let onTogglePin: () -> Void
     private let title: String
 
     private static let titleCharLimit = 200
 
-    init(entity: ClipboardItem, selected: Bool) {
+    init(entity: ClipboardItem, selected: Bool, onTogglePin: @escaping () -> Void) {
         self.entity = entity
         self.selected = selected
+        self.onTogglePin = onTogglePin
         if entity.isImage {
             title = "Image\(entity.sourceBundleID.map { "  via \($0)" } ?? "")"
         } else {
@@ -50,6 +52,17 @@ struct HistoryRowView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
+            Button(action: onTogglePin) {
+                Image(systemName: entity.isPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(selected ? Color.white.opacity(0.9) : (entity.isPinned ? Color.accentColor : Color.secondary))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help(entity.isPinned ? "Unpin" : "Pin")
+            .accessibilityLabel(entity.isPinned ? "Unpin item" : "Pin item")
+            .accessibilityIdentifier("historyRow.pin.\(entity.id.uuidString)")
         }
         .frame(height: 40, alignment: .top)
         .padding(.horizontal, 12)
