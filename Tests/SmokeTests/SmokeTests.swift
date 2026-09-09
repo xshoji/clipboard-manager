@@ -1009,6 +1009,43 @@ final class SmokeUITests: XCTestCase {
         }, "Copied inspector report should contain image dimensions")
     }
 
+    func testPinCurrentClipboardCreatesPinnedSection() throws {
+        let app = makeApp()
+        app.launch()
+
+        let settingsWindow = app.windows["settingsWindow"]
+        if settingsWindow.exists {
+            settingsWindow.buttons.element(boundBy: 0).click()
+            XCTAssertTrue(waitForNonExistence(settingsWindow, timeout: 5),
+                          "Settings window should close before pinning history")
+        }
+        XCTAssertTrue(exists(app.windows.firstMatch, timeout: 10), "Main window did not appear")
+
+        let pinnedText = try seedClipboardHistory(app: app, text: "E2EPinned")
+        let currentPinIdentifier = "historyRow.pin.00000000-0000-0000-0000-000000000001"
+        let currentPin = app.buttons[currentPinIdentifier]
+        XCTAssertTrue(exists(currentPin, timeout: 5), "Current Clipboard pin button not found")
+        currentPin.click()
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            app.buttons[currentPinIdentifier].label == "Unpin item"
+        }, "Current Clipboard should expose its pinned state")
+
+        _ = try seedClipboardHistory(app: app, text: "E2EAfterPinned")
+        XCTAssertTrue(exists(app.staticTexts["Pinned"], timeout: 5), "Pinned section header did not appear")
+        let pinnedRow = app.scrollViews["historyList"].staticTexts.matching(NSPredicate(
+            format: "label == %@ OR value == %@",
+            pinnedText,
+            pinnedText
+        )).firstMatch
+        XCTAssertTrue(exists(pinnedRow, timeout: 5), "Pinned Current Clipboard content did not remain in history")
+
+        let screenshot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = "Pinned History"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     /// Opens the history window, seeds one entry via the case-specific pasteboard,
     /// then verifies two keyboard-navigation behaviors:
     ///   1. With list focus, pressing ↑ at the top of the list moves focus

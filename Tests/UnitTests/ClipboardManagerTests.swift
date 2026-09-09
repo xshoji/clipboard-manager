@@ -124,6 +124,76 @@ final class PersistenceMigrationTests: XCTestCase {
         XCTAssertEqual(content?.textAvailability, .extracted)
         XCTAssertTrue(content?.canUsePlainText ?? false)
     }
+
+}
+
+@MainActor
+final class PinnedHistoryPersistenceTests: XCTestCase {
+    func testClearAllAndLimitsKeepPinnedItems() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let controller = PersistenceController(
+            settings: .shared,
+            storeURL: directory.appendingPathComponent("Clipboard.store")
+        )
+        let pinned = ClipboardEntity(
+            createdAt: Date(timeIntervalSinceNow: -10_000),
+            kind: "text",
+            text: "pinned",
+            contentHash: "pinned",
+            isPinned: true
+        )
+        let oldUnpinned = ClipboardEntity(
+            createdAt: Date(timeIntervalSinceNow: -10_000),
+            kind: "text",
+            text: "old",
+            contentHash: "old"
+        )
+        controller.container.mainContext.insert(pinned)
+        controller.container.mainContext.insert(oldUnpinned)
+        try controller.container.mainContext.save()
+
+        controller.enforceLimits(retentionDays: 1, maxCount: 0)
+        XCTAssertEqual(try controller.container.mainContext.fetch(FetchDescriptor<ClipboardEntity>()).map(\.id), [pinned.id])
+
+        XCTAssertTrue(controller.clearAll())
+        XCTAssertEqual(try controller.container.mainContext.fetch(FetchDescriptor<ClipboardEntity>()).map(\.id), [pinned.id])
+    }
+
+    func testDeduplicationCarriesPinToRecopiedItem() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let controller = PersistenceController(
+            settings: .shared,
+            storeURL: directory.appendingPathComponent("Clipboard.store")
+        )
+        let oldID = UUID()
+        controller.container.mainContext.insert(ClipboardEntity(
+            id: oldID,
+            kind: "text",
+            text: "same",
+            contentHash: "same-hash",
+            isPinned: true
+        ))
+        try controller.container.mainContext.save()
+        let adapter = ClipboardPersistenceAdapter(persistence: controller)
+        let newID = UUID()
+
+        XCTAssertTrue(adapter.insert(
+            NewClipboardItem(id: newID, kind: "text", text: "same", contentHash: "same-hash"),
+            removingDuplicates: true,
+            purpose: "test"
+        ))
+        let item = await adapter.fetch(id: newID)
+        let oldItem = await adapter.fetch(id: oldID)
+
+        XCTAssertNil(oldItem)
+        XCTAssertTrue(item?.isPinned ?? false)
+    }
 }
 
 final class MacroScriptTests: XCTestCase {
@@ -1492,6 +1562,47 @@ final class MacroRunnerDebugTests: XCTestCase {
 
 @MainActor
 final class HistoryViewModelTests: XCTestCase {
+    func testReloadPlacesPinnedItemsBeforeUnpinnedItems() async {
+        let harness = TestHarness()
+        let newestUnpinned = makeClipboardItem(kind: "text", textPreview: "newest")
+        let pinned = makeClipboardItem(kind: "text", textPreview: "pinned", isPinned: true)
+        let olderUnpinned = makeClipboardItem(kind: "text", textPreview: "older")
+        harness.repository.items = [newestUnpinned, pinned, olderUnpinned]
+        let viewModel = HistoryViewModel(
+            repository: harness.repository,
+            pasteCoordinator: harness.coordinator
+        )
+
+        await viewModel.reload()
+
+        XCTAssertEqual(viewModel.items.map(\.id), [pinned.id, newestUnpinned.id, olderUnpinned.id])
+    }
+
+    func testCurrentClipboardCanBePinnedAndUnpinnedThroughMatchingHistory() async throws {
+        let harness = TestHarness()
+        let snapshot = makeCurrentTextSnapshot(text: "current")
+        let matching = makeClipboardItem(
+            kind: "text",
+            textPreview: "current",
+            contentHash: snapshot.contentHash,
+            isPinned: true
+        )
+        harness.repository.items = [matching]
+        let viewModel = HistoryViewModel(
+            repository: harness.repository,
+            pasteCoordinator: harness.coordinator,
+            currentReader: CurrentClipboardReaderFake(snapshot: snapshot)
+        )
+        await viewModel.reload()
+        await viewModel.refreshCurrentClipboard()
+        let current = try XCTUnwrap(viewModel.items.first)
+
+        XCTAssertTrue(current.isPinned)
+        await viewModel.togglePin(current)
+
+        XCTAssertEqual(harness.repository.pinUpdates.first?.id, matching.id)
+        XCTAssertEqual(harness.repository.pinUpdates.first?.isPinned, false)
+    }
     func testReloadSelectsFirstItemWhenThereIsNoSelection() async {
         let harness = TestHarness()
         let first = makeClipboardItem(kind: "text")
@@ -1888,6 +1999,8 @@ private final class RepositoryFake: ClipboardRepositoryPort, ClipboardHistoryWri
     var ocrUpdates: [(id: UUID, text: String?)] = []
     var insertedItems: [(item: NewClipboardItem, removingDuplicates: Bool, purpose: String)] = []
     var insertResult = true
+    var pinUpdates: [(id: UUID, isPinned: Bool)] = []
+    var pinnedCurrentItems: [NewClipboardItem] = []
 
     func fetchAll() async -> [ClipboardItem] { items }
     func fetch(id: UUID) async -> ClipboardItem? { items.first { $0.id == id } }
@@ -1903,6 +2016,14 @@ private final class RepositoryFake: ClipboardRepositoryPort, ClipboardHistoryWri
     }
     func updateOcrResult(id: UUID, text: String?) -> Bool {
         ocrUpdates.append((id, text))
+        return true
+    }
+    func setPinned(id: UUID, isPinned: Bool) -> Bool {
+        pinUpdates.append((id, isPinned))
+        return true
+    }
+    func pinCurrent(_ item: NewClipboardItem) -> Bool {
+        pinnedCurrentItems.append(item)
         return true
     }
     func delete(id: UUID) -> Bool { true }
@@ -2092,7 +2213,8 @@ private func makeClipboardItem(
     contentHash: String? = nil,
     ocrTextLowercased: String? = nil,
     isHtml: Bool = false,
-    textAvailability: ClipboardTextAvailability = .available
+    textAvailability: ClipboardTextAvailability = .available,
+    isPinned: Bool = false
 ) -> ClipboardItem {
     ClipboardItem(
         id: UUID(),
@@ -2108,7 +2230,8 @@ private func makeClipboardItem(
         payloadByteCount: nil,
         sourceBundleID: sourceBundleID,
         contentHash: contentHash,
-        ocrTextLowercased: ocrTextLowercased
+        ocrTextLowercased: ocrTextLowercased,
+        isPinned: isPinned
     )
 }
 
