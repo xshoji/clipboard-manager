@@ -47,13 +47,19 @@ The window is resizable; the list pane grows/shrinks while the search bar and fo
 ## 4. History List
 
 - Vertical list with a virtual **Current Clipboard** row at the top, followed by
-  persisted history entries newest first. The persisted entry matching Current
-  Clipboard is not shown twice.
+  a **Pinned** section and then unpinned persisted history. Entries remain newest
+  first within each group. The persisted entry matching Current Clipboard is not
+  shown twice.
 - Current Clipboard follows eligible pasteboard changes and is selected when the
   window opens. A manually selected persisted history row remains selected when
   the pasteboard changes.
-- Current Clipboard cannot be deleted. Clear All History removes persisted rows
-  but does not clear the macOS pasteboard or remove Current Clipboard.
+- Current Clipboard cannot be deleted. It can be pinned directly; this persists
+  its current normalized payload if history capture has not completed yet.
+- A row can be pinned or unpinned from its pin icon or the More menu. Re-copying
+  the same content retains its pinned state.
+- Pinned rows are excluded from retention and maximum-count cleanup. Clear All
+  History removes only unpinned persisted rows and does not clear the macOS
+  pasteboard or remove Current Clipboard.
 - Each row displays:
   - For text: body text (truncated with ellipsis if long), source app name, and timestamp.
   - For images: image thumbnail, source app name, and timestamp.

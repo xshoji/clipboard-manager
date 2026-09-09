@@ -24,9 +24,10 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 
 - The first row is a virtual **Current Clipboard** item backed directly by the
   current eligible `NSPasteboard` payload; it does not wait for persistence.
-- Rows below Current Clipboard are persisted history in reverse chronological
-  order. The persisted row matching Current Clipboard is merged out of the list,
-  so the second visible row represents the previous captured content.
+- Rows below Current Clipboard are persisted history, with pinned entries first
+  and reverse chronological order within pinned and unpinned groups. The
+  persisted row matching Current Clipboard is merged out of the list, so the
+  next visible row represents different captured content.
 - Concealed, auto-generated, empty, unsupported, and oversized pasteboard payloads
   are never exposed as Current Clipboard; the newest eligible history row remains
   first in those cases.
@@ -39,7 +40,10 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 #### 2.1.3 History Deletion
 
 - Individual deletion (specify one item).
-- Bulk deletion (clear all).
+- Pin or unpin Current Clipboard and persisted history. Re-copying the same
+  content preserves its pinned state.
+- Pinned entries are excluded from retention and maximum-count deletion.
+- Bulk deletion (clear all unpinned history; pinned entries remain).
 
 #### 2.1.4 History Edit (Text)
 

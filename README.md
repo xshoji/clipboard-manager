@@ -149,7 +149,8 @@ Dock icon — it lives in the menu bar.
 
 ### Retention & count limits
 Automatic cleanup by age and/or maximum item count, so history doesn't
-grow forever.
+grow forever. Pin frequently reused entries to keep them at the top and exempt
+them from automatic cleanup and Clear All History.
 
 ### Fully local, no cloud sync
 Clipboard history, images, and OCR recognition all stay on-device.
