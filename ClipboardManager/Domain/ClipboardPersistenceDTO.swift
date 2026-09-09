@@ -71,6 +71,7 @@ struct NewClipboardItem: Sendable {
     var contentHash: String? = nil
     var ocrStatus: String? = nil
     var textAvailability: ClipboardTextAvailability? = nil
+    var isPinned: Bool = false
 }
 
 /// Complete, non-persisted representation of the pasteboard at one change count.
@@ -153,7 +154,8 @@ struct CurrentClipboardSnapshot: Identifiable, Sendable {
             textAvailability: textAvailability,
             payloadByteCount: byteCount,
             sourceBundleID: sourceBundleID, contentHash: contentHash,
-            ocrTextLowercased: matchingHistory?.ocrTextLowercased)
+            ocrTextLowercased: matchingHistory?.ocrTextLowercased,
+            isPinned: matchingHistory?.isPinned ?? false)
     }
 
     func newClipboardItem() -> NewClipboardItem {

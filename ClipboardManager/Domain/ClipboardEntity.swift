@@ -29,6 +29,7 @@ final class ClipboardEntity {
     var contentHash: String?
     @Attribute(.externalStorage) var ocrText: String?
     var ocrStatus: String?
+    var isPinned: Bool = false
 
     init(
         id: UUID = UUID(),
@@ -43,7 +44,8 @@ final class ClipboardEntity {
         contentHash: String? = nil,
         ocrText: String? = nil,
         ocrStatus: String? = nil,
-        textAvailability: ClipboardTextAvailability? = nil
+        textAvailability: ClipboardTextAvailability? = nil,
+        isPinned: Bool = false
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -73,6 +75,7 @@ final class ClipboardEntity {
         self.contentHash = contentHash
         self.ocrText = ocrText
         self.ocrStatus = ocrStatus
+        self.isPinned = isPinned
     }
 
     var isImage: Bool { kind == "image" }

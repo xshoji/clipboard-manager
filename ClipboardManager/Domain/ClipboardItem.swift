@@ -38,6 +38,7 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
     let sourceBundleID: String?
     let contentHash: String?
     let ocrTextLowercased: String?
+    let isPinned: Bool
 
     var isImage: Bool { kind == "image" }
     var isCurrent: Bool { id == CurrentClipboardSnapshot.currentID }
