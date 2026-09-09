@@ -320,6 +320,10 @@ final class PasteCoordinator {
     }
 
     func copyMacroDebugReport(_ text: String) {
+        copyDiagnosticText(text)
+    }
+
+    func copyDiagnosticText(_ text: String) {
         suppressedWrite { pasteboard in
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)

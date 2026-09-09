@@ -344,12 +344,30 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
     ) -> CurrentClipboardSnapshot? {
         guard !isConcealedPasteboard(pb) else { return nil }
         let maxBytes = settings.maxItemSizeMB * 1024 * 1024
+        let declaredTypeIdentifiers = (pb.types ?? []).map(\.rawValue)
         let source = pb.string(forType: NSPasteboard.PasteboardType("org.nspasteboard.sourceApp.bundleID"))
-        let image: Data? = {
-            if let png = pb.data(forType: .png), !png.isEmpty { return png }
-            if let tiff = pb.data(forType: .tiff), !tiff.isEmpty { return Self.pngData(fromTiff: tiff) }
-            return nil
-        }()
+        var imageRepresentations: [ClipboardRepresentationInspection] = []
+        let image: Data?
+        if let png = pb.data(forType: .png), !png.isEmpty {
+            image = png
+            imageRepresentations.append(.init(
+                format: .png, typeIdentifier: NSPasteboard.PasteboardType.png.rawValue,
+                byteCount: png.count, origin: .source
+            ))
+        } else if let tiff = pb.data(forType: .tiff), !tiff.isEmpty,
+                  let normalizedPNG = Self.pngData(fromTiff: tiff) {
+            image = normalizedPNG
+            imageRepresentations.append(.init(
+                format: .tiff, typeIdentifier: NSPasteboard.PasteboardType.tiff.rawValue,
+                byteCount: tiff.count, origin: .source
+            ))
+            imageRepresentations.append(.init(
+                format: .png, typeIdentifier: NSPasteboard.PasteboardType.png.rawValue,
+                byteCount: normalizedPNG.count, origin: .normalized
+            ))
+        } else {
+            image = nil
+        }
         if let image {
             guard image.count <= maxBytes else {
                 if notifyWhenOversized { notifySizeLimit() }
@@ -357,12 +375,27 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
             }
             return .init(changeCount: changeCount, kind: "image", imageData: image,
                 thumbnail: ThumbnailGenerator.thumbnailData(from: image, maxEdge: 64),
-                sourceBundleID: source, contentHash: HashUtil.sha256Hex(of: image))
+                sourceBundleID: source, contentHash: HashUtil.sha256Hex(of: image),
+                representations: imageRepresentations,
+                declaredTypeIdentifiers: declaredTypeIdentifiers,
+                imageMetrics: ClipboardImageMetadataReader.metrics(from: image))
         }
         let rich: Data?
-        if let data = pb.data(forType: .rtfd), !data.isEmpty { rich = data }
-        else if let data = pb.data(forType: .rtf), !data.isEmpty { rich = data }
-        else { rich = nil }
+        let richFormat: ClipboardRepresentationFormat?
+        let richTypeIdentifier: String?
+        if let data = pb.data(forType: .rtfd), !data.isEmpty {
+            rich = data
+            richFormat = .rtfd
+            richTypeIdentifier = NSPasteboard.PasteboardType.rtfd.rawValue
+        } else if let data = pb.data(forType: .rtf), !data.isEmpty {
+            rich = data
+            richFormat = .rtf
+            richTypeIdentifier = NSPasteboard.PasteboardType.rtf.rawValue
+        } else {
+            rich = nil
+            richFormat = nil
+            richTypeIdentifier = nil
+        }
         let htmlType = NSPasteboard.PasteboardType("public.html")
         let html: Data? = {
             guard rich == nil, let data = pb.data(forType: htmlType), !data.isEmpty else { return nil }
@@ -394,9 +427,36 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
         } else {
             return nil
         }
+        var representations: [ClipboardRepresentationInspection] = []
+        if let providedText {
+            representations.append(.init(
+                format: .plainText, typeIdentifier: NSPasteboard.PasteboardType.string.rawValue,
+                byteCount: providedText.utf8.count, origin: .source
+            ))
+        } else if let extractedText {
+            representations.append(.init(
+                format: .plainText, typeIdentifier: nil,
+                byteCount: extractedText.utf8.count, origin: .derived
+            ))
+        }
+        if let rich, let richFormat {
+            representations.append(.init(
+                format: richFormat, typeIdentifier: richTypeIdentifier,
+                byteCount: rich.count, origin: .source
+            ))
+        }
+        if let html {
+            representations.append(.init(
+                format: .html, typeIdentifier: htmlType.rawValue,
+                byteCount: html.count, origin: .source
+            ))
+        }
         return .init(changeCount: changeCount, kind: "text", text: text, richText: rich,
             html: html, sourceBundleID: source,
-            contentHash: contentHash, textAvailability: textAvailability)
+            contentHash: contentHash, textAvailability: textAvailability,
+            representations: representations,
+            declaredTypeIdentifiers: declaredTypeIdentifiers,
+            textMetrics: text.map(ClipboardTextMetrics.init(text:)))
     }
 
     private func notifySizeLimit() {

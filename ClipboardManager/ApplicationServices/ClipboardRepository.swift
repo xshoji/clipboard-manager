@@ -38,6 +38,10 @@ final class ClipboardRepository: ClipboardRepositoryPort, ClipboardHistoryWritin
         await persistence.fetch(id: id)
     }
 
+    func fetchInspection(id: UUID) async -> ClipboardInspection? {
+        await persistence.fetchInspection(id: id)
+    }
+
     func fetchTextContent(id: UUID, includeRich: Bool) async -> ClipboardTextContent? {
         await persistence.fetchTextContent(id: id, includeRich: includeRich)
     }

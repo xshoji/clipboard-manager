@@ -7,7 +7,7 @@ struct FooterBar: View {
     let viewModel: HistoryViewModel
     let onEdit: (ClipboardItem) -> Void
     let onClearAll: () -> Void
-    @State private var showInfo: String?
+    @State private var inspectorRequest: ClipboardInspectorRequest?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -33,6 +33,9 @@ struct FooterBar: View {
         .padding(.vertical, 8)
         .background(Color.appBackground.opacity(0.95))
         .overlay(alignment: .top) { Divider().opacity(0.2) }
+        .sheet(item: $inspectorRequest) { request in
+            ClipboardInspectorView(request: request, viewModel: viewModel)
+        }
     }
 
     private func actionButton(
@@ -96,10 +99,14 @@ struct FooterBar: View {
             Divider()
             Button("Clear All History") { onClearAll() }
             Divider()
-            Button("Item Info") {
-                guard let entity = selected.wrappedValue else { return }
-                Task { showInfo = await describe(entity) }
+            Button("Clipboard Inspector…") {
+                guard let item = selected.wrappedValue else { return }
+                inspectorRequest = ClipboardInspectorRequest(
+                    item: item,
+                    frozenCurrentInspection: viewModel.currentInspectionSnapshot(for: item)
+                )
             }
+                .disabled(selected.wrappedValue == nil)
         } label: {
             Image(systemName: "ellipsis")
         }
@@ -107,9 +114,6 @@ struct FooterBar: View {
         .menuIndicator(.visible)
         .help("More")
         .accessibilityIdentifier("moreMenu")
-        .alert("Item info", isPresented: .init(get: { showInfo != nil }, set: { _ in showInfo = nil })) {
-            Button("OK") { showInfo = nil }
-        } message: { Text(showInfo ?? "") }
     }
 
     private func paste(rich: Bool) {
@@ -160,15 +164,4 @@ struct FooterBar: View {
         NotificationCenter.default.post(name: .deleteSelectedRequested, object: nil)
     }
 
-    private func describe(_ entity: ClipboardItem) async -> String {
-        var s = "Kind: \(entity.kind)\n"
-        if entity.isCurrent { s = "Item: Current Clipboard\n" + s }
-        s += "Created: \(entity.createdAt)\n"
-        if let b = entity.sourceBundleID { s += "Source: \(b)\n" }
-        if let h = entity.contentHash { s += "Hash: \(h)\n" }
-        if let count = entity.textCharacterCount { s += "Length: \(count) chars\n" }
-        if entity.isHtml { s += "Format: HTML\n" }
-        if let count = await viewModel.itemByteCount(id: entity.id) { s += "Size: \(count) bytes\n" }
-        return s
-    }
 }

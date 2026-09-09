@@ -173,6 +173,18 @@ final class HistoryViewModel {
         if let image = await repository.fetchImageData(id: id) { return image.count }
         return await repository.fetchFullText(id: id)?.utf8.count
     }
+    func currentInspectionSnapshot(for item: ClipboardItem) -> ClipboardInspection? {
+        guard item.isCurrent,
+              let snapshot = currentSnapshot,
+              snapshot.contentHash == item.contentHash,
+              snapshot.observedAt == item.createdAt else { return nil }
+        return snapshot.inspection
+    }
+    func storedInspection(for item: ClipboardItem) async -> ClipboardInspection? {
+        guard !item.isCurrent else { return nil }
+        return await repository.fetchInspection(id: item.id)
+    }
+    func copyInspectionText(_ text: String) { pasteCoordinator.copyDiagnosticText(text) }
     @discardableResult func saveText(_ text: String) -> Bool { pasteCoordinator.saveEditedText(text) }
     @discardableResult func pasteStandard(item: ClipboardItem, rich: Bool, activate: Bool = true) async -> Bool {
         guard let target = await resolveActionTarget(for: item) else { return false }

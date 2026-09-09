@@ -1578,6 +1578,28 @@ final class HistoryViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedItem?.id, history.id)
     }
 
+    func testCurrentInspectionSnapshotDoesNotFollowLaterClipboardChanges() async throws {
+        let harness = TestHarness()
+        let firstSnapshot = makeCurrentTextSnapshot(text: "first", changeCount: 1)
+        let reader = CurrentClipboardReaderFake(snapshot: firstSnapshot)
+        let viewModel = HistoryViewModel(
+            repository: harness.repository,
+            pasteCoordinator: harness.coordinator,
+            currentReader: reader
+        )
+        await viewModel.reload()
+        await viewModel.refreshCurrentClipboard()
+        let displayedItem = try XCTUnwrap(viewModel.items.first)
+
+        let frozenInspection = try XCTUnwrap(viewModel.currentInspectionSnapshot(for: displayedItem))
+        reader.snapshot = makeCurrentTextSnapshot(text: "second", changeCount: 2)
+        await viewModel.refreshCurrentClipboard()
+
+        XCTAssertEqual(frozenInspection.contentHash, firstSnapshot.contentHash)
+        XCTAssertEqual(viewModel.currentSnapshot?.contentHash, reader.snapshot?.contentHash)
+        XCTAssertNil(viewModel.currentInspectionSnapshot(for: displayedItem))
+    }
+
     func testMissingCurrentClipboardFallsBackToNewestHistory() async {
         let harness = TestHarness()
         let newest = makeClipboardItem(kind: "text", textPreview: "newest")
@@ -1862,12 +1884,14 @@ private final class RepositoryFake: ClipboardRepositoryPort, ClipboardHistoryWri
     var imageData: [UUID: Data] = [:]
     var fullText: [UUID: String] = [:]
     var ocrResults: [UUID: ClipboardOcrResult] = [:]
+    var inspections: [UUID: ClipboardInspection] = [:]
     var ocrUpdates: [(id: UUID, text: String?)] = []
     var insertedItems: [(item: NewClipboardItem, removingDuplicates: Bool, purpose: String)] = []
     var insertResult = true
 
     func fetchAll() async -> [ClipboardItem] { items }
     func fetch(id: UUID) async -> ClipboardItem? { items.first { $0.id == id } }
+    func fetchInspection(id: UUID) async -> ClipboardInspection? { inspections[id] }
     func fetchTextContent(id: UUID, includeRich: Bool) async -> ClipboardTextContent? { textContent[id] }
     func fetchHTMLData(id: UUID) async -> Data? { htmlData[id] }
     func fetchImageData(id: UUID) async -> Data? { imageData[id] }
@@ -2102,6 +2126,51 @@ private func makeCurrentTextSnapshot(text: String, changeCount: Int = 1) -> Curr
     )
 }
 
+final class ClipboardInspectionTests: XCTestCase {
+    func testTextMetricsReportCharactersLinesAndEncodings() {
+        let metrics = ClipboardTextMetrics(text: "A\n猫")
+
+        XCTAssertEqual(metrics.characterCount, 3)
+        XCTAssertEqual(metrics.lineCount, 2)
+        XCTAssertEqual(metrics.utf8ByteCount, 5)
+        XCTAssertEqual(metrics.utf16CodeUnitCount, 3)
+    }
+
+    func testImageMetadataReadsPixelDimensionsWithoutRendering() throws {
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 7,
+            pixelsHigh: 5,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ), let png = bitmap.representation(using: .png, properties: [:]) else {
+            return XCTFail("Could not create PNG fixture")
+        }
+
+        let metrics = try XCTUnwrap(ClipboardImageMetadataReader.metrics(from: png))
+
+        XCTAssertEqual(metrics.pixelWidth, 7)
+        XCTAssertEqual(metrics.pixelHeight, 5)
+        XCTAssertEqual(metrics.typeIdentifier, "public.png")
+    }
+
+    @MainActor
+    func testCopyDiagnosticTextUsesSuppressedPasteboardWrite() {
+        let harness = TestHarness()
+
+        harness.coordinator.copyDiagnosticText("inspection report")
+
+        XCTAssertEqual(harness.pasteboard.string, "inspection report")
+        XCTAssertEqual(harness.pasteboard.suppressedWriteCount, 1)
+        XCTAssertTrue(harness.pasteboard.recordedItems.isEmpty)
+    }
+}
+
 final class CurrentClipboardSnapshotTests: XCTestCase {
     func testSnapshotUsesStableVirtualRowIDAndKeepsFullPayloadOutOfClipboardItem() {
         let html = Data("<b>Hello</b>".utf8)
@@ -2142,6 +2211,10 @@ final class ClipboardMonitorSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot?.html, Data("<ul><li>First</li><li>Second</li></ul>".utf8))
         XCTAssertEqual(snapshot?.textAvailability, .available)
         XCTAssertEqual(snapshot?.contentHash, HashUtil.sha256Hex(of: Data("- First\n- Second".utf8)))
+        XCTAssertTrue(snapshot?.declaredTypeIdentifiers.contains("public.html") == true)
+        XCTAssertTrue(snapshot?.declaredTypeIdentifiers.contains(NSPasteboard.PasteboardType.string.rawValue) == true)
+        XCTAssertEqual(snapshot?.representations.map(\.format), [.plainText, .html])
+        XCTAssertEqual(snapshot?.representations.map(\.origin), [.source, .source])
     }
 
     func testSnapshotExtractsBoundedTextWhenHtmlDoesNotProvidePlainText() {

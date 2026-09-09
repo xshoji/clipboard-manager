@@ -965,6 +965,50 @@ final class SmokeUITests: XCTestCase {
 
     // MARK: - Tests: Keyboard Navigation & Macro Execution
 
+    func testClipboardInspectorShowsImageMetadata() throws {
+        let app = makeApp()
+        app.launch()
+
+        let settingsWindow = app.windows["settingsWindow"]
+        if settingsWindow.exists {
+            settingsWindow.buttons.element(boundBy: 0).click()
+            XCTAssertTrue(waitForNonExistence(settingsWindow, timeout: 5),
+                          "Settings window should close before inspecting clipboard metadata")
+        }
+        XCTAssertTrue(exists(app.windows.firstMatch, timeout: 10), "Main window did not appear")
+
+        try seedImageClipboardHistory(app: app)
+        let imageRow = imageHistoryRow(in: app)
+        XCTAssertTrue(exists(imageRow, timeout: 5), "Image history row not found")
+        imageRow.click()
+
+        let moreMenu = app.descendants(matching: .any)["moreMenu"]
+        XCTAssertTrue(exists(moreMenu, timeout: 5), "More menu not found")
+        moreMenu.click()
+        let inspectorItem = app.menuItems["Clipboard Inspector…"]
+        XCTAssertTrue(exists(inspectorItem, timeout: 5), "Clipboard Inspector menu item not found")
+        inspectorItem.click()
+
+        let dimensions = app.staticTexts["clipboardInspector.dimensions"]
+        XCTAssertTrue(exists(dimensions, timeout: 10),
+                      "Image dimensions did not appear; dumping app tree:\n\(app.debugDescription)")
+        let dimensionsText = dimensions.label.isEmpty ? (dimensions.value as? String ?? "") : dimensions.label
+        XCTAssertEqual(dimensionsText, "4 × 4 px")
+        XCTAssertTrue(app.staticTexts["Declared Pasteboard Types"].exists)
+
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Clipboard Inspector"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        let copyReport = app.buttons["clipboardInspector.copyReport"]
+        XCTAssertTrue(exists(copyReport, timeout: 5), "Copy Report button not found")
+        copyReport.click()
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            self.pasteboard.string(forType: .string)?.contains("Image: 4 × 4 px") == true
+        }, "Copied inspector report should contain image dimensions")
+    }
+
     /// Opens the history window, seeds one entry via the case-specific pasteboard,
     /// then verifies two keyboard-navigation behaviors:
     ///   1. With list focus, pressing ↑ at the top of the list moves focus

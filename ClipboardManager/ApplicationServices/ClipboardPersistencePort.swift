@@ -25,6 +25,10 @@ protocol ClipboardPersistencePort: AnyObject {
     /// read APIs (off-main via `@ModelActor`).
     func fetch(id: UUID) async -> ClipboardItem?
 
+    /// Metadata-only inspection of one stored row. Expensive text and image
+    /// metrics are computed off-main without returning full payloads to Presentation.
+    func fetchInspection(id: UUID) async -> ClipboardInspection?
+
     /// Full text payload for paste. `includeRich` gates rich-text and HTML.
     func fetchTextContent(id: UUID, includeRich: Bool) async -> ClipboardTextContent?
 

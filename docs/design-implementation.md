@@ -73,6 +73,7 @@ ClipboardManager/
 │   ├── HistoryRowView.swift          # Single row (icon/thumbnail, title, subtitle)
 │   ├── PreviewPane.swift             # Selected item preview (monospace/image)
 │   ├── FooterBar.swift               # Action buttons
+│   ├── ClipboardInspectorView.swift  # Clipboard format and payload metadata sheet
 │   ├── TextEditView.swift            # Plain text edit (modal sheet)
 │   ├── SettingsView.swift            # Settings navigation + application preferences
 │   ├── MacroManagementView.swift     # Dedicated Macro CRUD and execution settings
@@ -83,6 +84,7 @@ ClipboardManager/
 │   ├── ClipboardEntity.swift         # SwiftData @Model
 │   ├── ClipboardItem.swift           # UI DTO (no full image payload)
 │   ├── ClipboardPersistenceDTO.swift # Cross-boundary DTOs (ClipboardTextContent, NewClipboardItem)
+│   ├── ClipboardInspection.swift     # Metadata-only inspection DTOs and text metrics
 │   ├── MacroScript.swift             # Macro script settings model
 │   ├── AppSettings.swift            # UserDefaults wrapper
 │   └── DedupCache.swift              # [deprecated] Recent hash cache for dedup (unused; see §4.1)
@@ -95,6 +97,7 @@ ClipboardManager/
 │   ├── PersistenceController.swift  # SwiftData ModelContainer + cleanup
 │   ├── ClipboardPersistenceAdapter.swift  # ClipboardPersistencePort adapter (owns PersistenceController + ClipboardDataActor)
 │   ├── ClipboardDataActor.swift        # @ModelActor performing off-main reads
+│   ├── ClipboardImageMetadataReader.swift # ImageIO header-only dimensions/type reader
 │   ├── AppIconResolver.swift         # Resolve app icon from bundleID
 │   ├── ThumbnailGenerator.swift     # Image thumbnail generation
 │   ├── InputPermission.swift         # Accessibility permission check/prompt
@@ -121,6 +124,7 @@ ClipboardManager/
 | Search bar + history list | `HistoryListPane` + `HistoryRowView` |
 | Preview area | `PreviewPane` |
 | Footer action bar | `FooterBar` |
+| Clipboard Inspector | `ClipboardInspectorView` |
 | Edit screen | `TextEditView` (text), `PreviewImageEditor` (image) |
 | Settings screen | `SettingsView` |
 | Menu bar resident UI (`design-ui.md §11`) | `MenuBarController` + `MenuBarView` |
@@ -136,7 +140,8 @@ ClipboardManager/
 | Preview.app image editing | `PreviewImageEditor` | Launches Preview.app as an external process, detects edit completion, saves edited image (§4.3) |
 | SwiftData persistence | `PersistenceController` | Builds `ModelContainer`, save + cleanup |
 | SwiftData persistence adapter | `ClipboardPersistenceAdapter` | Concretions of `ClipboardPersistencePort`; owns `PersistenceController` + `ClipboardDataActor`, performs entity<->DTO conversion. Injected into `ClipboardRepository` by `AppContainer` so ApplicationServices never references Infrastructure persistence types directly. |
-| SwiftData off-main reads | `ClipboardDataActor` | `@ModelActor` performing fetches (list, action text payload including rich HTML, image bytes, and full text) off the main actor. Referenced only by `ClipboardPersistenceAdapter`. |
+| SwiftData off-main reads | `ClipboardDataActor` | `@ModelActor` performing fetches (list, action text payload including rich HTML, image bytes, full text, and metadata-only inspection) off the main actor. Referenced only by `ClipboardPersistenceAdapter`. |
+| Image metadata | `ClipboardImageMetadataReader` | Reads encoded type and pixel dimensions from ImageIO properties without rendering the full image. Called on the clipboard utility queue or `ClipboardDataActor`, never the main actor. |
 | App icon resolution | `AppIconResolver` | Gets `NSImage` via `NSWorkspace.shared.icon(forFile:)` from `sourceBundleID`, supplies to `HistoryRowView` |
 | Image thumbnail | `ThumbnailGenerator` | Generates list-display thumbnails from image Entity |
 | Accessibility permission | `InputPermission` | Prompts for permission when enabling synthetic `Cmd+V` or when Preview editing needs faster detection (see §5.2) |
@@ -194,6 +199,20 @@ final class ClipboardEntity {
 > **Formatted HTML preview isolation**: `ClipboardHTMLRenderer` is a separate command-line helper embedded under `Contents/Helpers`. Only this disposable process invokes the system HTML importer. `HTMLPreviewRenderer` writes the raw HTML into a mode-0700 temporary directory and allows only one request at a time: replacing a request cancels it and waits for its process to exit before launching the replacement. The parent terminates a request after one second or when its physical footprint exceeds 512 MB; a helper ignoring `SIGTERM` receives `SIGKILL`. The helper also has an independent two-second/512-MB watchdog, so it cannot remain indefinitely if the app exits. It converts at most 100 MB of input into sanitized RTF containing at most 2,000 UTF-16 code units and 256 style runs, with font sizes clamped to 8–48 points and attachments omitted. The app rejects output over 512 KB or any decoded result exceeding the text/run limits before giving it to TextKit. Timeout, cancellation, missing helper, invalid output, or importer failure leaves the Phase 2 plain preview in place. Rendered and failed results are cached by raw HTML hash, up to 20 entries; canceled results are not cached. Raw HTML identity, persistence, search, and paste behavior do not depend on the formatted result.
 > **Dedup and HTML**: HTML accompanied by source plain text retains the existing plain-text `contentHash`, so identical text with different formatting remains one history item. HTML-only content uses `SHA256(UTF8("html-only-v1") + 0x00 + rawHTML)` so preview availability or placeholder text cannot collapse distinct documents.
 > **Persistence compatibility**: V3 is the oldest supported SwiftData store. V3 stores migrate to V4 through a lightweight migration. V1/V2 stores are intentionally unsupported and follow the existing backup-and-recreate recovery path rather than carrying forward additional legacy mapping rules. V3 rows have nil V4 metadata and are treated as unknown-capability items without loading external HTML during list reads; action services validate the actual payload before writing to the pasteboard.
+> **Clipboard inspection**: Current Clipboard captures `NSPasteboard.types` as
+> string identifiers inside the same stable `changeCount` observation used for
+> payload normalization. Opening the sheet freezes that existing observation and
+> never refreshes Current Clipboard during presentation. The inspector labels the
+> payloads actually consumed by normalization as `Captured Representations`; all
+> advertised identifiers remain visible under `Declared Pasteboard Types`. It does
+> not request additional or unknown payloads solely for inspection. Persisted
+> inspection is produced by `ClipboardDataActor`, which
+> computes per-representation sizes, text metrics, OCR result length, and ImageIO
+> header metadata off-main. The V4 schema does not persist original type declarations
+> or the RTF-versus-RTFD discriminator, so history labels rich data as
+> `Rich Text (RTF or RTFD)` and never presents inferred values as original metadata.
+> Copy Report excludes content and uses the same suppressed pasteboard-write boundary
+> as Macro debug reports.
 > **Search scale**: For 100,000+ items with full-text search, `LIKE` queries on `text` become heavy, so v2 should consider prefiltering using `contentHash` suffix or introducing SQLite FTS5 (see §9).
 
 ### 3.2 AppSettings (UserDefaults)

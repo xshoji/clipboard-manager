@@ -44,6 +44,10 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
         await dataActor.fetch(id: id)
     }
 
+    func fetchInspection(id: UUID) async -> ClipboardInspection? {
+        await dataActor.fetchInspection(id: id)
+    }
+
     func fetchTextContent(id: UUID, includeRich: Bool) async -> ClipboardTextContent? {
         await dataActor.fetchTextContent(id: id, includeRich: includeRich)
     }

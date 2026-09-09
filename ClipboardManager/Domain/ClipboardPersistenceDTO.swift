@@ -90,11 +90,19 @@ struct CurrentClipboardSnapshot: Identifiable, Sendable {
     let sourceBundleID: String?
     let contentHash: String
     let textAvailability: ClipboardTextAvailability
+    let representations: [ClipboardRepresentationInspection]
+    let declaredTypeIdentifiers: [String]
+    let textMetrics: ClipboardTextMetrics?
+    let imageMetrics: ClipboardImageMetrics?
 
     init(changeCount: Int, observedAt: Date = Date(), kind: String, text: String? = nil,
          richText: Data? = nil, html: Data? = nil, imageData: Data? = nil,
          thumbnail: Data? = nil, sourceBundleID: String? = nil, contentHash: String,
-         textAvailability: ClipboardTextAvailability? = nil) {
+         textAvailability: ClipboardTextAvailability? = nil,
+         representations: [ClipboardRepresentationInspection] = [],
+         declaredTypeIdentifiers: [String] = [],
+         textMetrics: ClipboardTextMetrics? = nil,
+         imageMetrics: ClipboardImageMetrics? = nil) {
         id = Self.currentID
         self.changeCount = changeCount
         self.observedAt = observedAt
@@ -108,11 +116,32 @@ struct CurrentClipboardSnapshot: Identifiable, Sendable {
         self.contentHash = contentHash
         self.textAvailability = textAvailability
             ?? (kind == "image" ? .unknown : (text?.isEmpty == false ? .available : .unavailable))
+        self.representations = representations
+        self.declaredTypeIdentifiers = declaredTypeIdentifiers
+        self.textMetrics = textMetrics
+        self.imageMetrics = imageMetrics
     }
 
     var isImage: Bool { kind == "image" }
     var canUsePlainText: Bool { isImage || textAvailability.canUsePlainText }
     var byteCount: Int { imageData?.count ?? html?.count ?? richText?.count ?? text?.utf8.count ?? 0 }
+
+    var inspection: ClipboardInspection {
+        ClipboardInspection(
+            id: id,
+            isCurrent: true,
+            createdAt: observedAt,
+            kind: kind,
+            sourceBundleID: sourceBundleID,
+            contentHash: contentHash,
+            representations: representations,
+            declaredTypeIdentifiers: declaredTypeIdentifiers,
+            textMetrics: textMetrics,
+            imageMetrics: imageMetrics,
+            ocrStatus: nil,
+            ocrCharacterCount: nil
+        )
+    }
 
     func clipboardItem(matchingHistory: ClipboardItem? = nil) -> ClipboardItem {
         let builtPreview = text.map(TextPreviewBuilder.build(from:))

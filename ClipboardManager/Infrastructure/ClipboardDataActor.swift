@@ -62,6 +62,62 @@ actor ClipboardDataActor {
     func fetchHTMLData(id: UUID) -> Data? { entity(id: id)?.html }
     func fetchFullText(id: UUID) -> String? { entity(id: id)?.text }
 
+    func fetchInspection(id: UUID) -> ClipboardInspection? {
+        guard let entity = entity(id: id) else { return nil }
+        let text = entity.text
+        let richText = entity.richText
+        let html = entity.html
+        let imageData = entity.imageData
+        let ocrText = entity.ocrText
+        var representations: [ClipboardRepresentationInspection] = []
+        if let text {
+            representations.append(.init(
+                format: .plainText,
+                typeIdentifier: "public.utf8-plain-text",
+                byteCount: text.utf8.count,
+                origin: .stored
+            ))
+        }
+        if let richText {
+            representations.append(.init(
+                format: .richText,
+                typeIdentifier: nil,
+                byteCount: richText.count,
+                origin: .stored
+            ))
+        }
+        if let html {
+            representations.append(.init(
+                format: .html,
+                typeIdentifier: "public.html",
+                byteCount: html.count,
+                origin: .stored
+            ))
+        }
+        if let imageData {
+            representations.append(.init(
+                format: .png,
+                typeIdentifier: "public.png",
+                byteCount: imageData.count,
+                origin: .stored
+            ))
+        }
+        return ClipboardInspection(
+            id: entity.id,
+            isCurrent: false,
+            createdAt: entity.createdAt,
+            kind: entity.kind,
+            sourceBundleID: entity.sourceBundleID,
+            contentHash: entity.contentHash,
+            representations: representations,
+            declaredTypeIdentifiers: nil,
+            textMetrics: text.map(ClipboardTextMetrics.init(text:)),
+            imageMetrics: imageData.flatMap(ClipboardImageMetadataReader.metrics(from:)),
+            ocrStatus: entity.ocrStatus,
+            ocrCharacterCount: ocrText?.count
+        )
+    }
+
     /// Fetches the text payload for paste. When `includeRich` is true, both `richText`
     /// (RTFD) and `html` are included; when false, only plain `text` is returned.
     /// The name `includeRich` (not `includeRichText`) reflects that it gates both rich

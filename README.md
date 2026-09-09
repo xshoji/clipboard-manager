@@ -135,6 +135,14 @@ of analyzing the same image again.
 ### Rich / plain paste
 Choose whether to paste with formatting intact or stripped, per entry.
 
+### Clipboard Inspector
+Open **More → Clipboard Inspector…** to inspect the selected item's captured or stored
+representations, exact byte sizes, content identity hash, and text or image
+metrics. Images include encoded type and pixel dimensions. Current Clipboard
+also lists every pasteboard type declared by the source application without
+reading unknown payloads. A metadata-only report can be copied without adding
+the report itself to clipboard history.
+
 ### Global hotkey & menu bar resident
 Invoke the UI from any application with a configurable shortcut. No
 Dock icon — it lives in the menu bar.

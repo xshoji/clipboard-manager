@@ -65,6 +65,22 @@ The app is **menu bar resident** and does not appear in the Dock (`LSUIElement =
 - Max count: excess entries are auto-deleted oldest first.
 - Setting changes are **reflected immediately**, and cleanup runs on change.
 
+### 2.1.7 Clipboard Inspector
+
+- The focused item can be inspected for source, capture time, normalized content
+  identity, representations captured or stored by ClipboardManager, and their byte sizes.
+- Text inspection reports character, line, UTF-8 byte, and UTF-16 code-unit counts.
+- Image inspection reports encoded type and pixel dimensions without rendering
+  the full image. Persisted image inspection also reports OCR status and result length.
+- Current Clipboard inspection lists every pasteboard type identifier declared by
+  the owner at the captured change count. Unknown types are never read merely for
+  inspection. Historical entries show only normalized representations stored by
+  ClipboardManager because original pasteboard type declarations are not persisted.
+- Opening Current Clipboard inspection freezes the already displayed observation;
+  it does not refresh or switch to a later pasteboard change while the sheet opens.
+- Copy Report writes metadata only, never clipboard content, through the monitored
+  suppression boundary so the diagnostic report is not added to history.
+
 ### 2.2 Additional Features
 
 #### 2.2.1 Rich / Plain Paste Toggle

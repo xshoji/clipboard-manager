@@ -102,7 +102,14 @@ The footer is a single horizontal bar with the following actions. Actions operat
 
 - **Delete**: Deletes the focused entry. Asks for confirmation.
 - **Clear All**: Deletes all history entries. Asks for confirmation.
-- **Item Info**: Shows a popover/sheet with metadata for the focused entry (source app, timestamp, kind, size).
+- **Clipboard Inspector…**: Opens a fixed-snapshot sheet for the focused item.
+  It groups overview data, captured or stored representations, text or image metrics,
+  the content identity hash, and Current Clipboard's declared pasteboard types.
+  Current Clipboard explains that representation sizes cover only formats captured
+  by ClipboardManager; the declared-types section lists every advertised identifier.
+  Individual hashes and a metadata-only diagnostic report can be copied without
+  adding those diagnostic values to history. Historical entries explain that
+  their original pasteboard type declarations were not stored.
 
 ### 5.5 Run Macro ▾ (Optional / Future)
 
