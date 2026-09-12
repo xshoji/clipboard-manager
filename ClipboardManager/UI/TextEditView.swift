@@ -25,6 +25,7 @@ struct TextEditView: View {
             TextEditor(text: $draft)
                 .font(.system(.body, design: .monospaced))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("textEdit.draft")
             Divider()
             HStack {
                 Spacer()
@@ -33,7 +34,7 @@ struct TextEditView: View {
                 Button("Save as new") {
                     if viewModel.saveText(draft) { dismiss() }
                 }
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut("s", modifiers: .command)
             }
             .padding()
         }

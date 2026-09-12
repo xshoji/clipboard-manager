@@ -963,6 +963,44 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(historyList.exists, "History list should accept navigation after preview interaction")
     }
 
+    func testCommandSSavesTextEditAsNewHistoryEntry() throws {
+        let app = makeApp()
+        app.launch()
+
+        let settingsWindow = app.windows["settingsWindow"]
+        if settingsWindow.exists {
+            settingsWindow.buttons.element(boundBy: 0).click()
+            XCTAssertTrue(waitForNonExistence(settingsWindow, timeout: 5),
+                          "Settings window should close before text-edit workflow")
+        }
+
+        try seedClipboardHistory(app: app, text: "E2ETextEditSource")
+        let editButton = app.buttons["Edit"]
+        XCTAssertTrue(exists(editButton, timeout: 5), "Edit button not found")
+        editButton.click()
+
+        let editor = app.textViews["textEdit.draft"]
+        XCTAssertTrue(exists(editor, timeout: 5), "Text editor did not open")
+        editor.click()
+        editor.typeKey("a", modifierFlags: .command)
+        let editedText = "E2ETextEditSaved-\(UUID().uuidString)"
+        editor.typeText(editedText)
+        app.typeKey("s", modifierFlags: .command)
+
+        XCTAssertTrue(waitForNonExistence(editor, timeout: 5),
+                      "Cmd+S should save and dismiss the text editor")
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            self.pasteboard.string(forType: .string) == editedText
+        }, "Cmd+S should make the edited text the current clipboard")
+        let savedRow = app.scrollViews["historyList"].staticTexts.matching(NSPredicate(
+            format: "label == %@ OR value == %@",
+            editedText,
+            editedText
+        )).firstMatch
+        XCTAssertTrue(exists(savedRow, timeout: 5),
+                      "Cmd+S should add the edited text as a new history entry")
+    }
+
     // MARK: - Tests: Keyboard Navigation & Macro Execution
 
     func testClipboardInspectorShowsImageMetadata() throws {

@@ -206,6 +206,7 @@ row separators are used; sections do not add manual dividers.
 | `↑` / `↓` | Move focus in list |
 | `Enter` | Paste |
 | `Cmd+V` (in target app) | Paste from pasteboard |
+| `Cmd+S` (in text editor) | Save text edit as a new history entry |
 | `Cmd+S` (in Preview) | Save image edit (no filename dialog) |
 
 ## 10. First-Run Experience
