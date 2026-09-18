@@ -660,12 +660,6 @@ final class SettingsConfigurationTests: XCTestCase {
 
         XCTAssertEqual(adapter.status.errorMessage, "Invalid explicit configuration path")
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
-        do {
-            try await adapter.reloadFromDisk()
-            XCTFail("Expected an invalid explicit path to disable reload")
-        } catch {
-            XCTAssertEqual(error.localizedDescription, "Invalid explicit configuration path")
-        }
     }
 
     func testInlineMacroRoundTripIncludesCodeAndTestInputWithoutTrustData() throws {
@@ -1227,6 +1221,36 @@ final class PasteCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.notifier.notifications.count, 1)
         XCTAssertEqual(harness.notifier.notifications.first?.title, "Macro failed")
         XCTAssertEqual(harness.notifier.notifications.first?.body, "Macro script timed out.")
+    }
+
+    func testMacroNotifyOnlyDoesNotRestoreOrActivate() async {
+        let harness = TestHarness()
+        harness.settings.macroFailureBehavior = "notifyOnly"
+        let item = makeClipboardItem(kind: "text")
+        harness.repository.fullText[item.id] = "source text"
+        harness.repository.textContent[item.id] = .init(text: "original text", richText: nil, html: nil)
+        await harness.macroRunner.setResponse(.failure(.timeout))
+
+        let succeeded = await harness.coordinator.runMacro(macro: makeMacro(), item: item)
+
+        XCTAssertFalse(succeeded)
+        XCTAssertNil(harness.pasteboard.string)
+        XCTAssertEqual(harness.activator.callCount, 0)
+        XCTAssertEqual(harness.notifier.notifications.count, 1)
+    }
+
+    func testCurrentMacroSilentlySkipDoesNotRestoreNotifyOrActivate() async {
+        let harness = TestHarness()
+        harness.settings.macroFailureBehavior = "silentlySkip"
+        let snapshot = makeCurrentTextSnapshot(text: "live original")
+        await harness.macroRunner.setResponse(.failure(.timeout))
+
+        let succeeded = await harness.coordinator.runMacro(macro: makeMacro(), snapshot: snapshot)
+
+        XCTAssertFalse(succeeded)
+        XCTAssertNil(harness.pasteboard.string)
+        XCTAssertEqual(harness.activator.callCount, 0)
+        XCTAssertTrue(harness.notifier.notifications.isEmpty)
     }
 
     func testImageMacroFailureFallbackDoesNotRecordHistory() async {

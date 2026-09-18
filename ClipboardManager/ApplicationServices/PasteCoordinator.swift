@@ -184,28 +184,8 @@ final class PasteCoordinator {
             return false
         }
         guard let input = await macroInput(for: item) else { return false }
-        do {
-            let output = try await macroRunner.runAsync(script: macro, input: input,
-                verifyFingerprint: settings.macroSameDirectoryFingerprint)
-            suppressedWrite { pb in
-                pb.clearContents()
-                if output.isImage { pb.setData(output.data, forType: .png) }
-                else { pb.setString(String(data: output.data, encoding: .utf8) ?? "", forType: .string) }
-            }
-            activatePreviousApp(); return true
-        } catch is CancellationError {
-            return false
-        } catch {
-            let message = (error as? MacroRunningError)?.description ?? error.localizedDescription
-            switch settings.macroFailureBehavior {
-            case "restoreOriginalAndNotify":
-                if await pasteOriginal(item) { activatePreviousApp() }
-                notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil)
-            case "notifyOnly": notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil)
-            case "silentlySkip": break
-            default: notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil)
-            }
-            return false
+        return await executeMacro(macro: macro, input: input) {
+            await self.pasteOriginal(item)
         }
     }
 
@@ -220,6 +200,17 @@ final class PasteCoordinator {
         }
         let input = MacroInput(isImage: snapshot.isImage, imageData: snapshot.imageData,
             text: snapshot.text, sourceBundleID: snapshot.sourceBundleID)
+        return await executeMacro(macro: macro, input: input) {
+            self.pasteOriginal(snapshot)
+            return true
+        }
+    }
+
+    private func executeMacro(
+        macro: MacroScript,
+        input: MacroInput,
+        restoreOriginal: () async -> Bool
+    ) async -> Bool {
         do {
             let output = try await macroRunner.runAsync(script: macro, input: input,
                 verifyFingerprint: settings.macroSameDirectoryFingerprint)
@@ -233,8 +224,7 @@ final class PasteCoordinator {
         catch {
             let message = (error as? MacroRunningError)?.description ?? error.localizedDescription
             if settings.macroFailureBehavior == "restoreOriginalAndNotify" {
-                pasteOriginal(snapshot)
-                activatePreviousApp()
+                if await restoreOriginal() { activatePreviousApp() }
             }
             if settings.macroFailureBehavior != "silentlySkip" {
                 notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil)
