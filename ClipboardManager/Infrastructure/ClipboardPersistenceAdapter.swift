@@ -14,24 +14,9 @@ final class ClipboardPersistenceAdapter: ClipboardPersistencePort {
     private let persistence: PersistenceController
     private let dataActor: ClipboardDataActor
 
-    /// Designated initializer. Both dependencies are injected so the adapter
-    /// is testable without spinning up a real SwiftData container on every
-    /// path, and so callers (e.g. `AppContainer`) can swap the `ClipboardDataActor`
-    /// for a test double when one becomes available.
-    init(persistence: PersistenceController, dataActor: ClipboardDataActor) {
+    init(persistence: PersistenceController) {
         self.persistence = persistence
-        self.dataActor = dataActor
-    }
-
-    /// Convenience entry point used by `AppContainer` to build the persistence
-    /// stack from settings without exposing `PersistenceController` to
-    /// ApplicationServices. Constructs the default `ClipboardDataActor` bound
-    /// to the provided container.
-    convenience init(persistence: PersistenceController) {
-        self.init(
-            persistence: persistence,
-            dataActor: ClipboardDataActor(modelContainer: persistence.container)
-        )
+        self.dataActor = ClipboardDataActor(modelContainer: persistence.container)
     }
 
     // MARK: - Reads (off-main via @ModelActor)

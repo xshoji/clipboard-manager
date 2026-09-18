@@ -362,7 +362,6 @@ protocol SettingsConfigurationManaging: AnyObject {
     func attach(runtimeManager: ConfigurationRuntimeApplying)
     func startMonitoring(canApplyExternalChanges: @escaping () -> Bool)
     func stopMonitoring()
-    func reloadFromDisk() async throws
     func prepareCustomLocation(
         at fileURL: URL,
         useExistingFile: Bool

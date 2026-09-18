@@ -1,15 +1,9 @@
 import Foundation
 
-@MainActor
-protocol AppCoordinating: AnyObject {
-    func showMainWindow(focusSearch: Bool)
-    func showSettings()
-}
-
 /// Owns the window coordinators and is the sole presentation entry point for
 /// menu-bar and global-hotkey integrations.
 @MainActor
-final class AppCoordinator: AppCoordinating {
+final class AppCoordinator {
     let mainWindow: MainWindowCoordinator
     let settingsWindow: SettingsWindowCoordinator
 

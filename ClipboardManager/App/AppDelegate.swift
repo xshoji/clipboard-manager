@@ -618,21 +618,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // opening a text-edit sheet unregisters Cmd+E, and after closing the sheet
         // the hotkey is never re-registered, so Cmd+E stops working (beep only).
         let closingWindow = notification.object as? NSWindow
-        let hasVisibleOwnedNonPanel = NSApp.windows.contains { other in
+        let hasVisibleOwnedWindow = NSApp.windows.contains { other in
             other !== closingWindow
                 && other.isVisible
-                && !(other is NSPanel)
                 && other.canBecomeKey
         }
-        // Sheets presented on the history panel itself are NSPanels; treat any other visible NSPanel
-        // owned by this app (e.g., edit sheet) as "do not uninstall / do not auto-close" too.
-        let hasVisibleOwnedPanel = NSApp.windows.contains { other in
-            other !== closingWindow
-                && other.isVisible
-                && (other is NSPanel)
-                && other.canBecomeKey
-        }
-        if hasVisibleOwnedNonPanel || hasVisibleOwnedPanel {
+        if hasVisibleOwnedWindow {
             return
         }
 
@@ -664,7 +655,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         // If another normal visible window (e.g., settings) is still open, keep the Dock icon (.regular) (review #5).
         lifecycle?.mainWindowUninstallHotkeys()
-        lifecycle?.mainWindowDidClose()
         let closingWindow = notification.object as? NSWindow
         let hasOtherVisible = NSApp.windows.contains { other in
             other !== closingWindow

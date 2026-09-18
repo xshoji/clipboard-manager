@@ -147,38 +147,6 @@ final class SettingsConfigurationAdapter: SettingsConfigurationManaging {
         directorySource = nil
     }
 
-    func reloadFromDisk() async throws {
-        if let startupError {
-            throw SettingsConfigurationError.invalidData(startupError)
-        }
-        guard canApplyExternalChanges?() != false else {
-            throw SettingsConfigurationError.invalidData(
-                "Save or discard unsaved Macro edits before reloading the configuration."
-            )
-        }
-        if isPerformingWrite {
-            await writeTask?.value
-        } else {
-            writeTask?.cancel()
-            writeTask = nil
-        }
-        hasPendingWrite = false
-        pendingDocument = nil
-        do {
-            let loaded = try await Task.detached {
-                try Self.readConfiguration(from: self.fileURL)
-            }.value
-            try apply(loaded.plan, updateRuntime: true)
-            lastWrittenHash = loaded.hash
-            allowsAutomaticWrites = true
-            updateStatus(error: nil)
-        } catch {
-            allowsAutomaticWrites = false
-            updateStatus(error: error.localizedDescription)
-            throw error
-        }
-    }
-
     func prepareCustomLocation(
         at requestedFileURL: URL,
         useExistingFile: Bool

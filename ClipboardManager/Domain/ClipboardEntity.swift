@@ -77,16 +77,6 @@ final class ClipboardEntity {
         self.ocrStatus = ocrStatus
         self.isPinned = isPinned
     }
-
-    var isImage: Bool { kind == "image" }
-    var isText: Bool { kind == "text" }
-
-    var displayTextPreview: String {
-        if let textPreview {
-            return textPreview
-        }
-        return isText ? "Preview is unavailable for this existing item. Choose Edit to load the full text." : ""
-    }
 }
 }
 

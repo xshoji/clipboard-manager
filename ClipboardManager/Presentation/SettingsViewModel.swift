@@ -61,17 +61,6 @@ final class SettingsViewModel {
         settings.macroScripts = macros
     }
 
-    func reloadConfiguration() async throws {
-        guard unsavedMacroIDs.isEmpty else {
-            throw SettingsConfigurationError.invalidData(
-                "Save or discard unsaved Macro edits before reloading the configuration."
-            )
-        }
-        isConfigurationOperationInProgress = true
-        defer { isConfigurationOperationInProgress = false }
-        try await configurationManager.reloadFromDisk()
-    }
-
     func prepareCustomConfigurationLocation(
         at fileURL: URL,
         useExistingFile: Bool

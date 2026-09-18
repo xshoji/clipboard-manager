@@ -20,10 +20,6 @@ final class AppActivator: NSObject, AppActivating {
     private var previousAppStack: [PreviousAppEntry] = []
     private let maxStackDepth = 8
 
-    /// Backward-compatible view of the most recent entry (terminated entries pruned).
-    /// Prefer `bestPasteTarget()` for activation decisions.
-    private var previousApp: NSRunningApplication? { bestPasteTarget() }
-
     private var isObservingActivatedApplications = false
 
     private override init() {

@@ -48,8 +48,4 @@ enum ThumbnailImageCache {
         }
         return img
     }
-
-    static func clear() {
-        cache.removeAllObjects()
-    }
 }
