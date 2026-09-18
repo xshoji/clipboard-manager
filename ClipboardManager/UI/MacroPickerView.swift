@@ -27,114 +27,121 @@ struct MacroPickerView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Run Macro").font(.headline)
-                Spacer()
-                Text("\(filteredMacros.count) / \(macros.count) macros")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
+        ZStack {
+            Color.black.opacity(0.25)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { onCancel() }
 
-            TextField("Search macros…", text: $searchText)
-                .textFieldStyle(.roundedBorder)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Run Macro").font(.headline)
+                    Spacer()
+                    Text("\(filteredMacros.count) / \(macros.count) macros")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 .padding(.horizontal, 14)
-                .padding(.top, 8)
-                .focused($searchFieldFocused)
-                .accessibilityIdentifier("macroPicker.searchField")
-                .onKeyPress(.upArrow) {
-                    guard !filteredMacros.isEmpty else { return .ignored }
-                    if selectedIndex <= 0 {
-                        selectedIndex = filteredMacros.count - 1
-                    } else {
-                        selectedIndex -= 1
-                    }
-                    return .handled
-                }
-                .onKeyPress(.downArrow) {
-                    guard !filteredMacros.isEmpty else { return .ignored }
-                    if selectedIndex >= filteredMacros.count - 1 {
-                        selectedIndex = 0
-                    } else {
-                        selectedIndex += 1
-                    }
-                    return .handled
-                }
-                .onKeyPress(.return) {
-                    guard !filteredMacros.isEmpty,
-                          filteredMacros.indices.contains(selectedIndex),
-                          !isImageInput || filteredMacros[selectedIndex].supportsImageInput else { return .ignored }
-                    onSelect(filteredMacros[selectedIndex])
-                    return .handled
-                }
-                .onKeyPress(.escape) {
-                    onCancel()
-                    return .handled
-                }
+                .padding(.top, 10)
 
-            Divider().opacity(0.2).padding(.top, 8)
-
-            ScrollViewReader { proxy in
-                Group {
-                    if filteredMacros.isEmpty {
-                        VStack(spacing: 6) {
-                            Image(systemName: "arrow.2.squarepath")
-                                .font(.title2)
-                                .foregroundStyle(.secondary)
-                            Text("No macros registered").foregroundStyle(.secondary)
-                            Text("Add macros in Settings > Macro Scripts.")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
+                TextField("Search macros…", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .focused($searchFieldFocused)
+                    .accessibilityIdentifier("macroPicker.searchField")
+                    .onKeyPress(.upArrow) {
+                        guard !filteredMacros.isEmpty else { return .ignored }
+                        if selectedIndex <= 0 {
+                            selectedIndex = filteredMacros.count - 1
+                        } else {
+                            selectedIndex -= 1
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        ScrollView {
-                            LazyVStack(spacing: 0) {
-                                ForEach(Array(filteredMacros.enumerated()), id: \.element.id) { idx, macro in
-                                    row(for: macro, idx: idx)
-                                }
+                        return .handled
+                    }
+                    .onKeyPress(.downArrow) {
+                        guard !filteredMacros.isEmpty else { return .ignored }
+                        if selectedIndex >= filteredMacros.count - 1 {
+                            selectedIndex = 0
+                        } else {
+                            selectedIndex += 1
+                        }
+                        return .handled
+                    }
+                    .onKeyPress(.return) {
+                        guard !filteredMacros.isEmpty,
+                              filteredMacros.indices.contains(selectedIndex),
+                              !isImageInput || filteredMacros[selectedIndex].supportsImageInput else { return .ignored }
+                        onSelect(filteredMacros[selectedIndex])
+                        return .handled
+                    }
+                    .onKeyPress(.escape) {
+                        onCancel()
+                        return .handled
+                    }
+
+                Divider().opacity(0.2).padding(.top, 8)
+
+                ScrollViewReader { proxy in
+                    Group {
+                        if filteredMacros.isEmpty {
+                            VStack(spacing: 6) {
+                                Image(systemName: "arrow.2.squarepath")
+                                    .font(.title2)
+                                    .foregroundStyle(.secondary)
+                                Text("No macros registered").foregroundStyle(.secondary)
+                                Text("Add macros in Settings > Macro Scripts.")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
                             }
-                            .padding(.vertical, 4)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            ScrollView {
+                                LazyVStack(spacing: 0) {
+                                    ForEach(Array(filteredMacros.enumerated()), id: \.element.id) { idx, macro in
+                                        row(for: macro, idx: idx)
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
                         }
                     }
+                    .onChange(of: selectedIndex) { _, _ in
+                        guard filteredMacros.indices.contains(selectedIndex) else { return }
+                        // Omitting the anchor scrolls only enough to reveal an off-screen row.
+                        proxy.scrollTo(filteredMacros[selectedIndex].id)
+                    }
+                    .onChange(of: searchText) { _, _ in
+                        selectedIndex = 0
+                        guard let first = filteredMacros.first else { return }
+                        proxy.scrollTo(first.id)
+                    }
                 }
-                .onChange(of: selectedIndex) { _, _ in
-                    guard filteredMacros.indices.contains(selectedIndex) else { return }
-                    // Omitting the anchor scrolls only enough to reveal an off-screen row.
-                    proxy.scrollTo(filteredMacros[selectedIndex].id)
-                }
-                .onChange(of: searchText) { _, _ in
-                    selectedIndex = 0
-                    guard let first = filteredMacros.first else { return }
-                    proxy.scrollTo(first.id)
-                }
-            }
 
-            HStack(spacing: 16) {
-                Label("Type to search", systemImage: "magnifyingglass")
-                Label("Up/Down navigate", systemImage: "arrow.up.arrow.down")
-                Label("Return run", systemImage: "return")
-                Label("Esc close", systemImage: "escape")
-                Spacer()
+                HStack(spacing: 16) {
+                    Label("Type to search", systemImage: "magnifyingglass")
+                    Label("Up/Down navigate", systemImage: "arrow.up.arrow.down")
+                    Label("Return run", systemImage: "return")
+                    Label("Esc close", systemImage: "escape")
+                    Spacer()
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .overlay(alignment: .top) { Divider().opacity(0.2) }
             }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .overlay(alignment: .top) { Divider().opacity(0.2) }
-        }
-        .frame(width: 360, height: 320)
-        .background(Color.appBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(.tertiary.opacity(0.3), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.25), radius: 16, y: 4)
-        .onAppear {
-            searchFieldFocused = true
-            if selectedIndex >= filteredMacros.count { selectedIndex = 0 }
+            .frame(width: 360, height: 320)
+            .background(Color.appBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(.tertiary.opacity(0.3), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.25), radius: 16, y: 4)
+            .onAppear {
+                searchFieldFocused = true
+                if selectedIndex >= filteredMacros.count { selectedIndex = 0 }
+            }
         }
     }
 
@@ -165,30 +172,5 @@ struct MacroPickerView: View {
             onSelect(macro)
         }
         .id(macro.id)
-    }
-}
-
-/// Full-window dimming overlay that hosts `MacroPickerView`. Clicking the dimmed
-/// background cancels the picker (same as Esc). Used by `MainView` when the
-/// `Cmd+M` action hotkey fires.
-struct MacroPickerOverlay: View {
-    let macros: [MacroScript]
-    let isImageInput: Bool
-    let onSelect: (MacroScript) -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.25)
-                .ignoresSafeArea()
-                .contentShape(Rectangle())
-                .onTapGesture { onCancel() }
-            MacroPickerView(
-                macros: macros,
-                isImageInput: isImageInput,
-                onSelect: onSelect,
-                onCancel: onCancel
-            )
-        }
     }
 }

@@ -77,7 +77,7 @@ struct MainView: View {
         }
        .overlay {
            if macroPickerPresented {
-                MacroPickerOverlay(
+                MacroPickerView(
                     macros: settings.macroScripts,
                     isImageInput: fixedMacroTarget?.isImage == true,
                     onSelect: { macro in
