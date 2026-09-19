@@ -135,8 +135,14 @@ ClipboardManager/
 1. Inspect related code and authoritative docs.
 2. State assumptions when requirements remain undecided.
 3. Implement a focused change in the owning layer.
-4. Run `swift build` after Swift/package/resource changes.
+4. Run `swift build` after Swift/package/resource changes and inspect the build log for warnings.
 5. Report changed files, validation, and remaining limits.
+
+## Build Warning Policy
+
+- Keep all supported builds warning-free; this applies to every compiler or build warning, not only warnings related to the current task.
+- Treat any warning emitted by a build as a validation failure and fix its root cause before finishing.
+- Do not hide warnings by filtering build output or adding warning suppressions. Inspect the complete captured build log even when the build exits successfully.
 
 ## Tool Usage
 

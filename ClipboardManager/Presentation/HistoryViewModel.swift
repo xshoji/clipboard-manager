@@ -62,7 +62,7 @@ final class HistoryViewModel {
         isActive = true
         requestReload()
         changeObserver = NotificationCenter.default.addObserver(forName: .clipboardRepositoryDidChange, object: repository, queue: .main) { [weak self] _ in
-            self?.requestReload()
+            Task { @MainActor [weak self] in self?.requestReload() }
         }
     }
 

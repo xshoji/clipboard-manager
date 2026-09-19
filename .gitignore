@@ -13,6 +13,9 @@
 # Output dir
 .build
 
+# understand analysis output
+.ua/
+
 # Xcode
 .swiftpm
 # XCUITest host project is regenerated from project.yml by xcodegen.
