@@ -20,16 +20,11 @@ using.
 
 ## Why this exists
 
-Looking at existing Mac clipboard managers, none seemed to combine open-source, Mac-native automation, and dedicated script/macro support all at once: Maccy is open-source and free but has no scripting; CopyQ is scriptable but built with Qt rather than native macOS UI; Paste, Maus, and BetterTouchTool offer real Mac-native automation but are closed-source, with paid tiers or one-time purchases. BetterTouchTool's clipboard manager in particular already supports image annotation and script execution on clipboard content — but that script execution is configured as one of BTT's many general-purpose actions/triggers, which is flexible but adds real setup overhead for something as simple as "run this script on the clipboard item I just copied."
-This project tries to combine open-source, free, and a Macro feature
-built around a single idea: register a script, get a hotkey, and run it
-directly against the selected clipboard entry.
-
-The image-editing idea itself is inspired by BetterTouchTool's clipboard
-manager (BTT's source isn't public, so the implementation here is
-original). This app deliberately launches Preview.app as a real
-external process rather than hosting an embedded editor window, so
-image editing stays on documented, public macOS APIs.
+ClipboardManager is free and open-source, with a native macOS UI and
+dedicated Macro setup: register a script, get a hotkey, and run it against
+the selected clipboard entry. Its image-editing feature was inspired by
+BetterTouchTool's clipboard manager and independently implemented using
+Preview.app and public macOS APIs.
 
 ### Why not BTT / Maccy / CopyQ / Maus?
 
@@ -73,54 +68,22 @@ path; the script file and its dependencies remain externally managed.
 
 Use **Settings → App Settings → Configuration → Change and Reload Config…** to
 choose an existing `config.json` or a folder for a new one. New files are
-initialized from the current settings. Existing files are validated, then
-require confirmation that their contents will replace the current
-ClipboardManager settings before they become the source of truth.
-ClipboardManager offers to restart immediately after a new file is prepared;
-accepting an existing file or resetting the location restarts the app
-automatically. Choosing **Later** for a new file leaves the change pending until
-the next restart. The previous file is never deleted automatically. The selected
-path is local bootstrap metadata stored outside `config.json`, so it is not
-carried between machines with the JSON file. **Reset Location** returns to XDG
-or the default location.
+initialized from current settings; existing files require validation and
+confirmation before their contents replace current settings. Location changes take effect after restart;
+accepting an existing file or using **Reset Location** restarts automatically.
+The previous file is never deleted automatically.
 
-Set `XDG_CONFIG_HOME` to an absolute directory path before launching the app to
-use a different configuration root. The file is then stored at
-`$XDG_CONFIG_HOME/clipboard-manager/config.json`. For apps launched from Finder
-or at login, set the variable in the user launch environment first:
-
-```bash
-launchctl setenv XDG_CONFIG_HOME "$HOME/path/to/config"
-```
-
-Restart ClipboardManager after changing the variable. Unset it with
-`launchctl unsetenv XDG_CONFIG_HOME` to return to the default path.
-
-For environment-managed installations, place `config.json` at an exact location
-by creating its parent directory and setting `CLIPBOARD_MANAGER_CONFIG_PATH`.
-This takes precedence over both the GUI selection and `XDG_CONFIG_HOME` and
-disables location changes in Settings:
-
-```bash
-mkdir -p "$HOME/dotfiles/clipboard-manager"
-launchctl setenv CLIPBOARD_MANAGER_CONFIG_PATH \
-  "$HOME/dotfiles/clipboard-manager/config.json"
-```
-
-The value must be an absolute path ending in `config.json`. Its parent directory
-must already exist, and the file itself must not be a symbolic link. Invalid
-explicit paths disable configuration synchronization rather than silently using
-the default file. Restart ClipboardManager after changing the value, and use
-`launchctl unsetenv CLIPBOARD_MANAGER_CONFIG_PATH` to remove the override.
+For environment overrides (`XDG_CONFIG_HOME`, `CLIPBOARD_MANAGER_CONFIG_PATH`),
+path precedence, and validation rules, see
+[Configuration design](docs/design-implementation.md#45-canonical-settings-and-macro-configuration).
 
 ### Image editing via Preview.app
 Hit Edit on an image entry and it opens in Preview — the same editor
 you already know, launched as a real external process. `Cmd+S` saves
 back in place with no filename dialog, and the edited result is added
 to history as a new entry (original preserved). A working copy is kept
-under `~/Downloads/ClipboardManagerEdit/` while editing — see
-[Image Editing via Preview.app](#image-editing-via-previewapp) below
-for exactly how that's detected and made safe.
+at `~/Downloads/.ClipboardManagerEdit.<ext>` while editing. See
+[Image editing and recovery](#image-editing-and-recovery) for precautions.
 
 ### OCR text paste
 Select an image entry, run "Paste Plain", and the text in it is
@@ -278,9 +241,9 @@ core workflows degrade significantly:
   time.
 - **Image editing completion detection**: Accessibility enables instant
   detection of Preview window close, so the edited image is saved to
-  history as soon as you finish. Without it, the app falls back to
-  Preview app termination or a 10-minute idle timeout, so detection is
-  delayed.
+  history as soon as you finish. Without it, closing the window is not
+  detected until Preview quits. After five idle minutes, monitoring stops
+  and the working file is preserved for recovery.
 
 In short: without Accessibility, every paste requires a manual
 `Cmd+V` and image edits are detected much later.
@@ -293,7 +256,7 @@ In short: without Accessibility, every paste requires a manual
 
 ---
 
-## Image Editing via Preview.app
+## Image editing and recovery
 
 The Edit button in the footer dispatches by the selected item's kind:
 
@@ -302,59 +265,18 @@ The Edit button in the footer dispatches by the selected item's kind:
 - **Image**: launches macOS standard Preview.app as an external process
   with a pre-prepared working file.
 
-**A note on `~/Downloads`**: while an image is being edited, a working
-copy is kept at `~/Downloads/ClipboardManagerEdit/<entityUUID>_edit.<ext>`
-(hidden). This app writes to your Downloads folder for this reason —
-Preview can't overwrite a file in another app's Application Support
-directory without popping a save dialog, and `~/Downloads` is a
-location Preview can save into directly, so `Cmd+S` works without a
-dialog. The working file is deleted once editing is done.
+The hidden working copy is `~/Downloads/.ClipboardManagerEdit.<ext>`.
+Downloads lets Preview save in place with `Cmd+S` without a filename dialog.
+After the edited image is added to history, the Preview window closes and
+the working file is deleted. Only one image edit can be active at a time.
 
-<details>
-<summary>Full image edit flow (click to expand)</summary>
+Failed or interrupted edits preserve the working file. After five idle
+minutes, monitoring stops without deleting it. A preserved file blocks a
+new edit: recover it by moving it to another location before editing again,
+or remove it only if you no longer need it.
 
-1. The selected image is copied to a working file at:
-   ```
-   ~/Downloads/ClipboardManagerEdit/<entityUUID>_edit.<original extension>
-   ```
-   The directory and file are marked hidden. The original format/UTI
-   and extension are preserved so Preview offers the correct edit
-   menus.
-2. Preview.app is launched explicitly via `NSWorkspace` and opens the
-   working file.
-3. Because the working file has real on-disk content, `Cmd+S` saves in
-   place **without showing a filename dialog**.
-4. File writes are watched with `DispatchSourceFileSystemObject`.
-   Preview's safe-save (atomic rename) is handled by reinstalling the
-   watcher after rename/delete events. File events are debounced by
-   ~500 ms.
-5. A SHA-256 hash check skips unchanged saves and deduplicates
-   identical results. When a change is detected, the edited image is
-   added as a new history entry. The session stays alive after a save
-   so later saves in the same edit session are also captured.
-6. Session completion is detected by any of:
-   - AX `kAXUIElementDestroyedNotification` on the Preview window
-     (requires Accessibility permission)
-   - AX window-existence polling fallback
-   - `NSWorkspace.didTerminateApplicationNotification` for the Preview
-     process
-   - 10-minute **idle** timeout, reset whenever the working file changes
-7. On completion: final hash check, watcher cancellation, AX/run-loop
-   cleanup, workspace observer removal, timer/work-item cancellation,
-   retained AX refcon release, work-file deletion, and session removal.
-8. Re-editing the same entity while its session is active activates
-   the existing Preview app/session instead of creating a new one.
-   Different entities can be edited concurrently.
-9. On app startup, `cleanupOrphanedEditFiles()` deletes stale
-   `*_edit.*` work files left behind by previous sessions.
-
-### Sandboxing note
-
-If the app is sandboxed for App Store distribution, a
-`com.apple.security.files.downloads.read-write` entitlement may be
-required (see `docs/design-implementation.md §8`).
-
-</details>
+For save detection, cleanup rules, and implementation details, see
+[Image editing design](docs/design-implementation.md#43-image-editing-flow-via-previewapp).
 
 ---
 
@@ -388,19 +310,9 @@ rules.
 |---|---|
 | OS | macOS 14 (Sonoma) or later |
 | Xcode | 15 or later (Swift 6.0+) |
-| Language | Swift |
-| UI framework | SwiftUI |
-| Persistence | SwiftData |
 
-| Purpose | Technology |
-|---|---|
-| UI | SwiftUI (`@Observable` + `@Environment`) |
-| Persistence | SwiftData (`@Model`, `ModelContainer`) |
-| Settings | `UserDefaults` |
-| Global hotkey | Carbon `RegisterEventHotKey` |
-| Clipboard monitoring | `NSPasteboard.changeCount` polling (0.5s) |
-| Macro script execution | `Process` |
-| Image editing | `NSWorkspace.open` + Preview.app + `DispatchSourceFileSystemObject` + AX API |
+See [Technology stack](docs/design-implementation.md#1-technology-stack)
+for frameworks and platform integrations.
 
 </details>
 
