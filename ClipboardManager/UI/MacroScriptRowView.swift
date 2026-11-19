@@ -3,6 +3,11 @@ import AppKit
 
 struct MacroScriptRowView: View {
     let macro: MacroScript
+    @Binding var isExpanded: Bool
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
     let onUpdate: (MacroScript) -> Void
     let onDirtyChange: ((UUID, Bool) -> Void)?
     /// Stable identifier prefix used for every accessibilityIdentifier on this
@@ -27,7 +32,6 @@ struct MacroScriptRowView: View {
     @State private var validationError: String?
     @State private var isTestRunning: Bool = false
     @State private var lastNotifiedDirty: Bool = false
-    @State private var saveObserverToken: NSObjectProtocol?
     /// Pending edit awaiting the registration/change confirmation dialog (design-implementation.md §5.1-1).
     @State private var pendingConfirm: MacroScript?
     @State private var pendingFileValidation: MacroScriptValidation?
@@ -63,10 +67,20 @@ struct MacroScriptRowView: View {
 
     init(macro: MacroScript,
          accessibilityIDPrefix: String = "macro",
+         isExpanded: Binding<Bool>,
+         canMoveUp: Bool = false,
+         canMoveDown: Bool = false,
+         onMoveUp: @escaping () -> Void = {},
+         onMoveDown: @escaping () -> Void = {},
          onUpdate: @escaping (MacroScript) -> Void,
          onDirtyChange: ((UUID, Bool) -> Void)? = nil) {
         self.macro = macro
         self.accessibilityIDPrefix = accessibilityIDPrefix
+        self._isExpanded = isExpanded
+        self.canMoveUp = canMoveUp
+        self.canMoveDown = canMoveDown
+        self.onMoveUp = onMoveUp
+        self.onMoveDown = onMoveDown
         self.onUpdate = onUpdate
         self.onDirtyChange = onDirtyChange
         _name = State(initialValue: macro.name)
@@ -84,156 +98,162 @@ struct MacroScriptRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            settingsRow("Name") {
-                TextField("", text: $name).textFieldStyle(.roundedBorder)
-                    .multilineTextAlignment(.leading)
-                    .accessibilityIdentifier("\(accessibilityIDPrefix).name")
-            }
-            if sourceType != "jxa" { settingsRow("Interpreter") {
-                if sourceType == "inline" {
-                    HStack {
-                        if interpreterPreset == "custom" {
-                            TextField("", text: $interpreter).textFieldStyle(.roundedBorder)
-                                .multilineTextAlignment(.leading)
-                                .accessibilityIdentifier("\(accessibilityIDPrefix).interpreter")
-                        }
-                        Picker("", selection: $interpreterPreset) {
-                            ForEach(Self.shellPresets, id: \.self) { Text($0).tag($0) }
-                            Text("Custom").tag("custom")
-                        }
-                        .labelsHidden()
-                        .onChange(of: interpreterPreset) { _, v in
-                            if v != "custom" { interpreter = v }
-                        }
-                        .accessibilityIdentifier("\(accessibilityIDPrefix).interpreterPreset")
-                    }
-                } else {
-                    TextField("", text: $interpreter).textFieldStyle(.roundedBorder)
+            header
+            if isExpanded {
+                Divider()
+                settingsRow("Name") {
+                    TextField("", text: $name).textFieldStyle(.roundedBorder)
                         .multilineTextAlignment(.leading)
-                        .accessibilityIdentifier("\(accessibilityIDPrefix).interpreter")
+                        .accessibilityIdentifier("\(accessibilityIDPrefix).name")
                 }
-            } }
-            settingsRow("Shortcut") {
-                MacroHotkeyRecorderView(
-                    keyCode: $hotkeyCode,
-                    modifiers: $hotkeyModifiers,
-                    onShortcutChange: saveShortcut,
-                    accessibilityIDPrefix: "\(accessibilityIDPrefix).hotkey"
-                )
-            }
-            settingsRow("") {
-                Text("Shortcut changes are saved automatically.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            settingsRow("Source") {
-                Picker("", selection: $sourceType) {
-                    Text("Inline shell").tag("inline")
-                    Text("JavaScript (JXA)").tag("jxa")
-                    Text("Script file").tag("file")
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("\(accessibilityIDPrefix).sourceType")
-            }
-            if sourceType == "file" {
-                settingsRow("Script path") {
-                    HStack {
-                        TextField("Path", text: $path).textFieldStyle(.roundedBorder)
+                if sourceType != "jxa" { settingsRow("Interpreter") {
+                    if sourceType == "inline" {
+                        HStack {
+                            if interpreterPreset == "custom" {
+                                TextField("", text: $interpreter).textFieldStyle(.roundedBorder)
+                                    .multilineTextAlignment(.leading)
+                                    .accessibilityIdentifier("\(accessibilityIDPrefix).interpreter")
+                            }
+                            Picker("", selection: $interpreterPreset) {
+                                ForEach(Self.shellPresets, id: \.self) { Text($0).tag($0) }
+                                Text("Custom").tag("custom")
+                            }
+                            .labelsHidden()
+                            .onChange(of: interpreterPreset) { _, v in
+                                if v != "custom" { interpreter = v }
+                            }
+                            .accessibilityIdentifier("\(accessibilityIDPrefix).interpreterPreset")
+                        }
+                    } else {
+                        TextField("", text: $interpreter).textFieldStyle(.roundedBorder)
                             .multilineTextAlignment(.leading)
-                            .accessibilityIdentifier("\(accessibilityIDPrefix).path")
-                        Button("Browse") { browse() }
-                            .accessibilityIdentifier("\(accessibilityIDPrefix).browse")
+                            .accessibilityIdentifier("\(accessibilityIDPrefix).interpreter")
                     }
-                }
-            } else {
-                Text("Script")
-                PlainTextEditor(text: $inlineScript)
-                    .accessibilityIdentifier("\(accessibilityIDPrefix).inlineScript")
-                    .frame(maxWidth: .infinity, minHeight: 180)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 5)
-                            .stroke(Color.secondary.opacity(0.25))
-                    }
-                if PlainTextEditor.containsSmartQuotes(in: inlineScript) {
-                    settingsRow("") {
-                        Label(
-                            "Smart quotes detected. Replace \" \" with straight quotes (\").",
-                            systemImage: "exclamationmark.triangle.fill"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    }
+                } }
+                settingsRow("Shortcut") {
+                    MacroHotkeyRecorderView(
+                        keyCode: $hotkeyCode,
+                        modifiers: $hotkeyModifiers,
+                        onShortcutChange: saveShortcut,
+                        accessibilityIDPrefix: "\(accessibilityIDPrefix).hotkey"
+                    )
                 }
                 settingsRow("") {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(sourceType == "jxa" ? "Implement main(clipboardContentString) and return a string." : "Read $CB_INPUT_FILE and write the result to $CB_OUTPUT_FILE.")
-                            .font(.caption)
-                        Text(sourceType == "jxa" ? "Runs with macOS JavaScript for Automation (JXA) via /usr/bin/osascript. Node.js APIs are not available. Macros run as you and accept text input only." : "$CB_ITEM_KIND is \"text\" or \"image\". $CB_ITEM_SOURCE is the source app bundle id ( may be empty ).")
-                            .font(.caption2)
-                    }
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                }
-            }
-            settingsRow("Test Input") {
-                VStack(alignment: .leading, spacing: 4) {
-                    PlainTextEditor(text: $testInput)
-                        .frame(height: testInput.isEmpty ? 28 : 72)
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 5)
-                                .stroke(Color.secondary.opacity(0.25))
-                        }
-                        .accessibilityIdentifier("\(accessibilityIDPrefix).testInput")
-                    Text("Saved automatically with this Macro and used only by Test Run.")
+                    Text("Shortcut changes are saved automatically.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
-            }
-            if showFingerprintCaptured {
-                settingsRow("") {
-                    Label(
-                        "Inline script fingerprint captured.",
-                        systemImage: "checkmark.seal.fill"
-                    )
-                    .foregroundStyle(.green)
-                    .font(.caption)
-                    .accessibilityIdentifier("\(accessibilityIDPrefix).fingerprintCaptured")
+                settingsRow("Source") {
+                    Picker("", selection: $sourceType) {
+                        Text("Inline shell").tag("inline")
+                        Text("JavaScript (JXA)").tag("jxa")
+                        Text("Script file").tag("file")
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("\(accessibilityIDPrefix).sourceType")
                 }
-            }
-            if let error = validationError {
-                settingsRow("") {
-                    Label(error, systemImage: "xmark.octagon.fill")
-                        .foregroundStyle(.red)
-                        .font(.caption)
-                        .accessibilityIdentifier("\(accessibilityIDPrefix).validationError")
-                }
-            }
-            settingsRow("") {
-                HStack {
-                    Button("Save") { apply() }
-                        .disabled(!canApply)
-                        .accessibilityIdentifier("\(accessibilityIDPrefix).save")
-                    Button {
-                        testRun()
-                    } label: {
-                        if isTestRunning {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text("Test Run")
+                if sourceType == "file" {
+                    settingsRow("Script path") {
+                        HStack {
+                            TextField("Path", text: $path).textFieldStyle(.roundedBorder)
+                                .multilineTextAlignment(.leading)
+                                .accessibilityIdentifier("\(accessibilityIDPrefix).path")
+                            Button("Browse") { browse() }
+                                .accessibilityIdentifier("\(accessibilityIDPrefix).browse")
                         }
                     }
-                    .disabled(!canTestRun)
-                    .help(testRunHelp)
-                    .accessibilityIdentifier("\(accessibilityIDPrefix).testRun")
-                    Spacer()
-                    Button("Remove", role: .destructive) { isPresentingRemoveConfirm = true }
-                        .disabled(isTestRunning)
-                        .accessibilityIdentifier("\(accessibilityIDPrefix).remove")
+                } else {
+                    Text("Script")
+                    PlainTextEditor(text: $inlineScript)
+                        .accessibilityIdentifier("\(accessibilityIDPrefix).inlineScript")
+                        .frame(maxWidth: .infinity, minHeight: 180)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(Color.secondary.opacity(0.25))
+                                .allowsHitTesting(false)
+                        }
+                    if PlainTextEditor.containsSmartQuotes(in: inlineScript) {
+                        settingsRow("") {
+                            Label(
+                                "Smart quotes detected. Replace \" \" with straight quotes (\").",
+                                systemImage: "exclamationmark.triangle.fill"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        }
+                    }
+                    settingsRow("") {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(sourceType == "jxa" ? "Implement main(clipboardContentString) and return a string." : "Read $CB_INPUT_FILE and write the result to $CB_OUTPUT_FILE.")
+                                .font(.caption)
+                            Text(sourceType == "jxa" ? "Runs with macOS JavaScript for Automation (JXA) via /usr/bin/osascript. Node.js APIs are not available. Macros run as you and accept text input only." : "$CB_ITEM_KIND is \"text\" or \"image\". $CB_ITEM_SOURCE is the source app bundle id ( may be empty ).")
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    }
                 }
+                settingsRow("Test Input") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        PlainTextEditor(text: $testInput)
+                            .frame(height: testInput.isEmpty ? 28 : 72)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(Color.secondary.opacity(0.25))
+                                    .allowsHitTesting(false)
+                            }
+                            .accessibilityIdentifier("\(accessibilityIDPrefix).testInput")
+                        Text("Saved automatically with this Macro and used only by Test Run.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if showFingerprintCaptured {
+                    settingsRow("") {
+                        Label(
+                            "Inline script fingerprint captured.",
+                            systemImage: "checkmark.seal.fill"
+                        )
+                        .foregroundStyle(.green)
+                        .font(.caption)
+                        .accessibilityIdentifier("\(accessibilityIDPrefix).fingerprintCaptured")
+                    }
+                }
+                if let error = validationError {
+                    settingsRow("") {
+                        Label(error, systemImage: "xmark.octagon.fill")
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                            .accessibilityIdentifier("\(accessibilityIDPrefix).validationError")
+                    }
+                }
+                settingsRow("") {
+                    HStack {
+                        Button("Save") { apply() }
+                            .disabled(!canApply)
+                            .accessibilityIdentifier("\(accessibilityIDPrefix).save")
+                        Button {
+                            testRun()
+                        } label: {
+                            if isTestRunning {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text("Test Run")
+                            }
+                        }
+                        .disabled(!canTestRun)
+                        .help(testRunHelp)
+                        .accessibilityIdentifier("\(accessibilityIDPrefix).testRun")
+                        Spacer()
+                        Button("Remove", role: .destructive) { isPresentingRemoveConfirm = true }
+                            .disabled(isTestRunning)
+                            .accessibilityIdentifier("\(accessibilityIDPrefix).remove")
+                    }
+                }
+                .padding(.bottom, 6)
             }
-            .padding(.bottom, 6)
         }
         .padding(.vertical, 2)
         .confirmationDialog(
@@ -264,19 +284,15 @@ struct MacroScriptRowView: View {
         }
         .onAppear {
             checkDirty()
-            saveObserverToken = NotificationCenter.default.addObserver(
-                forName: .saveAllUnsavedMacros,
-                object: nil,
-                queue: .main
-            ) { [self] _ in
-                Task { @MainActor in
-                    if hasContentChanges {
-                        // Mark this broadcast as the originator so that any
-                        // settle path (saved, user-cancelled, validation-error)
-                        // reports back to the settings view model exactly once.
-                        saveBroadcastInFlight = true
-                        apply()
-                    }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .saveAllUnsavedMacros)) { _ in
+            Task { @MainActor in
+                if hasContentChanges {
+                    // Mark this broadcast as the originator so that any
+                    // settle path (saved, user-cancelled, validation-error)
+                    // reports back to the settings view model exactly once.
+                    saveBroadcastInFlight = true
+                    apply()
                 }
             }
         }
@@ -284,9 +300,6 @@ struct MacroScriptRowView: View {
             testTask?.cancel()
             testTask = nil
             isTestRunning = false
-            if let token = saveObserverToken {
-                NotificationCenter.default.removeObserver(token)
-            }
         }
         .onChange(of: macro) { previous, updated in
             syncState(from: previous, to: updated)
@@ -321,6 +334,119 @@ struct MacroScriptRowView: View {
         }
         .onChange(of: hotkeyCode) { _, _ in checkDirty() }
         .onChange(of: hotkeyModifiers) { _, _ in checkDirty() }
+    }
+
+    /// Collapsed summary: name, source, and shortcut only. Script bodies stay
+    /// in the expanded editor so the list remains scannable.
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Button(action: toggleExpanded) {
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .frame(width: 16, height: 16)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "terminal.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(displayName)
+                                .font(.headline)
+                                .lineLimit(1)
+                            if hasContentChanges {
+                                Text("Unsaved")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        Text(sourceSummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Collapse Macro" : "Expand Macro")
+            .accessibilityLabel(hasContentChanges ? "\(displayName), \(sourceSummary), Unsaved" : "\(displayName), \(sourceSummary)")
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("\(accessibilityIDPrefix).toggle")
+
+            shortcutSummary
+
+            ControlGroup {
+                Button(action: onMoveUp) {
+                    Image(systemName: "chevron.up")
+                }
+                .disabled(!canMoveUp)
+                .help("Move Macro up")
+                .accessibilityLabel("Move \(displayName) up")
+                .accessibilityIdentifier("\(accessibilityIDPrefix).moveUp")
+
+                Button(action: onMoveDown) {
+                    Image(systemName: "chevron.down")
+                }
+                .disabled(!canMoveDown)
+                .help("Move Macro down")
+                .accessibilityLabel("Move \(displayName) down")
+                .accessibilityIdentifier("\(accessibilityIDPrefix).moveDown")
+            }
+            .controlSize(.small)
+        }
+        .padding(.bottom, 2)
+    }
+
+    private var displayName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Macro" : trimmed
+    }
+
+    private var sourceSummary: String {
+        switch sourceType {
+        case "jxa":
+            return "JavaScript (JXA)"
+        case "file":
+            let fileName = (path as NSString).lastPathComponent
+            return fileName.isEmpty ? "Script file" : "Script file · \(fileName)"
+        default:
+            return interpreter.isEmpty ? "Inline shell" : "Inline shell · \(interpreter)"
+        }
+    }
+
+    private var hasShortcut: Bool {
+        hotkeyCode != 0 || hotkeyModifiers != 0
+    }
+
+    private var shortcutLabel: String {
+        KeyLabelRenderer.displayString(keyCode: UInt32(hotkeyCode), modifiers: hotkeyModifiers)
+    }
+
+    @ViewBuilder
+    private var shortcutSummary: some View {
+        Group {
+            if hasShortcut {
+                Text(shortcutLabel)
+                    .font(.caption.monospaced())
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.separatorLine))
+            } else {
+                Text("No shortcut")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(hasShortcut ? shortcutLabel : "No shortcut")
+        .accessibilityIdentifier("\(accessibilityIDPrefix).summaryShortcut")
+    }
+
+    private func toggleExpanded() {
+        isExpanded = !isExpanded
     }
 
     private func settingsRow<Content: View>(

@@ -4,6 +4,9 @@ import SwiftUI
 struct MacroManagementView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(SettingsViewModel.self) private var viewModel
+    /// Rows start collapsed to keep the list scannable; newly added Macros expand
+    /// so their editor is ready for the required registration step.
+    @State private var expandedMacroIDs: Set<UUID> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -36,40 +39,15 @@ struct MacroManagementView: View {
                                     MacroScriptRowView(
                                         macro: macro,
                                         accessibilityIDPrefix: "macro.\(index)",
+                                        isExpanded: expansion(for: macro.id),
+                                        canMoveUp: index > 0,
+                                        canMoveDown: index < settings.macroScripts.count - 1,
+                                        onMoveUp: { viewModel.moveMacro(id: macro.id, to: index - 1) },
+                                        onMoveDown: { viewModel.moveMacro(id: macro.id, to: index + 1) },
                                         onUpdate: updateMacro,
                                         onDirtyChange: viewModel.setDirty
                                     )
                                     .padding(8)
-                                } label: {
-                                    HStack {
-                                        Label(macro.name, systemImage: "terminal.fill")
-                                            .font(.headline)
-
-                                        Spacer()
-
-                                        ControlGroup {
-                                            Button {
-                                                viewModel.moveMacro(id: macro.id, to: index - 1)
-                                            } label: {
-                                                Image(systemName: "chevron.up")
-                                            }
-                                            .disabled(index == 0)
-                                            .help("Move Macro up")
-                                            .accessibilityLabel("Move \(macro.name) up")
-                                            .accessibilityIdentifier("macro.\(index).moveUp")
-
-                                            Button {
-                                                viewModel.moveMacro(id: macro.id, to: index + 1)
-                                            } label: {
-                                                Image(systemName: "chevron.down")
-                                            }
-                                            .disabled(index == settings.macroScripts.count - 1)
-                                            .help("Move Macro down")
-                                            .accessibilityLabel("Move \(macro.name) down")
-                                            .accessibilityIdentifier("macro.\(index).moveDown")
-                                        }
-                                        .controlSize(.small)
-                                    }
                                 }
                             }
                         }
@@ -151,6 +129,15 @@ struct MacroManagementView: View {
         }
     }
 
+    private func expansion(for id: UUID) -> Binding<Bool> {
+        Binding(
+            get: { expandedMacroIDs.contains(id) },
+            set: { expanded in
+                if expanded { expandedMacroIDs.insert(id) } else { expandedMacroIDs.remove(id) }
+            }
+        )
+    }
+
     private func addMacro() {
         // The row's Save action presents the required registration confirmation.
         let existingOrders = Set(settings.macroScripts.compactMap(\.order))
@@ -159,7 +146,7 @@ struct MacroManagementView: View {
         let nextOrder = overflowed
             ? (0...settings.macroScripts.count).lazy.map { $0 * 10 }.first { !existingOrders.contains($0) } ?? 0
             : incrementedOrder
-        settings.macroScripts.append(MacroScript(
+        let macro = MacroScript(
             order: nextOrder,
             name: "New Macro",
             scriptPath: "",
@@ -168,7 +155,9 @@ struct MacroManagementView: View {
             # Example: replace "foo" with "bar" in copied text.
             sed 's/foo/bar/g' "$CB_INPUT_FILE" > "$CB_OUTPUT_FILE"
             """
-        ))
+        )
+        settings.macroScripts.append(macro)
+        expandedMacroIDs.insert(macro.id)
     }
 
     private func updateMacro(_ edited: MacroScript) {

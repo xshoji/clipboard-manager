@@ -457,6 +457,10 @@ final class SmokeUITests: XCTestCase {
         addButton.click()
 
         // The first row's controls live under the "macro.0" prefix.
+        let toggle = app.buttons["macro.0.toggle"]
+        XCTAssertTrue(exists(toggle, timeout: 5), "Macro row disclosure not found")
+        XCTAssertEqual(toggle.value as? String, "Expanded",
+                       "A newly added Macro should start expanded")
         let nameField = app.textFields["macro.0.name"]
         XCTAssertTrue(exists(nameField, timeout: 5), "Macro row name field not found after Add")
         nameField.click()
@@ -524,6 +528,48 @@ final class SmokeUITests: XCTestCase {
         let debugDoneButton = app.buttons["macroDebug.done"]
         XCTAssertTrue(exists(debugDoneButton, timeout: 5), "Macro debug Done button not found")
         debugDoneButton.click()
+
+        // Collapsed rows summarize name/source/shortcut and hide the code editor.
+        scrollMacroManagement(app: app, to: toggle, deltaY: 250)
+        XCTAssertTrue(exists(toggle, timeout: 5), "Macro row disclosure not found")
+        XCTAssertEqual(toggle.value as? String, "Expanded",
+                       "Macro row should still be expanded")
+        toggle.click()
+        XCTAssertTrue(waitForValue(toggle, equals: "Collapsed", timeout: 5),
+                      "Macro row should collapse when its disclosure is clicked")
+        XCTAssertTrue(waitForNonExistence(app.scrollViews["macro.0.inlineScript"], timeout: 5),
+                      "Script editor should be hidden while the Macro row is collapsed")
+        XCTAssertTrue(waitForLabel(toggle,
+                                   equals: "New MacroX, Inline shell · /bin/sh",
+                                   timeout: 5),
+                      "Collapsed row should show the name and source")
+        let collapsedShortcut = app.descendants(matching: .any)["macro.0.summaryShortcut"]
+        XCTAssertTrue(waitForLabel(collapsedShortcut, equals: "No shortcut", timeout: 5),
+                      "Collapsed row should show the shortcut state")
+        toggle.click()
+        XCTAssertTrue(waitForValue(toggle, equals: "Expanded", timeout: 5),
+                      "Macro row should expand when its disclosure is clicked again")
+        XCTAssertTrue(exists(app.scrollViews["macro.0.inlineScript"], timeout: 5),
+                      "Script editor should return when the Macro row expands")
+
+        // Unsaved edits must survive a collapse/expand cycle.
+        nameField.click()
+        nameField.typeKey("a", modifierFlags: .command)
+        nameField.typeText("Unsaved Collapse")
+        XCTAssertTrue(waitForLabel(toggle,
+                                   equals: "Unsaved Collapse, Inline shell · /bin/sh, Unsaved",
+                                   timeout: 5),
+                      "Collapsed row should mark unsaved edits")
+        toggle.click()
+        XCTAssertTrue(waitForValue(toggle, equals: "Collapsed", timeout: 5),
+                      "Macro row should collapse with unsaved edits")
+        XCTAssertTrue(waitForNonExistence(app.scrollViews["macro.0.inlineScript"], timeout: 5),
+                      "Script editor should be hidden while the Macro row is collapsed")
+        toggle.click()
+        XCTAssertTrue(waitForValue(toggle, equals: "Expanded", timeout: 5),
+                      "Macro row should re-expand")
+        XCTAssertTrue(waitForValue(nameField, equals: "Unsaved Collapse", timeout: 5),
+                      "Unsaved name edit should survive collapse/expand")
 
         // --- Step 2: Edit the macro name in place ---
         nameField.click()
@@ -609,6 +655,7 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(exists(reopenedSettingsWindow, timeout: 10),
                       "Settings window should reopen after clicking the settings button")
         openMacroManagement(app: app)
+        expandMacroRow(app: app)
 
         // The macro row should still exist and show the last-saved name, not
         // the discarded "UnsavedEdit" suffix.
@@ -757,6 +804,35 @@ final class SmokeUITests: XCTestCase {
             exists(app.staticTexts["Macro Management"], timeout: 5),
             "Macro Management view did not appear"
         )
+    }
+
+    /// Scrolls the Macro workspace until `element` is hittable. Positive
+    /// `deltaY` scrolls up; negative scrolls down.
+    private func scrollMacroManagement(
+        app: XCUIApplication,
+        to element: XCUIElement,
+        deltaY: CGFloat
+    ) {
+        let scrollView = app.scrollViews["macro.management.scroll"]
+        XCTAssertTrue(exists(scrollView, timeout: 5), "Macro management scroll view not found")
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if element.exists, element.isHittable { return }
+            scrollView.scroll(byDeltaX: 0, deltaY: deltaY)
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTFail("Macro element did not become hittable")
+    }
+
+    /// Expands a collapsed Macro row so its editor fields can be addressed.
+    private func expandMacroRow(app: XCUIApplication, index: Int = 0) {
+        let toggle = app.buttons["macro.\(index).toggle"]
+        XCTAssertTrue(exists(toggle, timeout: 5), "Macro row disclosure not found")
+        if (toggle.value as? String) != "Expanded" {
+            toggle.click()
+        }
+        XCTAssertTrue(waitForValue(toggle, equals: "Expanded", timeout: 5),
+                      "Macro row did not expand")
     }
 
     /// Macro rows are taller than the Settings viewport. Letting `XCUIElement.click()`

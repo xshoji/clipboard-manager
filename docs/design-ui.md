@@ -166,6 +166,7 @@ row separators are used; sections do not add manual dividers.
 ### 7.2 Macro Management
 
 - A dedicated view supports Macro registration, reordering, editing, test runs, and confirmed removal.
+- The Macro list shows a compact row per Macro with its name, source type and interpreter (or script file name), and shortcut. Script code appears only while the row's editor is expanded; newly added Macros start expanded, and existing Macros start collapsed.
 - Each Macro can be moved up or down. The displayed order is used consistently by Macro pickers and is persisted as the stable order in the canonical configuration.
 - New Macros start as editable inline-shell examples; file-backed scripts can be selected in the editor.
 - The source picker also offers `JavaScript (JXA)`. Its editor exposes only
