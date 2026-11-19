@@ -254,7 +254,7 @@ final class ClipboardMonitor: @unchecked Sendable, PasteboardSuppressing, Curren
         pollQueue.async { [weak self] in
             guard let self else { return }
             if self.pasteboard.changeCount > post {
-                self.suppressedChangeCountsLock.withLock { $0.remove(post) }
+                _ = self.suppressedChangeCountsLock.withLock { $0.remove(post) }
             }
             self.poll()
         }
