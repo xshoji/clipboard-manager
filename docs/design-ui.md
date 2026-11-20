@@ -167,7 +167,8 @@ row separators are used; sections do not add manual dividers.
 
 - A dedicated view supports Macro registration, reordering, editing, test runs, and confirmed removal.
 - The Macro list shows a compact row per Macro with its name, source type and interpreter (or script file name), and shortcut. Script code appears only while the row's editor is expanded; newly added Macros start expanded, and existing Macros start collapsed.
-- Each Macro can be moved up or down. The displayed order is used consistently by Macro pickers and is persisted as the stable order in the canonical configuration.
+- Each Macro has a six-dot drag handle on the left. Dragging it past another row's vertical midpoint reorders the list interactively; visible up/down buttons are not used. VoiceOver exposes Move up / Move down actions on the handle. The displayed order is used consistently by Macro pickers and is persisted as the stable order in the canonical configuration.
+- While the handle is held, the dragged row has an accent-tinted background and outline, and the handle uses the accent color. The highlight clears when the gesture ends or is cancelled.
 - New Macros start as editable inline-shell examples; file-backed scripts can be selected in the editor.
 - The source picker also offers `JavaScript (JXA)`. Its editor exposes only
   `main(clipboardContentString)`, has no interpreter control, and explains that it runs

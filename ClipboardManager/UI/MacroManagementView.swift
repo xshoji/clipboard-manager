@@ -7,6 +7,8 @@ struct MacroManagementView: View {
     /// Rows start collapsed to keep the list scannable; newly added Macros expand
     /// so their editor is ready for the required registration step.
     @State private var expandedMacroIDs: Set<UUID> = []
+    @State private var macroFrames: [UUID: CGRect] = [:]
+    @State private var viewport: CGRect = .null
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -44,10 +46,19 @@ struct MacroManagementView: View {
                                         canMoveDown: index < settings.macroScripts.count - 1,
                                         onMoveUp: { viewModel.moveMacro(id: macro.id, to: index - 1) },
                                         onMoveDown: { viewModel.moveMacro(id: macro.id, to: index + 1) },
+                                        onReorder: { reorder(macro.id, at: $0) },
                                         onUpdate: updateMacro,
                                         onDirtyChange: viewModel.setDirty
                                     )
                                     .padding(8)
+                                }
+                                .background {
+                                    GeometryReader { geometry in
+                                        Color.clear.preference(
+                                            key: MacroFramesKey.self,
+                                            value: [macro.id: geometry.frame(in: .global)]
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -58,9 +69,16 @@ struct MacroManagementView: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .accessibilityIdentifier("macro.management.scroll")
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(key: MacroViewportKey.self, value: geometry.frame(in: .global))
+                }
+            }
         }
         .navigationTitle("Macros")
         .background(Color(nsColor: .windowBackgroundColor))
+        .onPreferenceChange(MacroFramesKey.self) { macroFrames = $0 }
+        .onPreferenceChange(MacroViewportKey.self) { viewport = $0 }
     }
 
     private var header: some View {
@@ -160,10 +178,40 @@ struct MacroManagementView: View {
         expandedMacroIDs.insert(macro.id)
     }
 
+    private func reorder(_ id: UUID, at point: CGPoint) {
+        guard viewport.contains(point),
+              let sourceIndex = settings.macroScripts.firstIndex(where: { $0.id == id }),
+              let index = settings.macroScripts.firstIndex(where: {
+                  $0.id != id && macroFrames[$0.id]?.contains(point) == true
+              }), let frame = macroFrames[settings.macroScripts[index].id] else { return }
+
+        // Crossing the midpoint prevents taller rows from immediately swapping back.
+        guard sourceIndex < index ? point.y > frame.midY : point.y < frame.midY else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            viewModel.moveMacro(id: id, to: index)
+        }
+    }
+
     private func updateMacro(_ edited: MacroScript) {
         var macros = settings.macroScripts
         guard let index = macros.firstIndex(where: { $0.id == edited.id }) else { return }
         macros[index] = edited
         settings.macroScripts = macros
+    }
+}
+
+private struct MacroFramesKey: PreferenceKey {
+    static let defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
+private struct MacroViewportKey: PreferenceKey {
+    static let defaultValue: CGRect = .null
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = value.union(nextValue())
     }
 }

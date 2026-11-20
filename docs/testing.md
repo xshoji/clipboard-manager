@@ -107,7 +107,7 @@ This contract takes priority over test convenience or coverage.
 
 ### SwiftData
 
-`SmokeUITests.setUpWithError()` creates a unique directory under:
+`SmokeUITests.setUp()` creates a unique directory under:
 
 ```text
 ~/Library/Containers/com.xshoji.SmokeUITests.xctrunner/Data/Library/Caches/
@@ -176,7 +176,7 @@ without force-terminating them if normal termination does not complete. This
 prevents production hotkeys and windows from competing with UI automation while
 allowing the normal local workflow to start with the menu-bar app running.
 
-`SmokeUITests.setUpWithError()` retains the same process check as a fail-closed
+`SmokeUITests.setUp()` retains the same process check as a fail-closed
 safety net for direct `xcodebuild test` invocations that bypass the runner. The
 test bundle never terminates a production process. It may terminate stale
 instances of the E2E bundle only, and must confirm their death before

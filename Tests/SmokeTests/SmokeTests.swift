@@ -13,7 +13,7 @@ import AppKit
 ///
 /// Test flow per case:
 ///   1. The runner stops the production app before launching XCTest.
-///      setUpWithError retains a fail-closed production-process check for
+///      setUp retains a fail-closed production-process check for
 ///      direct xcodebuild invocations, terminates only stale E2E instances,
 ///      and creates a case-specific SwiftData store and named pasteboard.
 ///   2. Interact with UI elements via XCUIElement (click Clear/Reset/Record,
@@ -44,6 +44,7 @@ import AppKit
 ///   the app is launched once per independent UI context. Observable state is
 ///   awaited with bounded polling; fixed sleeps remain only for focus handoffs,
 ///   which XCUIElement does not expose reliably on macOS.
+@MainActor
 final class SmokeUITests: XCTestCase {
     private static let e2eBundleID = "com.xshoji.ClipboardManager.E2E"
     private static let productionBundleID = "com.xshoji.ClipboardManager"
@@ -52,7 +53,7 @@ final class SmokeUITests: XCTestCase {
     private static let uiPump: TimeInterval = 0.1
 
     /// The app launched by the current test case. Held as an instance property
-    /// so `tearDownWithError` can terminate it even when a test fails mid-assertion
+    /// so `tearDown` can terminate it even when a test fails mid-assertion
     /// (review #6: "launched app as test case property, tearDownWithError to always
     /// terminate, wait for PID death with timeout, force terminate fallback").
     private var launchedApp: XCUIApplication?
@@ -61,8 +62,8 @@ final class SmokeUITests: XCTestCase {
 
     // MARK: - Setup / Teardown
 
-    override func setUpWithError() throws {
-        try super.setUpWithError()
+    override func setUp() async throws {
+        try await super.setUp()
         continueAfterFailure = false
         let productionApps = NSWorkspace.shared.runningApplications.filter { app in
             guard app.bundleIdentifier != Self.e2eBundleID else { return false }
@@ -102,7 +103,7 @@ final class SmokeUITests: XCTestCase {
         testPasteboard = NSPasteboard(name: pasteboardName)
     }
 
-    override func tearDownWithError() throws {
+    override func tearDown() async throws {
         // Always terminate the launched app, even when a test failed mid-assertion
         // and never reached the end-of-test `app.terminate()` call.
         var appStopped = true
@@ -122,7 +123,7 @@ final class SmokeUITests: XCTestCase {
         } else {
             XCTFail("E2E app did not terminate; temporary test resources were preserved")
         }
-        try super.tearDownWithError()
+        try await super.tearDown()
     }
 
     // MARK: - Tests
@@ -432,6 +433,91 @@ final class SmokeUITests: XCTestCase {
                       "Reopened main window should show the history list")
         XCTAssertEqual(app.textFields["searchField"].value as? String ?? "", "",
                        "Reopened main window should reset history search")
+    }
+
+    /// Handle drags must reorder rows without inserting data into expanded editors.
+    func testMacroDragReorder() throws {
+        let app = makeApp()
+        app.launch()
+        let configURL = try XCTUnwrap(storeDirectory).appendingPathComponent("config.json")
+        XCTAssertTrue(waitUntil(timeout: 5) { FileManager.default.fileExists(atPath: configURL.path) })
+        var document = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
+        document["macros"] = zip(["First", "Second", "Third"], [10, 30, 50]).map { name, order in
+            let source = name == "Second"
+                ? ["type": "file", "path": "/bin/cat", "interpreter": "/bin/sh"]
+                : ["type": "inlineShell", "code": "cat", "interpreter": "/bin/sh"]
+            return ["id": UUID().uuidString, "name": name, "order": order,
+                    "hotkeyCode": 0, "hotkeyModifiers": 0, "testInput": "original input",
+                    "source": source] as [String: Any]
+        }
+        try JSONSerialization.data(withJSONObject: document).write(to: configURL, options: .atomic)
+        openMacroManagement(app: app)
+        XCTAssertTrue(waitForLabel(app.buttons["macro.0.toggle"], equals: "First, Inline shell · /bin/sh", timeout: 5))
+        XCTAssertTrue(exists(app.buttons["macro.2.toggle"], timeout: 5))
+        XCTAssertFalse(app.buttons["macro.0.moveUp"].exists)
+        XCTAssertFalse(app.buttons["macro.0.moveDown"].exists)
+        XCTAssertEqual(app.descendants(matching: .any)["macro.0.dragHandle"].label, "Reorder First")
+
+        let initial = XCTAttachment(screenshot: app.windows["settingsWindow"].screenshot())
+        initial.name = "Macro drag handles"
+        initial.lifetime = .keepAlways
+        add(initial)
+
+        app.descendants(matching: .any)["macro.0.dragHandle"].coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+        ).press(
+            forDuration: 0.3,
+            thenDragTo: app.buttons["macro.2.toggle"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9))
+        )
+        XCTAssertTrue(waitForLabel(app.buttons["macro.0.toggle"], equals: "Second, Script file · cat", timeout: 5))
+        XCTAssertTrue(waitForLabel(app.buttons["macro.2.toggle"], equals: "First, Inline shell · /bin/sh", timeout: 5))
+        XCTAssertEqual(app.descendants(matching: .any)["macro.2.dragHandle"].label, "Reorder First")
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            guard let data = try? Data(contentsOf: configURL),
+                  let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let macros = saved["macros"] as? [[String: Any]] else { return false }
+            return macros.compactMap { $0["name"] as? String } == ["Second", "Third", "First"]
+                && macros.compactMap { $0["order"] as? Int } == [10, 30, 50]
+        })
+
+        app.descendants(matching: .any)["macro.2.dragHandle"].coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+        ).press(
+            forDuration: 0.3,
+            thenDragTo: app.buttons["macro.0.toggle"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
+        )
+        XCTAssertTrue(waitForLabel(app.buttons["macro.0.toggle"], equals: "First, Inline shell · /bin/sh", timeout: 5))
+        XCTAssertTrue(waitForLabel(app.buttons["macro.2.toggle"], equals: "Third, Inline shell · /bin/sh", timeout: 5))
+
+        expandMacroRow(app: app, index: 1)
+        // Entering a taller row's header must not reorder before its midpoint.
+        app.descendants(matching: .any)["macro.0.dragHandle"].click(
+            forDuration: 0.3, thenDragTo: app.buttons["macro.1.toggle"]
+        )
+        XCTAssertTrue(waitForLabel(app.buttons["macro.0.toggle"], equals: "First, Inline shell · /bin/sh", timeout: 5))
+        XCTAssertTrue(waitForLabel(app.buttons["macro.1.toggle"], equals: "Second, Script file · cat", timeout: 5))
+        app.buttons["macro.1.toggle"].click()
+
+        for (index, field, expected) in [(0, "inlineScript", "cat"), (1, "testInput", "original input")] {
+            expandMacroRow(app: app, index: index)
+            let handle = app.descendants(matching: .any)["macro.\(index).dragHandle"]
+            let editorScroll = app.scrollViews["macro.\(index).\(field)"]
+            let editor = editorScroll.textViews.firstMatch
+            XCTAssertTrue(exists(editor, timeout: 5))
+            XCTAssertEqual(editor.value as? String, expected)
+            // The top of each editor and its row handle are visible together.
+            handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+                forDuration: 0.3,
+                thenDragTo: editorScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05))
+            )
+            XCTAssertEqual(editor.value as? String, expected)
+            app.buttons["macro.\(index).toggle"].click()
+        }
+        XCTAssertTrue(waitForLabel(app.buttons["macro.0.toggle"], equals: "First, Inline shell · /bin/sh", timeout: 5))
+        let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
+        let macros = try XCTUnwrap(saved["macros"] as? [[String: Any]])
+        XCTAssertEqual(macros.compactMap { $0["testInput"] as? String }, Array(repeating: "original input", count: 3))
+        XCTAssertEqual((macros[0]["source"] as? [String: Any])?["code"] as? String, "cat")
     }
 
     /// Exercises the macro script CRUD pipeline end-to-end in a single session:
@@ -770,7 +856,7 @@ final class SmokeUITests: XCTestCase {
     /// Accessibility, and opens the main and Settings windows immediately.
     private func makeApp() -> XCUIApplication {
         guard let storeDirectory, let testPasteboard else {
-            fatalError("E2E resources were not prepared by setUpWithError")
+            fatalError("E2E resources were not prepared by setUp")
         }
         let app = XCUIApplication(bundleIdentifier: Self.e2eBundleID)
         app.launchEnvironment["CM_E2E_OPEN_WINDOW"] = "1"
@@ -784,7 +870,7 @@ final class SmokeUITests: XCTestCase {
 
     private var pasteboard: NSPasteboard {
         guard let testPasteboard else {
-            fatalError("E2E pasteboard was not prepared by setUpWithError")
+            fatalError("E2E pasteboard was not prepared by setUp")
         }
         return testPasteboard
     }
@@ -1712,7 +1798,7 @@ final class SmokeUITests: XCTestCase {
     }
 
     /// Waits for an NSRunningApplication to terminate, with timeout and SIGKILL
-    /// fallback. Used by `terminateStaleE2EApps()` in `setUpWithError` to ensure
+    /// fallback. Used by `terminateStaleE2EApps()` in `setUp` to ensure
     /// stale instances from a previous failed test run are dead before launching
     /// a new instance.
     private static func waitForProcessDeath(runningApp: NSRunningApplication, timeout: TimeInterval) -> Bool {

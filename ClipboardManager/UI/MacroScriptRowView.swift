@@ -8,6 +8,7 @@ struct MacroScriptRowView: View {
     let canMoveDown: Bool
     let onMoveUp: () -> Void
     let onMoveDown: () -> Void
+    let onReorder: (CGPoint) -> Void
     let onUpdate: (MacroScript) -> Void
     let onDirtyChange: ((UUID, Bool) -> Void)?
     /// Stable identifier prefix used for every accessibilityIdentifier on this
@@ -20,6 +21,7 @@ struct MacroScriptRowView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(SettingsViewModel.self) private var viewModel
     @Environment(HistoryViewModel.self) private var historyViewModel
+    @GestureState private var isDragging = false
     @State private var name: String
     @State private var sourceType: String
     @State private var path: String
@@ -72,6 +74,7 @@ struct MacroScriptRowView: View {
          canMoveDown: Bool = false,
          onMoveUp: @escaping () -> Void = {},
          onMoveDown: @escaping () -> Void = {},
+         onReorder: @escaping (CGPoint) -> Void,
          onUpdate: @escaping (MacroScript) -> Void,
          onDirtyChange: ((UUID, Bool) -> Void)? = nil) {
         self.macro = macro
@@ -81,6 +84,7 @@ struct MacroScriptRowView: View {
         self.canMoveDown = canMoveDown
         self.onMoveUp = onMoveUp
         self.onMoveDown = onMoveDown
+        self.onReorder = onReorder
         self.onUpdate = onUpdate
         self.onDirtyChange = onDirtyChange
         _name = State(initialValue: macro.name)
@@ -256,6 +260,7 @@ struct MacroScriptRowView: View {
             }
         }
         .padding(.vertical, 2)
+        .background(dragHighlight)
         .confirmationDialog(
             isPendingRegistrationNew ? "Register Macro script" : "Confirm Macro script change",
             isPresented: $isPresentingConfirm,
@@ -336,10 +341,45 @@ struct MacroScriptRowView: View {
         .onChange(of: hotkeyModifiers) { _, _ in checkDirty() }
     }
 
+    private var dragHighlight: some View {
+        let shape = RoundedRectangle(cornerRadius: 5)
+        return shape
+            .fill(Color.accentColor.opacity(isDragging ? 0.12 : 0))
+            .overlay {
+                shape.strokeBorder(Color.accentColor.opacity(isDragging ? 1 : 0), lineWidth: 2)
+            }
+            .padding(-6)
+            .allowsHitTesting(false)
+    }
+
     /// Collapsed summary: name, source, and shortcut only. Script bodies stay
     /// in the expanded editor so the list remains scannable.
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
+            Grid(horizontalSpacing: 3, verticalSpacing: 3) {
+                ForEach(0..<3) { _ in
+                    GridRow {
+                        Circle().frame(width: 3, height: 3)
+                        Circle().frame(width: 3, height: 3)
+                    }
+                }
+            }
+            .foregroundStyle(isDragging ? Color.accentColor : Color.secondary)
+            .frame(width: 20, height: 32)
+            .contentShape(Rectangle())
+            .help("Drag to reorder Macro")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(isDragging ? "Dragging \(displayName)" : "Reorder \(displayName)")
+            .accessibilityIdentifier("\(accessibilityIDPrefix).dragHandle")
+            .accessibilityActions {
+                if canMoveUp { Button("Move up", action: onMoveUp) }
+                if canMoveDown { Button("Move down", action: onMoveDown) }
+            }
+            // Keep reordering local so editors never receive a pasteboard drop.
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .updating($isDragging) { _, dragging, _ in dragging = true }
+                .onChanged { onReorder($0.location) })
+
             Button(action: toggleExpanded) {
                 HStack(alignment: .center, spacing: 8) {
                     Image(systemName: "chevron.right")
@@ -377,25 +417,6 @@ struct MacroScriptRowView: View {
             .accessibilityIdentifier("\(accessibilityIDPrefix).toggle")
 
             shortcutSummary
-
-            ControlGroup {
-                Button(action: onMoveUp) {
-                    Image(systemName: "chevron.up")
-                }
-                .disabled(!canMoveUp)
-                .help("Move Macro up")
-                .accessibilityLabel("Move \(displayName) up")
-                .accessibilityIdentifier("\(accessibilityIDPrefix).moveUp")
-
-                Button(action: onMoveDown) {
-                    Image(systemName: "chevron.down")
-                }
-                .disabled(!canMoveDown)
-                .help("Move Macro down")
-                .accessibilityLabel("Move \(displayName) down")
-                .accessibilityIdentifier("\(accessibilityIDPrefix).moveDown")
-            }
-            .controlSize(.small)
         }
         .padding(.bottom, 2)
     }
