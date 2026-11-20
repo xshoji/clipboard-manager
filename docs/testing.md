@@ -321,7 +321,7 @@ When one workflow spans multiple layers, split assertions by responsibility:
 | Does typing in the search field rebuild the visible SwiftUI list? | E2E |
 | Does cached OCR skip recognition and write the cached text? | Unit |
 | Does the action hotkey reach the selected image and produce visible workflow output? | E2E |
-| Does a Macro failure restore the original value for the configured policy? | Unit |
+| Does a Macro failure paste the error text for the configured policy? | Unit |
 | Can a registered Macro be selected from the real Footer menu? | E2E |
 | Does an actual script receive `CB_INPUT_FILE` and write `CB_OUTPUT_FILE`? | Non-UI integration |
 

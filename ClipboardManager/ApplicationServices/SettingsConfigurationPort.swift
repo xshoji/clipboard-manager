@@ -90,6 +90,8 @@ struct AppSettingsSnapshot: Codable, Sendable {
     let macroTimeoutSeconds: Int?
     let needsAccessibilityForSyntheticPaste: Bool
     let launchAtLogin: Bool
+    // Keep the legacy "restoreOriginalAndNotify" value for config.json compatibility;
+    // execution failures now paste the error text instead of restoring the input.
     let macroFailureBehavior: String
     let ocrLanguages: [String]
     let automaticImageOcrEnabled: Bool

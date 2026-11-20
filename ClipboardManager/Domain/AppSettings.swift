@@ -117,7 +117,7 @@ final class AppSettings: @unchecked Sendable {
     }
     @ObservationIgnored @Setting("launchAtLogin", default: false) var launchAtLogin: Bool
     /// Behavior when a Macro fails (design-implementation.md §5: timeout / non-zero exit).
-    /// - `restoreOriginalAndNotify` (default): restores the original content to the pasteboard, returns to the previous app, and posts a notification.
+    /// - `restoreOriginalAndNotify` (legacy key, default): copies the error text, returns to the previous app, and posts a notification.
     /// - `notifyOnly`: posts a notification only; does not restore the pasteboard or the previous app.
     /// - `ignore`: does nothing (legacy no-alert behavior).
     @ObservationIgnored @Setting("macroFailureBehavior", default: "restoreOriginalAndNotify") var macroFailureBehavior: String

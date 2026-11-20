@@ -140,7 +140,7 @@ Open items are centralized in `docs/open-questions.md`. Below are the key items 
 | Retention period upper bound | Decided in UI within 1 day to unlimited |
 | Max count upper bound | Assume 100 to 100000 |
 | File format passed to Macro scripts | Assume `.txt` for text, `.png` for image (finalize at impl) |
-| Macro script failure behavior | Paste original or error notification (can be decided later) |
+| Macro script failure behavior | Decided: paste error text + notify by default; notification-only and silent options remain available |
 | Max item size limit | Reject huge images etc. (discuss at impl) |
 | Distribution form (signing/notarization) | See `design-implementation.md §8` |
 

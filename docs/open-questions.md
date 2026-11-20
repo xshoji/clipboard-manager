@@ -21,9 +21,9 @@
 
 ### 1.2 Macro script failure behavior
 
-- **Question**: When a paste-macro transform script exits non-zero or times out, should the app paste the original content, show an error notification, or both?
-- **Default (current)**: Paste the original content.
-- **Status**: Deferred. Current behavior is acceptable for v1 but should be confirmed.
+- **Decision**: Execution failures paste the error text and notify by default. Non-zero exits use stderr verbatim when available, otherwise the exit-status message. Timeouts paste `Macro script timed out.`
+- **Compatibility**: `config.json` keeps the legacy `restoreOriginalAndNotify` value for this default. `notifyOnly` and `silentlySkip` still do not write to the pasteboard. Cancellation does not paste an error.
+- **Status**: Decided.
 
 ## 2. History Limits
 

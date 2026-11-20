@@ -65,7 +65,7 @@ final class PasteCoordinator {
                 notifyPlainTextUnavailable()
                 return false
             }
-            wrote = writeSnapshotText(snapshot, rich: rich, recordOutput: true)
+            wrote = writeSnapshotText(snapshot, rich: rich)
         }
         if wrote, activate { activatePreviousApp() }
         return wrote
@@ -177,22 +177,20 @@ final class PasteCoordinator {
     @discardableResult
     func runMacro(macro: MacroScript, item: ClipboardItem) async -> Bool {
         guard !item.isImage || macro.supportsImageInput else {
-            return macroFailureForUnsupportedImage(item: item)
+            return rejectImageMacro()
         }
         guard item.isImage || item.canUsePlainText else {
             notifyPlainTextUnavailable()
             return false
         }
         guard let input = await macroInput(for: item) else { return false }
-        return await executeMacro(macro: macro, input: input) {
-            await self.pasteOriginal(item)
-        }
+        return await executeMacro(macro: macro, input: input)
     }
 
     @discardableResult
     func runMacro(macro: MacroScript, snapshot: CurrentClipboardSnapshot) async -> Bool {
         guard !snapshot.isImage || macro.supportsImageInput else {
-            return macroFailureForUnsupportedImage(snapshot: snapshot)
+            return rejectImageMacro()
         }
         guard snapshot.isImage || snapshot.canUsePlainText else {
             notifyPlainTextUnavailable()
@@ -200,16 +198,12 @@ final class PasteCoordinator {
         }
         let input = MacroInput(isImage: snapshot.isImage, imageData: snapshot.imageData,
             text: snapshot.text, sourceBundleID: snapshot.sourceBundleID)
-        return await executeMacro(macro: macro, input: input) {
-            self.pasteOriginal(snapshot)
-            return true
-        }
+        return await executeMacro(macro: macro, input: input)
     }
 
     private func executeMacro(
         macro: MacroScript,
-        input: MacroInput,
-        restoreOriginal: () async -> Bool
+        input: MacroInput
     ) async -> Bool {
         do {
             let output = try await macroRunner.runAsync(script: macro, input: input,
@@ -223,34 +217,28 @@ final class PasteCoordinator {
         } catch is CancellationError { return false }
         catch {
             let message = (error as? MacroRunningError)?.description ?? error.localizedDescription
-            if settings.macroFailureBehavior == "restoreOriginalAndNotify" {
-                if await restoreOriginal() { activatePreviousApp() }
-            }
-            if settings.macroFailureBehavior != "silentlySkip" {
-                notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil)
-            }
-            return false
+            return macroFailed(message)
         }
     }
 
-    private func macroFailureForUnsupportedImage(item: ClipboardItem) -> Bool {
-        let message = "JavaScript (JXA) Macros are unavailable for image input."
-        if settings.macroFailureBehavior == "restoreOriginalAndNotify" { Task { if await pasteOriginal(item) { activatePreviousApp() } } }
-        if settings.macroFailureBehavior != "silentlySkip" { notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil) }
-        return false
+    private func rejectImageMacro() -> Bool {
+        macroFailed("JavaScript (JXA) Macros are unavailable for image input.")
     }
 
-    private func macroFailureForUnsupportedImage(snapshot: CurrentClipboardSnapshot) -> Bool {
-        let message = "JavaScript (JXA) Macros are unavailable for image input."
-        if settings.macroFailureBehavior == "restoreOriginalAndNotify" { pasteOriginal(snapshot); activatePreviousApp() }
-        if settings.macroFailureBehavior != "silentlySkip" { notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil) }
+    private func macroFailed(_ message: String) -> Bool {
+        if settings.macroFailureBehavior == "restoreOriginalAndNotify" {
+            copyDiagnosticText(message)
+            activatePreviousApp()
+        }
+        if settings.macroFailureBehavior != "silentlySkip" {
+            notifier.notify(title: "Macro failed", body: message, deduplicationKey: nil)
+        }
         return false
     }
 
     private func writeSnapshotText(
         _ snapshot: CurrentClipboardSnapshot,
-        rich: Bool,
-        recordOutput: Bool
+        rich: Bool
     ) -> Bool {
         guard rich ? (snapshot.html?.isEmpty == false || snapshot.richText?.isEmpty == false || snapshot.text?.isEmpty == false)
                 : snapshot.text?.isEmpty == false else { return false }
@@ -266,10 +254,6 @@ final class PasteCoordinator {
                 pb.setString(text, forType: .string)
             }
         }
-        guard recordOutput else {
-            suppressedWrite(write)
-            return true
-        }
         historyWrite(recording: NewClipboardItem(
             kind: "text",
             text: snapshot.text,
@@ -282,17 +266,6 @@ final class PasteCoordinator {
             textAvailability: rich ? snapshot.textAvailability : .available
         ), write)
         return true
-    }
-
-    private func pasteOriginal(_ snapshot: CurrentClipboardSnapshot) {
-        if snapshot.isImage, let data = snapshot.imageData {
-            suppressedWrite {
-                $0.clearContents()
-                $0.setData(data, forType: .png)
-            }
-        } else {
-            _ = writeSnapshotText(snapshot, rich: true, recordOutput: false)
-        }
     }
 
     func debugMacro(macro: MacroScript, inputText: String) async throws -> MacroDebugReport {
@@ -332,8 +305,7 @@ final class PasteCoordinator {
     private func writeText(
         _ content: ClipboardTextContent,
         rich: Bool,
-        source: ClipboardItem,
-        recordOutput: Bool = true
+        source: ClipboardItem
     ) -> Bool {
         guard rich ? content.canRichPaste : content.canUsePlainText else { return false }
         let write: (NSPasteboard) -> Void = { pb in
@@ -346,10 +318,6 @@ final class PasteCoordinator {
             } else if rich, let data = content.richText, let type = Self.richTextType(data) {
                 pb.setData(data, forType: type); pb.setString(content.text ?? "", forType: .string)
             } else if let text = content.text { pb.setString(text, forType: .string) }
-        }
-        guard recordOutput else {
-            suppressedWrite(write)
-            return true
         }
         let contentHash: String? = if rich {
             source.contentHash
@@ -370,20 +338,6 @@ final class PasteCoordinator {
                 : (content.canUsePlainText ? .available : .unavailable)
         )
         historyWrite(recording: historyItem, write)
-        return true
-    }
-
-    private func pasteOriginal(_ item: ClipboardItem) async -> Bool {
-        if item.isImage {
-            guard let data = await repository.fetchImageData(id: item.id) else { return false }
-            suppressedWrite { pasteboard in
-                pasteboard.clearContents()
-                pasteboard.setData(data, forType: .png)
-            }
-        } else {
-            guard let content = await repository.fetchTextContent(id: item.id, includeRich: true) else { return false }
-            guard writeText(content, rich: true, source: item, recordOutput: false) else { return false }
-        }
         return true
     }
 

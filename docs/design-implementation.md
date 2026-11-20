@@ -371,7 +371,8 @@ do not repeatedly normalize the same pasteboard generation.
 
 - If the output file is not created, treat as **no transformation** and paste input content as-is.
 - exit != 0 or the configured timeout (5s by default) is treated as "Macro failure" (see §5 response table).
-- Normal Macro runs send stdout/stderr to the null device so verbose scripts cannot block on full process pipes and no unused logs are retained.
+- Normal Macro runs discard stdout and continuously drain stderr, retaining at most 256 KiB. On non-zero exit, stderr is pasted verbatim; if empty, the exit-status message is used. Timeouts paste `Macro script timed out.`. The default failure policy also notifies and activates the previous app; errors do not enter history. Cancellation leaves the pasteboard untouched.
+- `config.json` retains `macroFailureBehavior: "restoreOriginalAndNotify"` for compatibility, now displayed as **Paste error + notify**. `notifyOnly` and `silentlySkip` retain their no-paste behavior. A JXA Macro receiving an image uses the same failure policy and pastes `JavaScript (JXA) Macros are unavailable for image input.` by default, without executing the script.
 - The Settings Macro row stores a reusable text test case with each Macro for
   **Test Run**. It is saved automatically and does not read from or require a selected history item.
   New or edited Macros first pass through the normal registration/change
@@ -497,7 +498,7 @@ pre-launch failure. JXA stderr is bounded and reported on normal execution failu
 | Paste method | Simple approach: write to pasteboard then activate previous app. Synthetic Cmd+V requires accessibility, so not prioritized (`AppSettings.needsAccessibilityForSyntheticPaste` for future) |
 | Plain text paste | Set only `NSStringPboardType` on `NSPasteboard` (do not co-write RTF) |
 | Macro file format | Assume `.txt` for text and `.png` for image. Detect output with same extension |
-| Macro failure | Configurable timeout (5s default), exit != 0 → user notification + paste original content (default, configurable) |
+| Macro failure | Configurable timeout (5s default), exit != 0 → user notification + paste error text (default, configurable) |
 | Large image rejection | `maxItemSizeMB` in UserDefaults, skip save + notify on exceed. Default 10MB |
 | Dedup | Two layers: (1) in-memory `lastSavedContentHash` skips a save entirely when the copy matches the immediately-preceding save; (2) `ClipboardMonitor.removeDuplicates` deletes older entities with the same `contentHash` before insert, so each hash has at most one entry and the new copy bubbles to the top. The previous `DedupCache` ring buffer (`dedupCacheSize` default 100) is deprecated. |
 | Sanitize | Invalid RTF load via try/catch + Data validation, corrupt Entity deleted |

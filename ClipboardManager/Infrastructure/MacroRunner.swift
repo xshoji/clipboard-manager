@@ -118,8 +118,8 @@ enum MacroRunner {
     }
 
     /// Runs the Macro script asynchronously without blocking the cooperative thread pool.
-    /// Process status is polled with cancellable sleeps; stdout and stderr are discarded
-    /// because the production paste path does not display terminal output.
+    /// Process status is polled with cancellable sleeps; stderr is bounded and
+    /// retained for failure output, while stdout is discarded.
     static func runAsync(
         script: MacroScript,
         input: MacroInput,
@@ -137,10 +137,8 @@ enum MacroRunner {
         if execution.timedOut { throw MacroRunningError.timeout }
         guard let status = execution.terminationStatus else { throw MacroRunningError.timeout }
         if status != 0 {
-            if case .javaScriptJXA = script.source {
-                let detail = execution.standardError.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !detail.isEmpty { throw MacroRunningError.executionFailed(detail) }
-            }
+            let detail = execution.standardError.text
+            if !detail.isEmpty { throw MacroRunningError.executionFailed(detail) }
             throw MacroRunningError.exitStatus(status)
         }
         return try resolveOutput(execution.launched).output
@@ -356,14 +354,13 @@ enum MacroRunner {
         proc.environment = env
 
         let standardOutput = captureStreams ? Pipe() : nil
-        // JXA errors are useful in the normal paste failure notification too.
-        let standardError = (captureStreams || script.source.interpreter == nil) ? Pipe() : nil
+        let standardError = Pipe()
         proc.standardOutput = standardOutput ?? FileHandle.nullDevice
-        proc.standardError = standardError ?? FileHandle.nullDevice
+        proc.standardError = standardError
 
         try proc.run()
         try? standardOutput?.fileHandleForWriting.close()
-        try? standardError?.fileHandleForWriting.close()
+        try? standardError.fileHandleForWriting.close()
         let launched = LaunchedProcess(
             proc: proc,
             inputURL: inputURL,

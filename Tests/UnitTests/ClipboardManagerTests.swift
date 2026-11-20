@@ -758,6 +758,26 @@ final class SettingsConfigurationTests: XCTestCase {
         XCTAssertEqual(settings.macroTimeoutSeconds, AppSettings.defaultMacroTimeoutSeconds)
     }
 
+    func testFailurePolicyConfig() throws {
+        let settings = AppSettings.shared
+        let previous = settings.macroFailureBehavior
+        defer { settings.macroFailureBehavior = previous }
+
+        for policy in ["restoreOriginalAndNotify", "notifyOnly", "silentlySkip", "ignore"] {
+            settings.macroFailureBehavior = policy
+            let data = try JSONEncoder().encode(SettingsConfigurationDocument(settings: settings))
+            let document = try JSONDecoder().decode(SettingsConfigurationDocument.self, from: data)
+            let plan = try document.validatedPlan()
+            XCTAssertEqual(plan.settings.macroFailureBehavior, policy)
+            settings.macroFailureBehavior = "invalid"
+            plan.settings.apply(to: settings)
+            XCTAssertEqual(settings.macroFailureBehavior, policy)
+        }
+
+        settings.macroFailureBehavior = "invalid"
+        XCTAssertThrowsError(try SettingsConfigurationDocument(settings: settings).validatedPlan())
+    }
+
     func testConfigurationRejectsMacroTimeoutOutsideSupportedRange() throws {
         let encoded = try JSONEncoder().encode(SettingsConfigurationDocument(settings: AppSettings.shared))
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
@@ -1180,7 +1200,7 @@ final class PasteCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.pasteboard.recordedItems.isEmpty)
     }
 
-    func testCurrentMacroFailureRestoresSnapshotWithoutRecordingHistory() async {
+    func testCurrentMacroPastesTimeout() async {
         let harness = TestHarness()
         let snapshot = makeCurrentTextSnapshot(text: "live original")
         await harness.macroRunner.setResponse(.failure(.timeout))
@@ -1188,7 +1208,7 @@ final class PasteCoordinatorTests: XCTestCase {
         let succeeded = await harness.coordinator.runMacro(macro: makeMacro(), snapshot: snapshot)
 
         XCTAssertFalse(succeeded)
-        XCTAssertEqual(harness.pasteboard.string, "live original")
+        XCTAssertEqual(harness.pasteboard.string, "Macro script timed out.")
         XCTAssertTrue(harness.pasteboard.recordedItems.isEmpty)
         XCTAssertEqual(harness.activator.callCount, 1)
     }
@@ -1205,22 +1225,22 @@ final class PasteCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.pasteboard.recordedItems.first?.contentHash, snapshot.contentHash)
     }
 
-    func testMacroFailureRestoresOriginalAndNotifies() async {
+    func testMacroPastesErrorVerbatim() async {
         let harness = TestHarness()
         let item = makeClipboardItem(kind: "text")
         harness.repository.fullText[item.id] = "source text"
         harness.repository.textContent[item.id] = .init(text: "original text", richText: nil, html: nil)
-        await harness.macroRunner.setResponse(.failure(.timeout))
+        await harness.macroRunner.setResponse(.failure(.executionFailed("  failure detail\nsecond line\n")))
 
         let succeeded = await harness.coordinator.runMacro(macro: makeMacro(), item: item)
 
         XCTAssertFalse(succeeded)
-        XCTAssertEqual(harness.pasteboard.string, "original text")
+        XCTAssertEqual(harness.pasteboard.string, "  failure detail\nsecond line\n")
         XCTAssertTrue(harness.pasteboard.recordedItems.isEmpty)
         XCTAssertEqual(harness.activator.callCount, 1)
         XCTAssertEqual(harness.notifier.notifications.count, 1)
         XCTAssertEqual(harness.notifier.notifications.first?.title, "Macro failed")
-        XCTAssertEqual(harness.notifier.notifications.first?.body, "Macro script timed out.")
+        XCTAssertEqual(harness.notifier.notifications.first?.body, "  failure detail\nsecond line\n")
     }
 
     func testMacroNotifyOnlyDoesNotRestoreOrActivate() async {
@@ -1253,7 +1273,7 @@ final class PasteCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.notifier.notifications.isEmpty)
     }
 
-    func testImageMacroFailureFallbackDoesNotRecordHistory() async {
+    func testImageMacroPastesTimeout() async {
         let harness = TestHarness()
         let item = makeClipboardItem(kind: "image")
         harness.repository.imageData[item.id] = Data([1, 2, 3])
@@ -1262,9 +1282,51 @@ final class PasteCoordinatorTests: XCTestCase {
         let succeeded = await harness.coordinator.runMacro(macro: makeMacro(), item: item)
 
         XCTAssertFalse(succeeded)
+        XCTAssertEqual(harness.pasteboard.string, "Macro script timed out.")
         XCTAssertTrue(harness.pasteboard.recordedItems.isEmpty)
         XCTAssertEqual(harness.pasteboard.suppressedWriteCount, 1)
         XCTAssertEqual(harness.activator.callCount, 1)
+    }
+
+    func testJxaImageFailure() async {
+        let message = "JavaScript (JXA) Macros are unavailable for image input."
+        let macro = MacroScript(name: "JXA", source: .javaScriptJXA(code: "function main(text) { return text; }"))
+        let imageData = Data([1, 2, 3])
+        let item = makeClipboardItem(kind: "image")
+        let snapshot = CurrentClipboardSnapshot(
+            changeCount: 1, kind: "image", imageData: imageData,
+            contentHash: HashUtil.sha256Hex(of: imageData)
+        )
+        let targets: [ClipboardActionTarget] = [.history(item), .current(snapshot)]
+        let policies: [(String, String?, Int, Int)] = [
+            ("restoreOriginalAndNotify", message, 1, 1),
+            ("notifyOnly", nil, 0, 1),
+            ("silentlySkip", nil, 0, 0),
+        ]
+
+        for target in targets {
+            for (policy, expectedText, activations, notifications) in policies {
+                let harness = TestHarness()
+                harness.settings.macroFailureBehavior = policy
+                harness.repository.imageData[item.id] = imageData
+                let succeeded: Bool
+                switch target {
+                case .history(let item):
+                    succeeded = await harness.coordinator.runMacro(macro: macro, item: item)
+                case .current(let snapshot):
+                    succeeded = await harness.coordinator.runMacro(macro: macro, snapshot: snapshot)
+                }
+
+                XCTAssertFalse(succeeded)
+                XCTAssertEqual(harness.pasteboard.string, expectedText)
+                XCTAssertTrue(harness.pasteboard.recordedItems.isEmpty)
+                XCTAssertEqual(harness.activator.callCount, activations)
+                XCTAssertEqual(harness.notifier.notifications.count, notifications)
+                if notifications > 0 {
+                    XCTAssertEqual(harness.notifier.notifications.first?.body, message)
+                }
+            }
+        }
     }
 
     func testMacroDebugUsesFixedTextInputWithoutPasteSideEffects() async throws {
@@ -1323,6 +1385,39 @@ final class PasteCoordinatorTests: XCTestCase {
 }
 
 final class MacroRunnerDebugTests: XCTestCase {
+    func testRunPreservesStderr() async throws {
+        for body in ["printf '  error detail\\nsecond line\\n' >&2; exit 7", "exit 9"] {
+            let script = MacroScript(name: "Failure", scriptPath: "", inlineScript: body)
+            do {
+                _ = try await MacroRunner.runAsync(
+                    script: script,
+                    input: .init(isImage: false, imageData: nil, text: "original", sourceBundleID: nil),
+                    verifyFingerprint: false
+                )
+                XCTFail("Expected Macro failure")
+            } catch let error as MacroRunningError {
+                XCTAssertEqual(error.description, body == "exit 9"
+                    ? "Macro script exited with status 9."
+                    : "  error detail\nsecond line\n")
+            }
+        }
+    }
+
+    func testRunReportsTimeout() async throws {
+        let script = MacroScript(name: "Timeout", scriptPath: "", inlineScript: "while :; do :; done")
+        do {
+            _ = try await MacroRunner.runAsync(
+                script: script,
+                input: .init(isImage: false, imageData: nil, text: "original", sourceBundleID: nil),
+                verifyFingerprint: false,
+                timeoutSeconds: 1
+            )
+            XCTFail("Expected Macro timeout")
+        } catch let error as MacroRunningError {
+            XCTAssertEqual(error.description, "Macro script timed out.")
+        }
+    }
+
     func testJavaScriptJXAReturnsText() async throws {
         let code = "function main(clipboardContentString) { return clipboardContentString + ' ✓'; }"
         let macro = MacroScript(name: "JXA", source: .javaScriptJXA(code: code), lastFingerprint: HashUtil.sha256Hex(of: Data(code.utf8)))

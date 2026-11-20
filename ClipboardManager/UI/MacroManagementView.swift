@@ -90,7 +90,7 @@ struct MacroManagementView: View {
                     get: { settings.macroFailureBehavior },
                     set: { settings.macroFailureBehavior = $0 }
                 )) {
-                    Text("Restore original + notify").tag("restoreOriginalAndNotify")
+                    Text("Paste error + notify").tag("restoreOriginalAndNotify")
                     Text("Notify only").tag("notifyOnly")
                     Text("Silent").tag("silentlySkip")
                 }
