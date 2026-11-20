@@ -124,7 +124,7 @@ struct MacroManagementView: View {
                                 get: { settings.macroTimeoutSeconds },
                                 set: { settings.macroTimeoutSeconds = $0 }
                             ),
-                            in: 1...300
+                            in: MacroScript.timeoutRange
                         )
                         .labelsHidden()
                         .accessibilityIdentifier("macro.timeout.stepper")

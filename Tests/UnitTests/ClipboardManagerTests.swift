@@ -215,6 +215,7 @@ final class MacroScriptTests: XCTestCase {
 
         XCTAssertNil(macro.order)
         XCTAssertNil(macro.testInput)
+        XCTAssertNil(macro.timeoutSeconds)
     }
 
     func testRoundTripsTestInputWithMacroSettings() throws {
@@ -222,7 +223,8 @@ final class MacroScriptTests: XCTestCase {
             name: "Testable Macro",
             scriptPath: "",
             inlineScript: "cat",
-            testInput: "reusable test case"
+            testInput: "reusable test case",
+            timeoutSeconds: 120
         )
 
         let decoded = try JSONDecoder().decode(
@@ -231,6 +233,7 @@ final class MacroScriptTests: XCTestCase {
         )
 
         XCTAssertEqual(decoded.testInput, "reusable test case")
+        XCTAssertEqual(decoded.timeoutSeconds, 120)
     }
 }
 
@@ -791,6 +794,56 @@ final class SettingsConfigurationTests: XCTestCase {
                 .decode(SettingsConfigurationDocument.self, from: invalidData)
                 .validatedPlan()
         )
+    }
+
+    func testMacroTimeoutConfig() throws {
+        let settings = AppSettings.shared
+        let previous = settings.macroScripts
+        defer { settings.macroScripts = previous }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configURL = directory.appendingPathComponent("config.json")
+        let sources: [MacroSource] = [
+            .inlineShell(code: "cat", interpreter: "/bin/sh"),
+            .file(path: "/bin/cat", interpreter: "/bin/sh"),
+            .javaScriptJXA(code: "function main(text) { return text; }"),
+        ]
+
+        for timeout: Int? in [nil, 1, 300] {
+            settings.macroScripts = sources.map {
+                MacroScript(name: $0.kindLabel, source: $0, timeoutSeconds: timeout)
+            }
+            let data = try JSONEncoder().encode(SettingsConfigurationDocument(settings: settings))
+            let document = try JSONDecoder().decode(SettingsConfigurationDocument.self, from: data)
+            XCTAssertEqual(try document.validatedPlan().macros.map(\.timeoutSeconds), Array(repeating: timeout, count: 3))
+            try data.write(to: configURL)
+            settings.macroScripts = []
+
+            let adapter = SettingsConfigurationAdapter(settings: settings, fileURL: configURL)
+            adapter.loadInitialConfiguration()
+
+            XCTAssertNil(adapter.status.errorMessage)
+            XCTAssertEqual(settings.macroScripts.map(\.timeoutSeconds), Array(repeating: timeout, count: 3))
+            XCTAssertEqual(settings.macroScripts.map(\.source), sources)
+        }
+    }
+
+    func testRejectsInvalidMacroTimeout() throws {
+        let settings = AppSettings.shared
+        let previous = settings.macroScripts
+        defer { settings.macroScripts = previous }
+        settings.macroScripts = [MacroScript(name: "Timeout", scriptPath: "", inlineScript: "cat")]
+        let data = try JSONEncoder().encode(SettingsConfigurationDocument(settings: settings))
+        var document = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var macros = try XCTUnwrap(document["macros"] as? [[String: Any]])
+
+        for timeout: Any in [-1, 0, 301, "30", 1.5] {
+            macros[0]["timeoutSeconds"] = timeout
+            document["macros"] = macros
+            let invalidData = try JSONSerialization.data(withJSONObject: document)
+            XCTAssertThrowsError(try JSONDecoder().decode(SettingsConfigurationDocument.self, from: invalidData).validatedPlan())
+        }
     }
 
     func testConfigurationRejectsDuplicateOrder() throws {
@@ -1385,6 +1438,36 @@ final class PasteCoordinatorTests: XCTestCase {
 }
 
 final class MacroRunnerDebugTests: XCTestCase {
+    @MainActor
+    func testMacroTimeoutOverride() async throws {
+        let settings = AppSettings.shared
+        let previous = settings.macroTimeoutSeconds
+        defer { settings.macroTimeoutSeconds = previous }
+        let runner = MacroRunnerAdapter(settings: settings)
+        let input = MacroInput(isImage: false, imageData: nil, text: "original", sourceBundleID: nil)
+
+        for (timeout, global, timesOut): (Int?, Int, Bool) in [(nil, 1, true), (4, 1, false), (1, 4, true)] {
+            settings.macroTimeoutSeconds = global
+            let script = MacroScript(name: "Timeout", scriptPath: "",
+                inlineScript: "sleep 2; printf finished > \"$CB_OUTPUT_FILE\"", timeoutSeconds: timeout)
+
+            do {
+                let output = try await runner.runAsync(script: script, input: input, verifyFingerprint: false)
+                XCTAssertFalse(timesOut)
+                XCTAssertEqual(String(data: output.data, encoding: .utf8), "finished")
+            } catch let error as MacroRunningError {
+                XCTAssertTrue(timesOut)
+                XCTAssertEqual(error.description, "Macro script timed out.")
+            }
+
+            let report = try await runner.debugRunAsync(script: script, input: input, verifyFingerprint: false)
+            XCTAssertEqual(report.timedOut, timesOut)
+            XCTAssertEqual(report.succeeded, !timesOut)
+            XCTAssertEqual(report.errorMessage, timesOut ? "Macro script timed out." : nil)
+            if !timesOut { XCTAssertEqual(report.output?.previewText, "finished") }
+        }
+    }
+
     func testRunPreservesStderr() async throws {
         for body in ["printf '  error detail\\nsecond line\\n' >&2; exit 7", "exit 9"] {
             let script = MacroScript(name: "Failure", scriptPath: "", inlineScript: body)

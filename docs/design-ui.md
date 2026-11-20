@@ -178,6 +178,7 @@ row separators are used; sections do not add manual dividers.
 - Registration and script changes require the existing trust confirmation and fingerprint capture flow.
 - Each Macro stores a reusable text test case used only by Test Run, allowing scripts to be tested without changing or selecting clipboard history. The test input is saved automatically with the Macro. Test Run uses that fixed text with the same execution environment used by the main window and opens a debug console with exit status, stdout, stderr, environment variables, and a size-bounded transformed-output preview; it does not update the pasteboard or switch applications. Copy Report uses the app's monitored pasteboard boundary so the report is not re-added to history.
 - Macro timeout, failure behavior, and fingerprint verification are configured in this view because they apply to script execution rather than general app behavior.
+- Each expanded Macro has an **Override global timeout** toggle and a seconds stepper (1–300). Changes are saved automatically. When disabled, both normal execution and Test Run use the current global timeout; enabling it starts with the current global value and keeps that Macro's value independent of later global changes.
 
 ### 7.3 Canonical Configuration
 

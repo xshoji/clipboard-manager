@@ -13,6 +13,8 @@ enum MacroSource: Hashable, Sendable {
 }
 
 struct MacroScript: Codable, Identifiable, Hashable, Sendable {
+    static let timeoutRange = 1...300
+
     var id: UUID
     /// Stable display order used by the canonical JSON configuration. Gaps are allowed.
     var order: Int?
@@ -20,6 +22,8 @@ struct MacroScript: Codable, Identifiable, Hashable, Sendable {
     var source: MacroSource
     /// Reusable text fixture for Test Run. Optional for backward compatibility with existing settings data.
     var testInput: String?
+    /// Nil inherits the global timeout for both paste and Test Run.
+    var timeoutSeconds: Int?
     var hotkeyCode: Int
     var hotkeyModifiers: Int
     var lastFingerprint: String?
@@ -32,6 +36,7 @@ struct MacroScript: Codable, Identifiable, Hashable, Sendable {
         scriptPath: String,
         inlineScript: String? = nil,
         testInput: String? = nil,
+        timeoutSeconds: Int? = nil,
         interpreter: String = "/bin/sh",
         hotkeyCode: Int = 0,
         hotkeyModifiers: Int = 0,
@@ -44,14 +49,16 @@ struct MacroScript: Codable, Identifiable, Hashable, Sendable {
         self.source = inlineScript.map { .inlineShell(code: $0, interpreter: interpreter) }
             ?? .file(path: scriptPath, interpreter: interpreter)
         self.testInput = testInput
+        self.timeoutSeconds = timeoutSeconds
         self.hotkeyCode = hotkeyCode
         self.hotkeyModifiers = hotkeyModifiers
         self.lastFingerprint = lastFingerprint
         self.lastModified = lastModified
     }
 
-    init(id: UUID = UUID(), order: Int? = nil, name: String, source: MacroSource, testInput: String? = nil, hotkeyCode: Int = 0, hotkeyModifiers: Int = 0, lastFingerprint: String? = nil, lastModified: Date? = nil) {
+    init(id: UUID = UUID(), order: Int? = nil, name: String, source: MacroSource, testInput: String? = nil, timeoutSeconds: Int? = nil, hotkeyCode: Int = 0, hotkeyModifiers: Int = 0, lastFingerprint: String? = nil, lastModified: Date? = nil) {
         self.id = id; self.order = order; self.name = name; self.source = source; self.testInput = testInput; self.hotkeyCode = hotkeyCode; self.hotkeyModifiers = hotkeyModifiers; self.lastFingerprint = lastFingerprint; self.lastModified = lastModified
+        self.timeoutSeconds = timeoutSeconds
     }
 
     var supportsImageInput: Bool { source.supportsImageInput }
@@ -59,10 +66,11 @@ struct MacroScript: Codable, Identifiable, Hashable, Sendable {
     var scriptPath: String { source.path ?? "" }
     var interpreter: String { source.interpreter ?? MacroRunner.javaScriptJXAExecutable }
 
-    private enum CodingKeys: String, CodingKey { case id, order, name, source, testInput, hotkeyCode, hotkeyModifiers, lastFingerprint, lastModified, scriptPath, inlineScript, interpreter }
+    private enum CodingKeys: String, CodingKey { case id, order, name, source, testInput, timeoutSeconds, hotkeyCode, hotkeyModifiers, lastFingerprint, lastModified, scriptPath, inlineScript, interpreter }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id); order = try c.decodeIfPresent(Int.self, forKey: .order); name = try c.decode(String.self, forKey: .name)
+        timeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .timeoutSeconds)
         testInput = try c.decodeIfPresent(String.self, forKey: .testInput); hotkeyCode = try c.decodeIfPresent(Int.self, forKey: .hotkeyCode) ?? 0; hotkeyModifiers = try c.decodeIfPresent(Int.self, forKey: .hotkeyModifiers) ?? 0; lastFingerprint = try c.decodeIfPresent(String.self, forKey: .lastFingerprint); lastModified = try c.decodeIfPresent(Date.self, forKey: .lastModified)
         if let persisted = try c.decodeIfPresent(PersistedSource.self, forKey: .source) { source = persisted.value } else {
             let interpreter = try c.decodeIfPresent(String.self, forKey: .interpreter) ?? "/bin/sh"
@@ -71,6 +79,7 @@ struct MacroScript: Codable, Identifiable, Hashable, Sendable {
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(timeoutSeconds, forKey: .timeoutSeconds)
         try c.encode(id, forKey: .id); try c.encodeIfPresent(order, forKey: .order); try c.encode(name, forKey: .name); try c.encode(PersistedSource(source), forKey: .source); try c.encodeIfPresent(testInput, forKey: .testInput); try c.encode(hotkeyCode, forKey: .hotkeyCode); try c.encode(hotkeyModifiers, forKey: .hotkeyModifiers); try c.encodeIfPresent(lastFingerprint, forKey: .lastFingerprint); try c.encodeIfPresent(lastModified, forKey: .lastModified)
     }
 }

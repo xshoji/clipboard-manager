@@ -110,6 +110,9 @@ struct MacroScriptRowView: View {
                         .multilineTextAlignment(.leading)
                         .accessibilityIdentifier("\(accessibilityIDPrefix).name")
                 }
+                settingsRow("Timeout") {
+                    timeoutControls
+                }
                 if sourceType != "jxa" { settingsRow("Interpreter") {
                     if sourceType == "inline" {
                         HStack {
@@ -482,6 +485,28 @@ struct MacroScriptRowView: View {
         }
     }
 
+    private var timeoutControls: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Override global timeout", isOn: Binding(
+                get: { macro.timeoutSeconds != nil },
+                set: { saveTimeout($0 ? settings.macroTimeoutSeconds : nil) }
+            ))
+            .accessibilityIdentifier("\(accessibilityIDPrefix).timeout.override")
+
+            if let seconds = macro.timeoutSeconds {
+                Stepper("\(seconds) sec", value: Binding(
+                    get: { macro.timeoutSeconds ?? settings.macroTimeoutSeconds },
+                    set: { saveTimeout($0) }
+                ), in: MacroScript.timeoutRange)
+                .accessibilityIdentifier("\(accessibilityIDPrefix).timeout.stepper")
+            }
+
+            Text("Global: \(settings.macroTimeoutSeconds) sec. Changes are saved automatically.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private var canApply: Bool {
         hasContentChanges
         && !name.trimmingCharacters(in: .whitespaces).isEmpty
@@ -645,6 +670,13 @@ struct MacroScriptRowView: View {
         guard storedInput != macro.testInput else { return }
         var edited = macro
         edited.testInput = storedInput
+        onUpdate(edited)
+    }
+
+    private func saveTimeout(_ seconds: Int?) {
+        guard seconds != macro.timeoutSeconds else { return }
+        var edited = macro
+        edited.timeoutSeconds = seconds
         onUpdate(edited)
     }
 

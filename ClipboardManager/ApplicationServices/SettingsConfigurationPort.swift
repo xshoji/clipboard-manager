@@ -155,7 +155,7 @@ struct AppSettingsSnapshot: Codable, Sendable {
               (1...1_000_000).contains(maxHistoryCount),
               (1...10_000).contains(maxItemSizeMB),
               (50...60_000).contains(pollingIntervalMs),
-              macroTimeoutSeconds.map({ (1...300).contains($0) }) ?? true else {
+              macroTimeoutSeconds.map({ MacroScript.timeoutRange.contains($0) }) ?? true else {
             throw SettingsConfigurationError.invalidData("The configuration contains settings outside the supported range.")
         }
         guard ["wrap", "nowrap"].contains(previewWrapMode),
@@ -238,6 +238,7 @@ struct MacroSnapshot: Codable, Sendable {
     let hotkeyModifiers: Int
     let source: Source
     let testInput: String?
+    let timeoutSeconds: Int?
 
     init(macro: MacroScript, order: Int? = nil) {
         id = macro.id
@@ -247,6 +248,7 @@ struct MacroSnapshot: Codable, Sendable {
         hotkeyCode = macro.hotkeyCode
         hotkeyModifiers = macro.hotkeyModifiers
         testInput = macro.testInput
+        timeoutSeconds = macro.timeoutSeconds
         switch macro.source {
         case let .inlineShell(code, interpreter): source = Source(type: .inlineShell, code: code, path: nil, interpreter: interpreter)
         case let .javaScriptJXA(code): source = Source(type: .javaScriptJXA, code: code, path: nil, interpreter: nil)
@@ -257,7 +259,8 @@ struct MacroSnapshot: Codable, Sendable {
     func restoredMacro() throws -> MacroScript {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               (0...255).contains(hotkeyCode),
-              hotkeyModifiers >= 0 else {
+              hotkeyModifiers >= 0,
+              timeoutSeconds.map({ MacroScript.timeoutRange.contains($0) }) ?? true else {
             throw SettingsConfigurationError.invalidData("The configuration contains an invalid Macro.")
         }
 
@@ -276,6 +279,7 @@ struct MacroSnapshot: Codable, Sendable {
                 scriptPath: "",
                 inlineScript: code,
                 testInput: testInput,
+                timeoutSeconds: timeoutSeconds,
                 interpreter: interpreter,
                 hotkeyCode: hotkeyCode,
                 hotkeyModifiers: hotkeyModifiers
@@ -283,7 +287,7 @@ struct MacroSnapshot: Codable, Sendable {
         case .javaScriptJXA:
             guard let code = source.code, !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   source.path == nil, source.interpreter == nil else { throw SettingsConfigurationError.invalidData("A JavaScript (JXA) Macro has invalid source data.") }
-            return MacroScript(id: id, order: order, name: name, source: .javaScriptJXA(code: code), testInput: testInput, hotkeyCode: hotkeyCode, hotkeyModifiers: hotkeyModifiers)
+            return MacroScript(id: id, order: order, name: name, source: .javaScriptJXA(code: code), testInput: testInput, timeoutSeconds: timeoutSeconds, hotkeyCode: hotkeyCode, hotkeyModifiers: hotkeyModifiers)
         case .file:
             guard let path = source.path,
                   !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -298,6 +302,7 @@ struct MacroSnapshot: Codable, Sendable {
                 scriptPath: path,
                 inlineScript: nil,
                 testInput: testInput,
+                timeoutSeconds: timeoutSeconds,
                 interpreter: interpreter,
                 hotkeyCode: hotkeyCode,
                 hotkeyModifiers: hotkeyModifiers

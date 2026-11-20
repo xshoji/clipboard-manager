@@ -229,7 +229,7 @@ enum MacroRunner {
         do {
             let timedOut = try await waitForProcess(
                 launched.proc,
-                timeout: .seconds(timeoutSeconds)
+                timeout: .seconds(script.timeoutSeconds ?? timeoutSeconds)
             )
             let standardOutput = stdoutCollector?.finish() ?? .init(text: "", truncated: false)
             let standardError = stderrCollector?.finish() ?? .init(text: "", truncated: false)
