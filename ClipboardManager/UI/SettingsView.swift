@@ -329,6 +329,13 @@ struct SettingsView: View {
             }
 
             configurationSection
+
+            Section("Application") {
+                Button("Quit ClipboardManager") {
+                    NSApp.terminate(nil)
+                }
+                .accessibilityIdentifier("settings.quit")
+            }
         }
         .formStyle(.grouped)
         .textSelection(.enabled)

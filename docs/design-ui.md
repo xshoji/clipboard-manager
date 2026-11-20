@@ -133,6 +133,8 @@ The footer is a single horizontal bar with the following actions. Actions operat
 
 A separate standard-style window (not the menu bar popup) launched from the menu bar icon menu. A sidebar separates application preferences from Macro management so transform scripts do not share the same form hierarchy as app behavior.
 
+A Quit ClipboardManager button appears at the bottom of the App Settings form, after Configuration, and is not shown in Macros. It uses the same normal termination path as the menu bar's Quit action and is not a persisted setting.
+
 ### 7.1 App Settings
 
 Settings are ordered by task and use grouped form sections. Explanatory copy is

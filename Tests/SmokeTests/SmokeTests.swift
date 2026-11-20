@@ -170,6 +170,38 @@ final class SmokeUITests: XCTestCase {
         try exerciseGlobalMacroPickerHotkeyCollision(app: app)
     }
 
+    /// Settings must offer normal termination without a Dock or menu bar icon.
+    func testQuitFromSettings() throws {
+        let app = makeApp()
+        app.launch()
+
+        let settingsWindow = app.windows["settingsWindow"]
+        XCTAssertTrue(exists(settingsWindow, timeout: 10), "Settings window did not appear on launch")
+
+        app.staticTexts["settings.macros"].click()
+        XCTAssertFalse(settingsWindow.buttons["settings.quit"].exists, "Quit should appear only in App Settings")
+        app.staticTexts["settings.application"].click()
+
+        let quitButton = settingsWindow.buttons["settings.quit"]
+        let settingsScrollView = settingsWindow.scrollViews
+            .containing(.button, identifier: "settings.quit")
+            .firstMatch
+        XCTAssertTrue(exists(settingsScrollView, timeout: 5))
+        for _ in 0..<15 {
+            if quitButton.isHittable { break }
+            settingsScrollView.scroll(byDeltaX: 0, deltaY: -300)
+        }
+        XCTAssertTrue(quitButton.isHittable, "Quit should be reachable at the bottom of App Settings")
+
+        let applicationSettings = XCTAttachment(screenshot: settingsWindow.screenshot())
+        applicationSettings.name = "App Settings Quit Button"
+        applicationSettings.lifetime = .keepAlways
+        add(applicationSettings)
+
+        quitButton.click()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 5), "Quit should terminate the app, not just close Settings")
+    }
+
     /// Closing Settings while a recorder is active must end the recording
     /// session and restore the application-owned Carbon registrations.
     func testClosingSettingsEndsHotkeyRecording() throws {
